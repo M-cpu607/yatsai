@@ -8,9 +8,8 @@ import {
   Mail, Edit3, Save, Loader2,
   Bot, Send, SlidersHorizontal, Wand2,
 } from 'lucide-react';
-import { supabase } from './supabase';
-import Auth from './Auth';
-
+import { supabase } from './supabase'
+import Auth from './Auth'
 // ─── PALETTE ───────────────────────────────────────────────────────
 const C = {
   bg: '#080F20', bgDeep: '#040812',
@@ -114,17 +113,9 @@ const SPORTS = [
   { id: 'hand', label: 'Handball', icon: '🤾' },
   { id: 'box', label: 'Boxe', icon: '🥊' },
   { id: 'mma', label: 'MMA', icon: '🥋' },
-  { id: 'volley', label: 'Volleyball', icon: '🏐' },
+  { id: 'volley', label: 'Volley', icon: '🏐' },
   { id: 'badminton', label: 'Badminton', icon: '🏸' },
-  { id: 'pingpong', label: 'Tennis de table', icon: '🏓' },
-  { id: 'karting', label: 'Karting', icon: '🏎️' },
-  { id: 'golf', label: 'Golf', icon: '⛳' },
-  { id: 'cyclo', label: 'Cyclisme', icon: '🚴' },
-  { id: 'esport', label: 'Esport', icon: '🎮' },
-  { id: 'cricket', label: 'Cricket', icon: '🏏' },
-  { id: 'football-us', label: 'Football américain', icon: '🏈' },
-  { id: 'baseball', label: 'Baseball', icon: '⚾' },
-  { id: 'hockey', label: 'Hockey sur glace', icon: '🏒' },
+  { id: 'pingpong', label: 'Ping-pong', icon: '🏓' },
 ];
 
 const CURRENT_RECRUITER = {
@@ -147,17 +138,9 @@ const SPORT_KEYWORDS = {
   Handball: ['hand', 'handball'],
   Boxe: ['boxe', 'boxeur'],
   MMA: ['mma', 'arts martiaux'],
-  Volleyball: ['volley', 'volleyball'],
+  Volley: ['volley'],
   Badminton: ['badminton'],
-  'Tennis de table': ['ping pong', 'tennis de table', 'pingpong'],
-  Karting: ['karting', 'kart'],
-  Golf: ['golf'],
-  Cyclisme: ['cyclo', 'cyclisme', 'velo', 'vélo'],
-  Esport: ['esport', 'esports', 'gaming', 'jeux video'],
-  Cricket: ['cricket'],
-  'Football américain': ['football americain', 'football américain', 'nfl'],
-  Baseball: ['baseball'],
-  'Hockey sur glace': ['hockey', 'hockey sur glace', 'nhl'],
+  'Ping-pong': ['ping pong', 'tennis de table'],
 };
 function stripAccents(s) { return s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
 function parseQuery(text) {
@@ -315,328 +298,280 @@ function VideoCard({ data, muted, onToggleMute, onSelectAthlete }) {
   );
 }
 
-// ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
-function SupabaseVideoCard({ data, onPlay }) {
-  // Extraire l'ID YouTube depuis l'URL
-  const getYouTubeId = (url) => {
-    const match = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-    return match ? match[1] : null;
-  };
-
-  const youtubeId = getYouTubeId(data.youtube_url);
-  const thumbnailUrl = youtubeId 
-    ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
-    : null;
-
-  const sport = SPORTS.find(s => s.id === data.sport);
-  const authorName = data.profiles?.full_name || 'Athlète';
-
+function FeedView({ videos, onSelectAthlete }) {
+  const [muted, setMuted] = useState(true);
   return (
-    <div className="relative h-screen snap-start flex flex-col"
-      style={{ backgroundColor: '#000' }}>
-      
-      {/* Miniature YouTube cliquable */}
-      <button onClick={() => onPlay(data)} className="relative flex-1 w-full overflow-hidden">
-        {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt={data.title}
-            className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center"
-            style={{ backgroundColor: C.surface }}>
-            <span style={{ color: C.textDim }}>Vidéo</span>
-          </div>
-        )}
-
-        {/* Overlay gradient */}
-        <div className="absolute inset-0"
-          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
-
-        {/* Gros bouton play au centre */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
-            <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
-          </div>
-        </div>
-      </button>
-
-      {/* Infos en bas */}
-      <div className="absolute bottom-24 left-4 right-4 fade-in">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold"
-            style={{ backgroundColor: C.surface, color: C.gold, border: `2px solid ${C.gold}` }}>
-            {authorName.charAt(0).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-bold text-sm truncate" style={{ color: C.text }}>
-              {authorName}
-            </div>
-            {data.position && (
-              <div className="text-xs truncate" style={{ color: C.textDim }}>
-                {sport?.icon || '🏆'} {sport?.label || data.sport} · {data.position}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <h2 className="text-lg font-extrabold mb-1" style={{ color: C.text }}>
-          {data.title}
-        </h2>
-
-        {data.description && (
-          <p className="text-xs line-clamp-2" style={{ color: C.textDim }}>
-            {data.description}
-          </p>
-        )}
-      </div>
+    <div className="overflow-y-auto snap-y snap-mandatory scrollbar-none"
+      style={{ height: '100dvh', backgroundColor: '#000' }}>
+      {videos.map(v => (
+        <VideoCard key={v.id} data={v} muted={muted}
+          onToggleMute={() => setMuted(!muted)} onSelectAthlete={onSelectAthlete} />
+      ))}
     </div>
-  );
-}
-
-// ─── LECTEUR YOUTUBE en overlay ──────────
-function YouTubePlayer({ video, onClose }) {
-  const getYouTubeId = (url) => {
-    const match = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-    return match ? match[1] : null;
-  };
-
-  const youtubeId = getYouTubeId(video.youtube_url);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col"
-      style={{ backgroundColor: '#000' }}>
-      
-      {/* Header avec bouton fermer */}
-      <div className="flex items-center justify-between px-4 py-3"
-        style={{ backgroundColor: C.bg }}>
-        <button onClick={onClose}
-          className="w-10 h-10 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: C.surface }}>
-          <X size={20} style={{ color: C.text }} />
-        </button>
-        <div className="text-sm font-semibold truncate flex-1 mx-3 text-center" style={{ color: C.text }}>
-          {video.title}
-        </div>
-        <div className="w-10" />
-      </div>
-
-      {/* Lecteur iframe */}
-      <div className="flex-1 flex items-center justify-center">
-        {youtubeId ? (
-          <iframe
-            width="100%"
-            height="100%"
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
-            title={video.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            style={{ border: 0 }}
-          />
-        ) : (
-          <div style={{ color: C.textDim }}>Vidéo introuvable</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function FeedView({ videos }) {
-  const [playingVideo, setPlayingVideo] = useState(null);
-
-  // Empty state : aucune vidéo publiée
-  if (!videos || videos.length === 0) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6"
-        style={{ backgroundColor: C.bg }}>
-        <div className="text-6xl mb-4">🎬</div>
-        <h2 className="text-xl font-extrabold mb-2 text-center" style={{ color: C.text }}>
-          Aucune vidéo encore
-        </h2>
-        <p className="text-sm text-center" style={{ color: C.textDim }}>
-          Sois le premier à publier !<br />
-          Clique sur le bouton + en bas.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="overflow-y-auto snap-y snap-mandatory scrollbar-none"
-        style={{ height: '100dvh', backgroundColor: '#000' }}>
-        {videos.map(v => (
-          <SupabaseVideoCard key={v.id} data={v} onPlay={setPlayingVideo} />
-        ))}
-      </div>
-
-      {playingVideo && (
-        <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
-      )}
-    </>
   );
 }
 
 // ═══ PUBLISH (avec tracker conservé) ══════════════════════════════
-// ─── PUBLISH (YouTube) ────────────────────────────────────────
-function PublishView({ userProfile, setTab }) {
-  const [youtubeUrl, setYoutubeUrl] = useState('');
-  const [title, setTitle] = useState('');
-  const [sport, setSport] = useState('foot');
-  const [position, setPosition] = useState('');
-  const [description, setDescription] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
+function PublishView() {
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [playerName, setPlayerName] = useState('');
+  const [keyframes, setKeyframes] = useState([]);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [showHint, setShowHint] = useState(true);
 
-  const isValidYouTubeUrl = (url) => {
-    const regex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
-    return regex.test(url);
+  const videoRef = useRef(null);
+  const stageRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const onFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setVideoFile(f);
+    setVideoUrl(URL.createObjectURL(f));
+    setKeyframes([]); setShowHint(true);
   };
 
-  const handlePublish = async (e) => {
-    e.preventDefault();
-    setError('');
+  useEffect(() => {
+    const v = videoRef.current; if (!v) return;
+    const onTime = () => setCurrentTime(v.currentTime);
+    const onLoaded = () => setDuration(v.duration || 0);
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('loadedmetadata', onLoaded);
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    return () => {
+      v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('loadedmetadata', onLoaded);
+      v.removeEventListener('play', onPlay);
+      v.removeEventListener('pause', onPause);
+    };
+  }, [videoUrl]);
 
-    if (!isValidYouTubeUrl(youtubeUrl)) {
-      setError('Lien YouTube invalide. Exemple : https://youtube.com/watch?v=...');
-      return;
-    }
-    if (!title.trim()) {
-      setError('Donne un titre à ta vidéo.');
-      return;
-    }
-
-    setLoading(true);
-    const { error: insertError } = await supabase.from('videos').insert({
-      user_id: userProfile.id,
-      youtube_url: youtubeUrl,
-      title: title.trim(),
-      sport,
-      position: position.trim() || null,
-      description: description.trim() || null,
+  const onStageTap = (e) => {
+    if (!videoRef.current || !stageRef.current) return;
+    const rect = stageRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    const t = videoRef.current.currentTime;
+    setShowHint(false);
+    setKeyframes(prev => {
+      const filtered = prev.filter(k => Math.abs(k.t - t) > 0.1);
+      return [...filtered, { t, x, y }].sort((a, b) => a.t - b.t);
     });
-    setLoading(false);
-
-    if (insertError) {
-      setError('Erreur : ' + insertError.message);
-      return;
-    }
-
-    setSuccess(true);
-    setTimeout(() => {
-      setSuccess(false);
-      setYoutubeUrl('');
-      setTitle('');
-      setPosition('');
-      setDescription('');
-      setTab('feed');
-    }, 2000);
+    videoRef.current.pause();
   };
 
-  if (success) {
+  const markerPos = useMemo(() => {
+    if (keyframes.length === 0) return null;
+    if (keyframes.length === 1) return keyframes[0];
+    if (currentTime <= keyframes[0].t) return keyframes[0];
+    if (currentTime >= keyframes[keyframes.length - 1].t) return keyframes[keyframes.length - 1];
+    for (let i = 0; i < keyframes.length - 1; i++) {
+      const a = keyframes[i], b = keyframes[i + 1];
+      if (currentTime >= a.t && currentTime <= b.t) {
+        const r = (currentTime - a.t) / (b.t - a.t);
+        return { t: currentTime, x: a.x + (b.x - a.x) * r, y: a.y + (b.y - a.y) * r };
+      }
+    }
+    return keyframes[0];
+  }, [keyframes, currentTime]);
+
+  const togglePlay = () => { const v = videoRef.current; if (!v) return; if (v.paused) v.play(); else v.pause(); };
+  const seekTo = (t) => { const v = videoRef.current; if (!v) return; v.currentTime = Math.max(0, Math.min(duration, t)); };
+  const removeKeyframe = (idx) => setKeyframes(prev => prev.filter((_, i) => i !== idx));
+  const clearAll = () => { setKeyframes([]); setShowHint(true); };
+  const reset = () => {
+    setVideoFile(null);
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    setVideoUrl(null); setKeyframes([]); setPlayerName('');
+    setCurrentTime(0); setDuration(0);
+  };
+  const fmtTime = (t) => { const m = Math.floor(t / 60); const s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; };
+
+  if (!videoUrl) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6"
-        style={{ backgroundColor: C.bg }}>
-        <CheckCircle2 size={64} style={{ color: C.green }} />
-        <h2 className="text-2xl font-extrabold mt-4" style={{ color: C.text }}>
-          Vidéo publiée !
-        </h2>
-        <p className="text-sm mt-2" style={{ color: C.textDim }}>
-          Redirection vers le feed...
-        </p>
+      <div className="px-4 pt-12 pb-32 fade-in" style={{ height: '100dvh', backgroundColor: C.bg }}>
+        <h1 className="text-3xl font-extrabold mb-1" style={{ color: C.text }}>Publier</h1>
+        <p className="text-sm mb-6" style={{ color: C.textDim }}>Partagez votre talent avec les recruteurs</p>
+
+        <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={onFile} />
+
+        <button onClick={() => fileInputRef.current?.click()}
+          className="w-full rounded-2xl border-2 border-dashed flex flex-col items-center justify-center py-12 px-4 mb-4 text-center"
+          style={{ borderColor: C.borderGold, backgroundColor: C.surface }}>
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+            style={{ backgroundColor: C.goldSoft }}>
+            <Camera size={28} style={{ color: C.gold }} />
+          </div>
+          <h3 className="text-base font-bold mb-1" style={{ color: C.text }}>Ajoutez votre vidéo</h3>
+          <p className="text-xs mb-4" style={{ color: C.textDim }}>MP4, MOV — max 60s, 100 Mo</p>
+          <span className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm"
+            style={{ backgroundColor: C.gold, color: C.bg }}>
+            <Plus size={16} strokeWidth={2.5} /> Choisir une vidéo
+          </span>
+        </button>
+
+        <div className="rounded-xl p-3.5 flex items-start gap-3 mb-3"
+          style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
+          <Sparkles size={18} style={{ color: C.gold }} className="mt-0.5 flex-shrink-0" />
+          <div>
+            <div className="text-sm font-semibold mb-0.5" style={{ color: C.text }}>Vérification IA</div>
+            <p className="text-xs" style={{ color: C.textDim }}>L'algorithme vérifie le contenu sportif avant publication.</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl p-3.5 flex items-start gap-3"
+          style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
+          <PinIcon size={18} style={{ color: C.gold }} className="mt-0.5 flex-shrink-0" />
+          <div>
+            <div className="text-sm font-semibold mb-0.5" style={{ color: C.text }}>Tracker un joueur</div>
+            <p className="text-xs" style={{ color: C.textDim }}>Une flèche dorée qui suit le joueur pour les recruteurs.</p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen pb-24" style={{ backgroundColor: C.bg }}>
-      <div className="px-5 pt-6 pb-4">
-        <h1 className="text-2xl font-extrabold" style={{ color: C.text }}>
-          Publier une vidéo
-        </h1>
-        <p className="text-sm mt-1" style={{ color: C.textDim }}>
-          Partage tes meilleures actions
-        </p>
+    <div className="pt-3 pb-32 fade-in flex flex-col" style={{ minHeight: '100dvh', backgroundColor: C.bg }}>
+      <div className="px-4 flex items-center justify-between mb-3">
+        <button onClick={reset}
+          className="w-9 h-9 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, color: C.text }}>
+          <ArrowLeft size={17} strokeWidth={2.2} />
+        </button>
+        <span className="font-mono text-[10px] tracking-widest" style={{ color: C.gold }}>
+          ÉDITEUR · TRACKING JOUEUR
+        </span>
+        <div className="w-9" />
       </div>
 
-      <form onSubmit={handlePublish} className="px-5 space-y-4">
-        {/* YouTube URL */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Lien YouTube *
-          </label>
-          <input type="url" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)}
-            placeholder="https://youtube.com/watch?v=..." required
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-        </div>
+      <div ref={stageRef} onClick={onStageTap}
+        className="relative w-full overflow-hidden select-none"
+        style={{ backgroundColor: '#000', aspectRatio: '9/16', maxHeight: '60vh' }}>
+        <video ref={videoRef} src={videoUrl} playsInline
+          className="absolute inset-0 w-full h-full object-contain" />
 
-        {/* Titre */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Titre *
-          </label>
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ex : Mes 5 meilleurs buts saison 2025" required maxLength={80}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-        </div>
-
-        {/* Sport */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Sport *
-          </label>
-          <select value={sport} onChange={(e) => setSport(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
-            {SPORTS.map(s => (
-              <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Position */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Poste (optionnel)
-          </label>
-          <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-            placeholder="Ex : Milieu offensif, Ailier, Pivot..." maxLength={60}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Description (optionnel)
-          </label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-            placeholder="Quelques mots sur cette vidéo..." rows={3} maxLength={300}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-          <div className="text-[10px] mt-1 text-right" style={{ color: C.textMute }}>
-            {description.length}/300
+        {keyframes.map((k, i) => (
+          <div key={i} className="absolute pointer-events-none"
+            style={{
+              left: `${k.x * 100}%`, top: `${k.y * 100}%`,
+              transform: 'translate(-50%, -100%)',
+              opacity: Math.abs(k.t - currentTime) < 0.05 ? 1 : 0.25,
+            }}>
+            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: C.gold, boxShadow: `0 0 8px ${C.gold}` }} />
           </div>
-        </div>
+        ))}
 
-        {/* Erreur */}
-        {error && (
-          <div className="px-4 py-3 rounded-xl text-sm"
-            style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: `1px solid ${C.red}` }}>
-            {error}
+        {markerPos && (
+          <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-linear"
+            style={{ left: `${markerPos.x * 100}%`, top: `${markerPos.y * 100}%`, transform: 'translate(-50%, -100%)' }}>
+            <div className="flex flex-col items-center -translate-y-1">
+              {playerName && (
+                <div className="px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap mb-1"
+                  style={{ backgroundColor: C.gold, color: C.bg, boxShadow: `0 0 18px rgba(255,184,0,0.6)` }}>
+                  {playerName}
+                </div>
+              )}
+              <ArrowDown size={28} strokeWidth={3}
+                style={{ color: C.gold, filter: `drop-shadow(0 0 8px ${C.gold}) drop-shadow(0 2px 4px rgba(0,0,0,0.6))` }} />
+            </div>
           </div>
         )}
 
-        {/* Bouton Publier */}
-        <button type="submit" disabled={loading}
-          className="w-full py-4 rounded-xl text-sm font-extrabold mt-6 flex items-center justify-center gap-2"
-          style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
-          {loading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-          {loading ? 'Publication...' : 'Publier ma vidéo'}
+        {showHint && keyframes.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="px-4 py-3 rounded-xl text-center max-w-[80%]"
+              style={{ backgroundColor: 'rgba(8,15,32,0.85)', border: `1px solid ${C.borderGold}`, backdropFilter: 'blur(10px)' }}>
+              <PinIcon size={22} style={{ color: C.gold }} className="mx-auto mb-1" />
+              <div className="text-sm font-semibold" style={{ color: C.text }}>Tape sur la tête du joueur</div>
+              <div className="text-[11px] mt-0.5" style={{ color: C.textDim }}>à différents moments</div>
+            </div>
+          </div>
+        )}
+
+        <button onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+          className="absolute bottom-3 left-3 w-10 h-10 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(8,15,32,0.75)', border: `1px solid ${C.borderGold}`, backdropFilter: 'blur(10px)', color: C.gold }}>
+          {playing ? <Pause size={18} fill={C.gold} /> : <Play size={18} fill={C.gold} />}
         </button>
-      </form>
+
+        <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-md font-mono text-[11px]"
+          style={{ backgroundColor: 'rgba(8,15,32,0.75)', color: C.text, backdropFilter: 'blur(10px)' }}>
+          {fmtTime(currentTime)} / {fmtTime(duration)}
+        </div>
+      </div>
+
+      <div className="px-4 mt-4">
+        <div className="relative h-10">
+          <input type="range" min="0" max={duration || 1} step="0.05" value={currentTime}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            className="absolute inset-0 w-full"
+            style={{
+              background: `linear-gradient(to right, ${C.gold} 0%, ${C.gold} ${(currentTime / (duration || 1)) * 100}%, rgba(255,255,255,0.12) ${(currentTime / (duration || 1)) * 100}%, rgba(255,255,255,0.12) 100%)`,
+              borderRadius: 2, height: 4, top: 18,
+            }} />
+          <div className="absolute inset-x-0 top-0 h-4 pointer-events-none">
+            {keyframes.map((k, i) => (
+              <div key={i} className="absolute -translate-x-1/2"
+                style={{ left: `${(k.t / (duration || 1)) * 100}%`, top: 0 }}>
+                <div className="w-2 h-3 rounded-sm" style={{ backgroundColor: C.gold, boxShadow: `0 0 6px ${C.gold}` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 mt-4 flex flex-col gap-3">
+        <div>
+          <label className="text-xs font-semibold mb-1.5 block" style={{ color: C.text }}>Nom du joueur</label>
+          <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)}
+            placeholder="ex. Kylian Benga" maxLength={30}
+            className="w-full px-3.5 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+
+        {keyframes.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold" style={{ color: C.text }}>
+                Points de tracking ({keyframes.length})
+              </label>
+              <button onClick={clearAll} className="text-[11px] flex items-center gap-1" style={{ color: C.gold }}>
+                <Trash2 size={11} /> Tout effacer
+              </button>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {keyframes.map((k, i) => {
+                const active = Math.abs(k.t - currentTime) < 0.1;
+                return (
+                  <div key={i} className="flex-shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                    style={{ backgroundColor: active ? C.goldSoft : C.surface, border: `1px solid ${active ? C.gold : C.border}` }}>
+                    <button onClick={() => seekTo(k.t)}
+                      className="font-mono text-[11px]" style={{ color: active ? C.gold : C.text }}>
+                      {fmtTime(k.t)}
+                    </button>
+                    <button onClick={() => removeKeyframe(i)}
+                      className="w-4 h-4 rounded-full flex items-center justify-center"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+                      <X size={9} style={{ color: C.text }} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <GoldButton variant="solid" icon={CheckCircle2} fullWidth className="mt-2">
+          Publier la vidéo {keyframes.length > 0 ? `(${keyframes.length} points)` : ''}
+        </GoldButton>
+      </div>
     </div>
   );
 }
@@ -1637,25 +1572,33 @@ function AthleteProfile({ athlete, onClose, isRecruiter, shortlisted, onToggleSh
 
 // ═══ PROFIL VIEWS (athlète & recruteur) ═════════════════════════════
 function ProfileView({ onSwitchToRecruiter, userProfile, userEmail, onLogout }) {
+  const initial = userProfile?.full_name?.charAt(0)?.toUpperCase() || userEmail?.charAt(0)?.toUpperCase() || '?'
+  const displayName = userProfile?.full_name || 'Nouvel utilisateur'
+
   return (
-    <div className="pt-12 pb-32 px-4" style={{ height: '100dvh', backgroundColor: C.bg }}>
+    <div className="pt-12 pb-32 px-4 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
       <div className="flex flex-col items-center mb-6 fade-in">
         <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-3"
           style={{ backgroundColor: C.surface, color: C.gold, border: `2px solid ${C.gold}` }}>
-          {userProfile?.full_name?.charAt(0)?.toUpperCase() || userEmail?.charAt(0)?.toUpperCase() || '?'}
+          {initial}
         </div>
         <div className="flex items-center gap-2 mb-1">
-<h2 className="text-xl font-extrabold" style={{ color: C.text }}>{userProfile?.full_name || 'Nouvel utilisateur'}</h2>
-          <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />
+          <h2 className="text-xl font-extrabold" style={{ color: C.text }}>{displayName}</h2>
         </div>
-        <span className="text-sm" style={{ color: C.textDim }}>{userEmail || ''}</span>
+        {userProfile?.sport && userProfile?.position ? (
+          <span className="text-sm" style={{ color: C.textDim }}>
+            {userProfile.sport} · {userProfile.position}
+          </span>
+        ) : (
+          <span className="text-sm" style={{ color: C.textDim }}>{userEmail}</span>
+        )}
         <span className="text-[10px] mt-1 flex items-center gap-1" style={{ color: C.textMute }}>
           🇫🇷 France
         </span>
       </div>
 
       <div className="grid grid-cols-3 gap-2 mb-4">
-        {[{ v: '2.4K', l: 'Abonnés' }, { v: '186', l: 'Abonnements' }, { v: '128', l: 'Vidéos' }].map((s, i) => (
+        {[{ v: '0', l: 'Abonnés' }, { v: '0', l: 'Abonnements' }, { v: '0', l: 'Vidéos' }].map((s, i) => (
           <div key={i} className="rounded-xl py-3 text-center"
             style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
             <div className="text-base font-bold" style={{ color: C.gold }}>{s.v}</div>
@@ -1665,6 +1608,12 @@ function ProfileView({ onSwitchToRecruiter, userProfile, userEmail, onLogout }) 
       </div>
 
       <div className="flex flex-col gap-2">
+        <button onClick={onSwitchToRecruiter}
+          className="w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold"
+          style={{ backgroundColor: 'transparent', color: C.gold, border: `1px dashed ${C.borderGold}` }}>
+          <Briefcase size={14} /> Passer en mode recruteur
+        </button>
+
         <button onClick={onLogout}
           className="w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold mt-4"
           style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
@@ -1674,6 +1623,7 @@ function ProfileView({ onSwitchToRecruiter, userProfile, userEmail, onLogout }) 
     </div>
   );
 }
+
 
 function RecruiterProfileView({ onLogout }) {
   const r = CURRENT_RECRUITER;
@@ -1745,11 +1695,9 @@ function RecruiterProfileView({ onLogout }) {
         </div>
       </div>
 
-    <button onClick={onLogout}
-              className="w-full py-3 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold"
-              style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
-              Se déconnecter
-            </button>
+      <GoldButton variant="outline" fullWidth onClick={onLogout}>
+        Repasser en mode joueur
+      </GoldButton>
     </div>
   );
 }
@@ -1811,68 +1759,53 @@ function BottomNav({ tab, setTab, mode }) {
 
 // ═══ APP ═══════════════════════════════════════════════════════════
 export default function App() {
-// ─── AUTHENTIFICATION SUPABASE ─────────────────────────────────
-  const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState(null);
-  const [videos, setVideos] = useState([]);
-
-  const loadVideos = async () => {
-    const { data, error } = await supabase
-      .from('videos')
-      .select(`
-        *,
-       profiles!videos_user_id_fkey ( id, full_name, username, is_recruiter )
-      `)
-      .order('created_at', { ascending: false });
-      console.log('🎬 Vidéos chargées:', { data, error });
-    
-    if (error) {
-      console.error('Erreur chargement vidéos:', error);
-      return;
-    }
-    setVideos(data || []);
-  };
-
+  // Gestion de la session utilisateur
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [userProfile, setUserProfile] = useState(null)
   useEffect(() => {
-    loadVideos();
-  }, []);
+    // Récupérer la session actuelle
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setAuthLoading(false)
+      if (session) loadProfile(session.user.id)
+    })
 
+    // Écouter les changements (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      if (session) loadProfile(session.user.id)
+      else setUserProfile(null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // Fonction pour charger le profil depuis Supabase
   const loadProfile = async (userId) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
-      .single();
+      .single()
+    
     if (error) {
-      console.error('Erreur chargement profil:', error);
-      return;
+      console.error('Erreur chargement profil:', error)
+      return
     }
-    setUserProfile(data);
-  };
+    setUserProfile(data)
+  }
+    })
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setAuthLoading(false);
-      if (session) loadProfile(session.user.id);
-    });
-
+    // Écoute les changements de session (login/logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) loadProfile(session.user.id);
-      else setUserProfile(null);
-    });
+      setSession(session)
+    })
 
-    return () => subscription.unsubscribe();
-  }, []);
-  const [mode, setMode] = useState('athlete');
-  // Synchroniser le mode avec le rôle du profil Supabase
-  useEffect(() => {
-    if (userProfile) {
-      setMode(userProfile.is_recruiter ? 'recruiter' : 'athlete');
-    }
-  }, [userProfile]); // 'athlete' | 'recruiter'
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const [mode, setMode] = useState('athlete'); // 'athlete' | 'recruiter'
   const [tab, setTab] = useState('feed');
   const [filtered] = useState(() => SportDetectorAI.filter(VIDEOS));
   const [selectedAthlete, setSelectedAthlete] = useState(null);
@@ -1916,7 +1849,7 @@ export default function App() {
   const renderScreen = () => {
     if (mode === 'recruiter') {
       switch (tab) {
-        case 'feed':      return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+        case 'feed':      return <FeedView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
         case 'discover':  return <DiscoveryView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} />;
         case 'shortlist': return <ShortlistView videos={filtered.videos} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} notes={notes} onSelectAthlete={setSelectedAthlete} onOpenChat={openChatWithAthlete} onAddNote={addNote} onUpdateNote={updateNote} onDeleteNote={deleteNote} />;
         case 'messages':  return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
@@ -1925,15 +1858,15 @@ export default function App() {
       }
     }
     switch (tab) {
-      case 'feed':     return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+      case 'feed':     return <FeedView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
       case 'search':   return <SearchView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
-      case 'publish':   return <PublishView userProfile={userProfile} setTab={setTab} />;
+      case 'publish':  return <PublishView />;
       case 'messages': return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
       case 'profile':   return <ProfileView onSwitchToRecruiter={() => switchMode('recruiter')} userProfile={userProfile} userEmail={session?.user?.email} onLogout={async () => { await supabase.auth.signOut(); }} />;
       default: return null;
     }
   };
-// Pendant le chargement de la session
+// 3️⃣ Les early returns (les "if" qui retournent autre chose)
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#080F20' }}>
@@ -1941,14 +1874,12 @@ export default function App() {
           Sco<span style={{ color: '#FFB800' }}>lympia</span>
         </div>
       </div>
-    );
+    )
   }
 
-  // Pas connecté → écran d'authentification
   if (!session) {
-    return <Auth />;
+    return <Auth />
   }
-
   return (
     <div className="relative" style={{ backgroundColor: C.bg, minHeight: '100dvh' }}>
       <FontStyles />

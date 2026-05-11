@@ -315,164 +315,16 @@ function VideoCard({ data, muted, onToggleMute, onSelectAthlete }) {
   );
 }
 
-// ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
-function SupabaseVideoCard({ data, onPlay }) {
-  // Extraire l'ID YouTube depuis l'URL
-  const getYouTubeId = (url) => {
-    const match = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-    return match ? match[1] : null;
-  };
-
-  const youtubeId = getYouTubeId(data.youtube_url);
-  const thumbnailUrl = youtubeId 
-    ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
-    : null;
-
-  const sport = SPORTS.find(s => s.id === data.sport);
-  const authorName = data.profiles?.full_name || 'Athlète';
-
+function FeedView({ videos, onSelectAthlete }) {
+  const [muted, setMuted] = useState(true);
   return (
-    <div className="relative h-screen snap-start flex flex-col"
-      style={{ backgroundColor: '#000' }}>
-      
-      {/* Miniature YouTube cliquable */}
-      <button onClick={() => onPlay(data)} className="relative flex-1 w-full overflow-hidden">
-        {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt={data.title}
-            className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center"
-            style={{ backgroundColor: C.surface }}>
-            <span style={{ color: C.textDim }}>Vidéo</span>
-          </div>
-        )}
-
-        {/* Overlay gradient */}
-        <div className="absolute inset-0"
-          style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
-
-        {/* Gros bouton play au centre */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
-            <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
-          </div>
-        </div>
-      </button>
-
-      {/* Infos en bas */}
-      <div className="absolute bottom-24 left-4 right-4 fade-in">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold"
-            style={{ backgroundColor: C.surface, color: C.gold, border: `2px solid ${C.gold}` }}>
-            {authorName.charAt(0).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-bold text-sm truncate" style={{ color: C.text }}>
-              {authorName}
-            </div>
-            {data.position && (
-              <div className="text-xs truncate" style={{ color: C.textDim }}>
-                {sport?.icon || '🏆'} {sport?.label || data.sport} · {data.position}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <h2 className="text-lg font-extrabold mb-1" style={{ color: C.text }}>
-          {data.title}
-        </h2>
-
-        {data.description && (
-          <p className="text-xs line-clamp-2" style={{ color: C.textDim }}>
-            {data.description}
-          </p>
-        )}
-      </div>
+    <div className="overflow-y-auto snap-y snap-mandatory scrollbar-none"
+      style={{ height: '100dvh', backgroundColor: '#000' }}>
+      {videos.map(v => (
+        <VideoCard key={v.id} data={v} muted={muted}
+          onToggleMute={() => setMuted(!muted)} onSelectAthlete={onSelectAthlete} />
+      ))}
     </div>
-  );
-}
-
-// ─── LECTEUR YOUTUBE en overlay ──────────
-function YouTubePlayer({ video, onClose }) {
-  const getYouTubeId = (url) => {
-    const match = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-    return match ? match[1] : null;
-  };
-
-  const youtubeId = getYouTubeId(video.youtube_url);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col"
-      style={{ backgroundColor: '#000' }}>
-      
-      {/* Header avec bouton fermer */}
-      <div className="flex items-center justify-between px-4 py-3"
-        style={{ backgroundColor: C.bg }}>
-        <button onClick={onClose}
-          className="w-10 h-10 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: C.surface }}>
-          <X size={20} style={{ color: C.text }} />
-        </button>
-        <div className="text-sm font-semibold truncate flex-1 mx-3 text-center" style={{ color: C.text }}>
-          {video.title}
-        </div>
-        <div className="w-10" />
-      </div>
-
-      {/* Lecteur iframe */}
-      <div className="flex-1 flex items-center justify-center">
-        {youtubeId ? (
-          <iframe
-            width="100%"
-            height="100%"
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
-            title={video.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            style={{ border: 0 }}
-          />
-        ) : (
-          <div style={{ color: C.textDim }}>Vidéo introuvable</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function FeedView({ videos }) {
-  const [playingVideo, setPlayingVideo] = useState(null);
-
-  // Empty state : aucune vidéo publiée
-  if (!videos || videos.length === 0) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6"
-        style={{ backgroundColor: C.bg }}>
-        <div className="text-6xl mb-4">🎬</div>
-        <h2 className="text-xl font-extrabold mb-2 text-center" style={{ color: C.text }}>
-          Aucune vidéo encore
-        </h2>
-        <p className="text-sm text-center" style={{ color: C.textDim }}>
-          Sois le premier à publier !<br />
-          Clique sur le bouton + en bas.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="overflow-y-auto snap-y snap-mandatory scrollbar-none"
-        style={{ height: '100dvh', backgroundColor: '#000' }}>
-        {videos.map(v => (
-          <SupabaseVideoCard key={v.id} data={v} onPlay={setPlayingVideo} />
-        ))}
-      </div>
-
-      {playingVideo && (
-        <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
-      )}
-    </>
   );
 }
 
@@ -1815,28 +1667,6 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [userProfile, setUserProfile] = useState(null);
-  const [videos, setVideos] = useState([]);
-
-  const loadVideos = async () => {
-    const { data, error } = await supabase
-      .from('videos')
-      .select(`
-        *,
-       profiles!videos_user_id_fkey ( id, full_name, username, is_recruiter )
-      `)
-      .order('created_at', { ascending: false });
-      console.log('🎬 Vidéos chargées:', { data, error });
-    
-    if (error) {
-      console.error('Erreur chargement vidéos:', error);
-      return;
-    }
-    setVideos(data || []);
-  };
-
-  useEffect(() => {
-    loadVideos();
-  }, []);
 
   const loadProfile = async (userId) => {
     const { data, error } = await supabase
@@ -1916,7 +1746,7 @@ export default function App() {
   const renderScreen = () => {
     if (mode === 'recruiter') {
       switch (tab) {
-        case 'feed':      return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+        case 'feed':      return <FeedView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
         case 'discover':  return <DiscoveryView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} />;
         case 'shortlist': return <ShortlistView videos={filtered.videos} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} notes={notes} onSelectAthlete={setSelectedAthlete} onOpenChat={openChatWithAthlete} onAddNote={addNote} onUpdateNote={updateNote} onDeleteNote={deleteNote} />;
         case 'messages':  return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
@@ -1925,7 +1755,7 @@ export default function App() {
       }
     }
     switch (tab) {
-      case 'feed':     return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+      case 'feed':     return <FeedView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
       case 'search':   return <SearchView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
       case 'publish':   return <PublishView userProfile={userProfile} setTab={setTab} />;
       case 'messages': return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
