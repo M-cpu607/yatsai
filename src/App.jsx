@@ -4382,7 +4382,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
 }
 
 function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversation, onSelectProfile,
-                        isRecruiter, onOpenCandidature }) {
+                        isRecruiter, isAthlete, onOpenCandidature }) {
   return (
     <div className="pt-12 pb-32 px-4 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
       <div className="flex items-center justify-between mb-1">
@@ -4397,8 +4397,8 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
         {conversations.length === 0 ? 'Aucune conversation' : `${conversations.length} conversation${conversations.length > 1 ? 's' : ''}`}
       </p>
 
-      {/* Bouton candidature pour les athlètes uniquement */}
-      {!isRecruiter && (
+      {/* Bouton candidature : athlètes uniquement (pas les recruteurs ni les observateurs) */}
+      {isAthlete && (
         <button onClick={onOpenCandidature}
           className="w-full mb-4 rounded-xl px-4 py-3 flex items-center gap-3 fade-in"
           style={{
@@ -10935,6 +10935,7 @@ export default function App() {
     onNewConversation: () => setNewConvOpen(true),
     onSelectProfile: openProfile,
     isRecruiter: !!userProfile?.is_recruiter,
+    isAthlete: isAthleteRole(userProfile),
     onOpenCandidature: () => setCandidatureOpen(true),
   };
 
