@@ -132,10 +132,11 @@ export default function Auth({ initialMode = 'login' }) {
 
   // Multi-étapes en mode inscription : 0 = profil, 1 = pratique, 2 = localisation + identifiants
   const [signupStep, setSignupStep] = useState(0)
-  const TOTAL_STEPS = 3
+  // Total dynamique : observateur a 2 étapes, athlète/recruteur en ont 3
 
   const isAthlete = role === 'athlete'
   const isRecruiter = role === 'recruiter'
+  const isObserver = role === 'observer'
 
   // Validation côté athlète
   // - Niveau requis dans tous les cas.
@@ -151,10 +152,15 @@ export default function Auth({ initialMode = 'login' }) {
     && recruitingLevels.length > 0
     && recruitingAgeMin !== '' && recruitingAgeMax !== ''
     && Number(recruitingAgeMin) <= Number(recruitingAgeMax)
+  // Observateur : juste un nom (l'âge et le genre ne sont pas demandés)
+  const observerReady = isObserver && fullName.trim()
   const baseReady = email.trim() && password.length >= 6
 
   // Validation par étape (inscription)
-  const step0Ready = role && fullName.trim() && gender && age !== '' // nationalité optionnelle
+  // Pour les observateurs : pas besoin de genre/âge — uniquement nom.
+  const step0Ready = isObserver
+    ? (role && fullName.trim())
+    : (role && fullName.trim() && gender && age !== '')
   const step1Ready = isAthlete
     ? (sport && hasClub !== null && level && (hasClub === false || club.trim())
         && (!needsProof || !!levelProofFile))
@@ -164,12 +170,17 @@ export default function Auth({ initialMode = 'login' }) {
         && Number(recruitingAgeMin) <= Number(recruitingAgeMax))
   const step2Ready = baseReady // localisation optionnelle
 
-  const STEP_LABELS = ['Profil', isAthlete ? 'Ta pratique' : 'Ton activité', 'Finalisation']
-  const stepReady = [step0Ready, step1Ready, step2Ready]
+  // L'observateur n'a que 2 étapes : Profil → Identifiants (skip "pratique").
+  const STEP_LABELS = isObserver
+    ? ['Profil', 'Identifiants']
+    : ['Profil', isAthlete ? 'Ta pratique' : 'Ton activité', 'Finalisation']
+  const stepReady = isObserver
+    ? [step0Ready, step2Ready]
+    : [step0Ready, step1Ready, step2Ready]
 
   const canSubmit = mode === 'login'
     ? baseReady
-    : baseReady && (athleteReady || recruiterReady)
+    : baseReady && (athleteReady || recruiterReady || observerReady)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -184,6 +195,7 @@ export default function Auth({ initialMode = 'login' }) {
         const metadata = {
           full_name: fullName.trim(),
           is_recruiter: isRecruiter,
+          role, // 'athlete' | 'recruiter' | 'observer'
         }
         if (isAthlete) {
           metadata.gender = gender
@@ -222,6 +234,7 @@ export default function Auth({ initialMode = 'login' }) {
           const profileUpdate = {
             full_name: fullName.trim(),
             is_recruiter: isRecruiter,
+            role, // 'athlete' | 'recruiter' | 'observer'
             country: country.trim() || null,
             region: region.trim() || null,
             city: city.trim() || null,
@@ -242,7 +255,7 @@ export default function Auth({ initialMode = 'login' }) {
             } else {
               profileUpdate.level_proof_status = 'none'
             }
-          } else {
+          } else if (isRecruiter) {
             profileUpdate.gender = gender
             profileUpdate.age = age !== '' ? Number(age) : null
             profileUpdate.nationality = nationality.trim() || null
@@ -253,6 +266,8 @@ export default function Auth({ initialMode = 'login' }) {
             profileUpdate.recruiting_age_min = recruitingAgeMin !== '' ? Number(recruitingAgeMin) : null
             profileUpdate.recruiting_age_max = recruitingAgeMax !== '' ? Number(recruitingAgeMax) : null
           }
+          // Observateur : on n'écrit que le nom + email + localisation (déjà inclus ci-dessus).
+          // Pas de sport, pas de niveau, pas de critères de recrutement.
           await supabase.from('profiles').update(profileUpdate).eq('id', data.user.id)
 
           // Upload de la preuve de niveau si fournie (young_pro / senior_pro)
@@ -310,16 +325,16 @@ export default function Auth({ initialMode = 'login' }) {
           <div className="mb-2">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold" style={{ color: C.textDim }}>
-                Étape {signupStep + 1} / {TOTAL_STEPS} · <span style={{ color: C.gold }}>{STEP_LABELS[signupStep]}</span>
+                Étape {signupStep + 1} / {STEP_LABELS.length} · <span style={{ color: C.gold }}>{STEP_LABELS[signupStep]}</span>
               </span>
               <span className="text-[10px]" style={{ color: C.textMute }}>
-                {Math.round(((signupStep + 1) / TOTAL_STEPS) * 100)}%
+                {Math.round(((signupStep + 1) / STEP_LABELS.length) * 100)}%
               </span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden"
               style={{ backgroundColor: C.surface }}>
               <div className="h-full transition-all duration-300"
-                style={{ width: `${((signupStep + 1) / TOTAL_STEPS) * 100}%`, backgroundColor: C.gold }} />
+                style={{ width: `${((signupStep + 1) / STEP_LABELS.length) * 100}%`, backgroundColor: C.gold }} />
             </div>
           </div>
         )}
@@ -331,9 +346,9 @@ export default function Auth({ initialMode = 'login' }) {
             {signupStep === 0 && (
               <>
                 <Section title="Je suis…">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button type="button" onClick={() => setRole('athlete')}
-                  className="py-3 rounded-xl text-sm font-semibold transition-all"
+                  className="py-3 rounded-xl text-xs font-semibold transition-all"
                   style={{
                     backgroundColor: isAthlete ? C.goldSoft : C.surface,
                     color: isAthlete ? C.gold : C.text,
@@ -342,7 +357,7 @@ export default function Auth({ initialMode = 'login' }) {
                   ⚽ Athlète
                 </button>
                 <button type="button" onClick={() => setRole('recruiter')}
-                  className="py-3 rounded-xl text-sm font-semibold transition-all"
+                  className="py-3 rounded-xl text-xs font-semibold transition-all"
                   style={{
                     backgroundColor: isRecruiter ? C.goldSoft : C.surface,
                     color: isRecruiter ? C.gold : C.text,
@@ -350,7 +365,22 @@ export default function Auth({ initialMode = 'login' }) {
                   }}>
                   💼 Recruteur
                 </button>
+                <button type="button" onClick={() => setRole('observer')}
+                  className="py-3 rounded-xl text-xs font-semibold transition-all"
+                  style={{
+                    backgroundColor: isObserver ? C.goldSoft : C.surface,
+                    color: isObserver ? C.gold : C.text,
+                    border: `1px solid ${isObserver ? C.gold : C.border}`,
+                  }}>
+                  👀 Observateur
+                </button>
               </div>
+              {isObserver && (
+                <p className="text-[11px] mt-2" style={{ color: C.textMute }}>
+                  Tu pourras enregistrer les vidéos que tu aimes, suivre des athlètes
+                  et explorer le feed. Pas de publication ni de recrutement.
+                </p>
+              )}
             </Section>
 
                 {/* Nom */}
@@ -734,8 +764,8 @@ export default function Auth({ initialMode = 'login' }) {
               </>
             )}
 
-            {/* ===== ÉTAPE 2 : Localisation (toutes catégories) ===== */}
-            {signupStep === 2 && (
+            {/* ===== Localisation (athlètes + recruteurs uniquement, dernière étape) ===== */}
+            {!isObserver && signupStep === STEP_LABELS.length - 1 && (
               <Section title="Où es-tu basé ?" hint="Permet aux recruteurs / athlètes de ta zone de te trouver.">
                 <div className="grid grid-cols-3 gap-2">
                   <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
@@ -756,8 +786,8 @@ export default function Auth({ initialMode = 'login' }) {
           </>
         )}
 
-        {/* Email + password — visibles en login OU à l'étape 2 de l'inscription */}
-        {(mode === 'login' || signupStep === 2) && (
+        {/* Email + password — visibles en login OU à la dernière étape de l'inscription */}
+        {(mode === 'login' || signupStep === STEP_LABELS.length - 1) && (
           <Section title={mode === 'signup' ? 'Tes identifiants' : ''}>
             <div className="flex flex-col gap-2">
               <div className="relative">
@@ -806,10 +836,10 @@ export default function Auth({ initialMode = 'login' }) {
                 ← Précédent
               </button>
             )}
-            {signupStep < TOTAL_STEPS - 1 ? (
+            {signupStep < STEP_LABELS.length - 1 ? (
               <button type="button"
                 disabled={!stepReady[signupStep]}
-                onClick={() => { setError(null); setSignupStep(s => Math.min(TOTAL_STEPS - 1, s + 1)) }}
+                onClick={() => { setError(null); setSignupStep(s => Math.min(STEP_LABELS.length - 1, s + 1)) }}
                 className="flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
                 style={{
                   backgroundColor: C.gold, color: C.bg,

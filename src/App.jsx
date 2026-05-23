@@ -180,6 +180,24 @@ const SPORTS = [
   { id: 'hockey', label: 'Hockey sur glace', icon: '🏒' },
 ];
 
+// ─── RÔLES UTILISATEUR ───────────────────────────────────────────
+// 3 rôles : athlete (publie des vidéos), recruiter (recrute, peut signer)
+// et observer (parents, coachs, fans : peut juste enregistrer des vidéos).
+function getUserRole(profile) {
+  if (!profile) return 'athlete';
+  if (profile.role) return profile.role;
+  // Fallback pour les profils legacy qui n'ont que is_recruiter
+  return profile.is_recruiter ? 'recruiter' : 'athlete';
+}
+function isAthleteRole(profile) { return getUserRole(profile) === 'athlete'; }
+function isRecruiterRole(profile) { return getUserRole(profile) === 'recruiter'; }
+function isObserverRole(profile) { return getUserRole(profile) === 'observer'; }
+// Peut enregistrer (bookmark) des vidéos : recruteur + observateur
+function canBookmarkVideos(profile) {
+  const r = getUserRole(profile);
+  return r === 'recruiter' || r === 'observer';
+}
+
 // ─── LANDING PAGE ────────────────────────────────────────────────
 function LandingPage({ onStart }) {
   return (
@@ -657,7 +675,7 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 
 // ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
 function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, onOpenShare,
-                             isRecruiter, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
+                             isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
                              onReport, isSaved, onToggleSave }) {
   const [infoHidden, setInfoHidden] = useState(false);
   const thumbnailUrl = getVideoThumb(data);
@@ -726,8 +744,8 @@ function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, o
           <IconButton icon={Flag} label="Signaler"
             onClick={(e) => { e?.stopPropagation?.(); onReport?.('video', data.id, data.title); }} />
         )}
-        {/* Bouton enregistrer (favoris) — RECRUTEURS UNIQUEMENT */}
-        {isRecruiter && !isOwnVideo && (
+        {/* Bouton enregistrer (favoris) — recruteurs + observateurs */}
+        {canBookmark && !isOwnVideo && (
           <IconButton icon={Bookmark} label="Enregistrer" active={isSaved}
             onClick={(e) => { e?.stopPropagation?.(); onToggleSave?.(data.id); }} />
         )}
@@ -1225,7 +1243,7 @@ const FEED_PERIOD_FILTERS = [
 
 function FeedView({ videos, periodFilter, onChangePeriodFilter,
                     typeFilter, onChangeTypeFilter,
-                    engagement, currentUserId, isRecruiter, dbShortlist,
+                    engagement, currentUserId, isRecruiter, canBookmark, dbShortlist,
                     onLike, onAddComment, onDeleteComment, onShare,
                     onAddToShortlist, onSelectProfile, onOpenSearch, onReport,
                     onOpenNotifications, notifUnreadCount,
@@ -1296,6 +1314,7 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
                 onOpenComments={setCommentsVideo}
                 onOpenShare={setShareVideo}
                 isRecruiter={isRecruiter}
+                canBookmark={canBookmark}
                 shortlistStatus={slStatus}
                 onAddShortlist={(vid) => onAddToShortlist?.(vid)}
                 isOwnVideo={v.user_id === currentUserId}
@@ -1555,6 +1574,12 @@ function PublishView({ userProfile, setTab }) {
   const [position, setPosition] = useState('');
   const [description, setDescription] = useState('');
   const [videoType, setVideoType] = useState(null); // 'match' | 'training'
+  // Nouveaux champs vidéo
+  const [championship, setChampionship] = useState('');
+  const [ageCategory, setAgeCategory] = useState('');
+  const [city, setCity] = useState(userProfile?.city || '');
+  const [region, setRegion] = useState(userProfile?.region || '');
+  const [country, setCountry] = useState(userProfile?.country || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -1673,6 +1698,11 @@ function PublishView({ userProfile, setTab }) {
       video_url: extra.video_url ?? null,
       thumbnail_url: extra.thumbnail_url ?? null,
       duration_seconds: extra.duration_seconds ?? null,
+      championship: championship.trim() || null,
+      age_category: ageCategory.trim() || null,
+      city: city.trim() || null,
+      region: region.trim() || null,
+      country: country.trim() || null,
     };
     const { error: insertError } = await supabase.from('videos').insert(row);
     if (insertError) { setError('Erreur : ' + insertError.message); return false; }
@@ -1744,6 +1774,8 @@ function PublishView({ userProfile, setTab }) {
       setSuccess(false);
       setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
       setVideoType(null);
+      setChampionship(''); setAgeCategory('');
+      setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
       clearUpload();
       setAiResult(null);
       setTab('feed');
@@ -1961,6 +1993,61 @@ function PublishView({ userProfile, setTab }) {
           </div>
         </div>
 
+        {/* Championnat */}
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+            🏆 Championnat (optionnel)
+          </label>
+          <input type="text" value={championship} onChange={(e) => setChampionship(e.target.value)}
+            placeholder="Ex : National 2, Championnat de France, Ligue 1…" maxLength={80}
+            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+
+        {/* Catégorie d'âge */}
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+            🎂 Catégorie d'âge (optionnel)
+          </label>
+          <input type="text" value={ageCategory} onChange={(e) => setAgeCategory(e.target.value)}
+            placeholder="Ex : U15, U17, U19, Senior, Vétérans…" maxLength={40}
+            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+
+        {/* Localisation (pré-remplie depuis le profil) */}
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+            📍 Localisation
+            <span className="ml-1.5 font-normal" style={{ color: C.textMute }}>
+              (pré-remplie depuis tes paramètres)
+            </span>
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-[10px] mb-1 block" style={{ color: C.textMute }}>Pays</label>
+              <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
+                placeholder="France" maxLength={60}
+                className="w-full px-3 py-2.5 rounded-lg text-xs outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            </div>
+            <div>
+              <label className="text-[10px] mb-1 block" style={{ color: C.textMute }}>Région</label>
+              <input type="text" value={region} onChange={(e) => setRegion(e.target.value)}
+                placeholder="Île-de-France" maxLength={60}
+                className="w-full px-3 py-2.5 rounded-lg text-xs outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            </div>
+            <div>
+              <label className="text-[10px] mb-1 block" style={{ color: C.textMute }}>Ville</label>
+              <input type="text" value={city} onChange={(e) => setCity(e.target.value)}
+                placeholder="Paris" maxLength={60}
+                className="w-full px-3 py-2.5 rounded-lg text-xs outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            </div>
+          </div>
+        </div>
+
         {/* Erreur */}
         {error && (
           <div className="px-4 py-3 rounded-xl text-sm"
@@ -2138,6 +2225,11 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     levels: [],            // niveaux d'auteur
     position: '',          // texte libre
     periodDays: null,      // 1, 7, 30, 90, 180
+    championship: '',      // nom du championnat
+    ageCategory: '',       // U17, U19, Senior…
+    country: '',
+    region: '',
+    city: '',
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
@@ -2175,9 +2267,9 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
 
   // ─── Vidéos filtrées ─────────────────────────────────────────
   const filteredVideos = useMemo(() => videos.filter(v => {
-    // Filtre texte : titre, description, sport, position OU nom de l'auteur
+    // Filtre texte : titre, description, sport, position, championship, age_category, ville, pays OU nom de l'auteur
     if (needle) {
-      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
       if (!hay.includes(needle)) return false;
     }
     if (filters.sport && v.sport !== filters.sport) return false;
@@ -2191,6 +2283,11 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
       const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
       if (ageDays > filters.periodDays) return false;
     }
+    if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
+    if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+    if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
+    if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
+    if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
     return true;
   }), [videos, needle, filters]);
 
@@ -2212,7 +2309,12 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     + (filters.videoType ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
     + (filters.position.trim() ? 1 : 0)
-    + (filters.periodDays ? 1 : 0);
+    + (filters.periodDays ? 1 : 0)
+    + (filters.championship.trim() ? 1 : 0)
+    + (filters.ageCategory.trim() ? 1 : 0)
+    + (filters.country.trim() ? 1 : 0)
+    + (filters.region.trim() ? 1 : 0)
+    + (filters.city.trim() ? 1 : 0);
 
   const toggleLevel = (lv) => setFilters(f => ({
     ...f,
@@ -2400,6 +2502,48 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
+              {/* Championnat */}
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
+                <input type="text" value={filters.championship}
+                  onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
+                  placeholder="Ex : National 2, Ligue 1, Régional 1…"
+                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+              </div>
+
+              {/* Catégorie d'âge */}
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
+                <input type="text" value={filters.ageCategory}
+                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
+                  placeholder="Ex : U17, U19, Senior, Vétérans…"
+                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+              </div>
+
+              {/* Localisation vidéo */}
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📍 Localisation</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <input type="text" value={filters.country}
+                    onChange={(e) => setFilters(f => ({ ...f, country: e.target.value }))}
+                    placeholder="Pays"
+                    className="px-2 py-2 rounded-lg text-xs outline-none"
+                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+                  <input type="text" value={filters.region}
+                    onChange={(e) => setFilters(f => ({ ...f, region: e.target.value }))}
+                    placeholder="Région"
+                    className="px-2 py-2 rounded-lg text-xs outline-none"
+                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+                  <input type="text" value={filters.city}
+                    onChange={(e) => setFilters(f => ({ ...f, city: e.target.value }))}
+                    placeholder="Ville"
+                    className="px-2 py-2 rounded-lg text-xs outline-none"
+                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+                </div>
+              </div>
+
               {/* Reset */}
               {activeFilterCount > 0 && (
                 <button onClick={() => setFilters(DEFAULT_FILTERS)}
@@ -2452,11 +2596,29 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                             </div>
                           </div>
                         </div>
-                        <div className="p-2">
+                        <div className="p-2 space-y-0.5">
                           <div className="text-xs font-bold truncate" style={{ color: C.text }}>{v.title || 'Vidéo'}</div>
                           <div className="text-[10px] truncate" style={{ color: C.textDim }}>
                             par {v.profiles?.full_name || 'Athlète'}
+                            {v.profiles?.age ? ` · ${v.profiles.age} ans` : ''}
                           </div>
+                          {(v.video_type || v.profiles?.level || v.age_category) && (
+                            <div className="text-[10px] truncate" style={{ color: C.textMute }}>
+                              {v.video_type === 'match' ? '🏆 Match' : v.video_type === 'training' ? '🏋️ Entraînement' : ''}
+                              {v.profiles?.level && ` · ${v.profiles.level.replace('_', ' ')}`}
+                              {v.age_category && ` · ${v.age_category}`}
+                            </div>
+                          )}
+                          {v.championship && (
+                            <div className="text-[10px] truncate" style={{ color: C.gold }}>
+                              🏆 {v.championship}
+                            </div>
+                          )}
+                          {(v.city || v.country) && (
+                            <div className="text-[10px] truncate" style={{ color: C.textMute }}>
+                              📍 {[v.city, v.region, v.country].filter(Boolean).join(', ')}
+                            </div>
+                          )}
                         </div>
                       </button>
                     );
@@ -2735,6 +2897,42 @@ function scoreProfile(profile, profileVideos, profileSignedPosts, filters, keywo
   return score;
 }
 
+// ─── Score une vidéo selon les filtres extraits du chatbot ──────────
+function scoreVideo(video, author, filters, keywords) {
+  let score = 0;
+  if (filters.sport && video.sport === filters.sport) score += 5;
+  if (filters.levels && filters.levels.length > 0 && author?.level && filters.levels.includes(author.level)) score += 3;
+  if (filters.country) {
+    const vc = stripAccents((video.country || '').toLowerCase());
+    if (vc.includes(stripAccents(filters.country.toLowerCase()))) score += 3;
+  }
+  if (filters.city) {
+    const vc = stripAccents((video.city || '').toLowerCase());
+    if (vc.includes(stripAccents(filters.city.toLowerCase()))) score += 3;
+  }
+  if (filters.region) {
+    const vr = stripAccents((video.region || '').toLowerCase());
+    if (vr.includes(stripAccents(filters.region.toLowerCase()))) score += 2;
+  }
+  // Championship & age_category : match flou
+  const haystack = stripAccents([
+    video.title || '', video.description || '',
+    video.championship || '', video.age_category || '',
+    video.sport || '', video.position || '',
+    author?.full_name || '', author?.club || '',
+  ].join(' ').toLowerCase());
+  for (let i = 0; i < keywords.length; i++) {
+    if (haystack.includes(keywords[i])) score += 2;
+  }
+  // Bonus si le mot-clé matche exactement le championnat ou la catégorie d'âge
+  for (let i = 0; i < keywords.length; i++) {
+    const ch = stripAccents((video.championship || '').toLowerCase());
+    const ac = stripAccents((video.age_category || '').toLowerCase());
+    if (ch.includes(keywords[i]) || ac.includes(keywords[i])) score += 3;
+  }
+  return score;
+}
+
 // ─── Base de connaissances Yatsai (le chatbot peut expliquer l'app) ──
 const KB_ENTRIES = [
   {
@@ -2900,9 +3098,9 @@ function checkSensitive(query) {
 function ScoutAIChatbot({ onApplyFilters, onClose, viewerRole }) {
   const isAthlete = viewerRole === 'athlete';
   const intro = isAthlete
-    ? "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n🎯 **Trouver un championnat précis** : sport, pays, catégorie d'âge, région, département…\n\n💡 Pour être trouvé par les recruteurs, **indique le niveau de ton championnat** dans les titres et descriptions de tes vidéos, et dans ta bio.\n\n📅 Chaque début de saison (août/septembre), pense à mettre à jour ces infos !\n\nPose-moi une question (\"comment marche la shortlist ?\", \"recruteur basket à Lyon\"…)."
-    : "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n🎯 **Trouver des joueurs d'un championnat précis** : sport, pays, catégorie d'âge, région, département…\n\n💡 Astuce : je connais aussi tous les titres et descriptions des vidéos publiées + les bios. Tu peux donc me demander par exemple : \"joueurs en N2 à Bordeaux\".\n\nPose-moi une question (\"explique la shortlist\", \"attaquant U18 buteur\"…).";
-  const placeholder = isAthlete ? 'Ex : Recruteur basket à Paris…' : 'Ex : Attaquant U18 Régional 1…';
+    ? "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n👤 **Trouver un recruteur** : sport, pays, région, ville…\n🎬 **Trouver des vidéos** : championnat, catégorie d'âge, sport, ville…\n\n💡 Exemples : « vidéos U17 football Paris », « recruteur basket à Lyon », « match Régional 1 ».\n\nPose-moi ta question !"
+    : "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n👤 **Trouver des athlètes** : sport, niveau, ville, poste…\n🎬 **Trouver des vidéos** : championnat, catégorie d'âge (U17, U19…), localisation…\n\n💡 Exemples : « attaquant U18 Régional 1 Bordeaux », « vidéos football National 2 », « gardien senior Lyon ».\n\nPose-moi ta question !";
+  const placeholder = isAthlete ? 'Ex : Vidéos U17 foot Paris…' : 'Ex : Attaquant U18 Régional 1…';
 
   const [messages, setMessages] = useState([{ role: 'assistant', content: intro }]);
   const [input, setInput] = useState('');
@@ -3095,20 +3293,22 @@ function ScoutAIChatbot({ onApplyFilters, onClose, viewerRole }) {
 // ═══ SEARCH (Supabase — tous profils ou athlètes uniquement) ═══════
 function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                       dbShortlist, onAddToShortlist, onRemoveFromShortlist, headerBadge,
-                      onClose }) {
+                      onClose, onPlayVideo }) {
   const [query, setQuery] = useState('');
+  const [activeTab, setActiveTab] = useState('profiles'); // 'profiles' | 'videos'
   const DEFAULT_FILTERS = {
     sport: null, ageMin: 14, ageMax: 35,
     country: '', region: '', city: '', nationality: '',
     levels: [], position: '',
-    periodDays: null,  // null = "Tout", sinon nombre de jours max depuis la dernière vidéo publiée
+    championship: '',
+    ageCategory: '',
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [profiles, setProfiles] = useState([]);
+  const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Set des user_id ayant publié au moins une vidéo dans la fenêtre temporelle choisie
-  const [recentPublishers, setRecentPublishers] = useState(new Set());
+  const [videosLoading, setVideosLoading] = useState(true);
 
   useEffect(() => {
     let cancel = false;
@@ -3126,25 +3326,25 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     return () => { cancel = true; };
   }, [currentUserId, athletesOnly]);
 
-  // Charge les user_id ayant publié une vidéo dans la fenêtre choisie
+  // Charge les vidéos pour l'onglet vidéos
   useEffect(() => {
-    if (!filters.periodDays) {
-      setRecentPublishers(new Set());
-      return;
-    }
     let cancel = false;
+    setVideosLoading(true);
     (async () => {
-      const cutoff = new Date(Date.now() - filters.periodDays * 86400000).toISOString();
       const { data, error } = await supabase
         .from('videos')
-        .select('user_id')
-        .gte('created_at', cutoff);
+        .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, is_recruiter, city, region, country)`)
+        .order('created_at', { ascending: false })
+        .limit(200);
       if (cancel) return;
-      if (error) { console.error('Erreur récents publishers:', error); return; }
-      setRecentPublishers(new Set((data || []).map(v => v.user_id).filter(Boolean)));
+      if (error) console.error('Erreur chargement vidéos:', error);
+      setVideos(data || []);
+      setVideosLoading(false);
     })();
     return () => { cancel = true; };
-  }, [filters.periodDays]);
+  }, []);
+
+  // (filtre période supprimé de l'onglet Profils)
 
   // Realtime : patcher les profils listés dans la recherche
   useEffect(() => {
@@ -3187,10 +3387,6 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
     // Poste — match flou (contient) sur p.position, insensible à la casse
     if (filters.position && !norm(p.position).includes(norm(filters.position))) return false;
-    // Période — profil ayant publié une vidéo dans la fenêtre choisie
-    if (filters.periodDays) {
-      if (!recentPublishers.has(p.id)) return false;
-    }
     // Recherche texte
     if (query) {
       const needle = query.toLowerCase();
@@ -3198,7 +3394,29 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       if (!hay.includes(needle)) return false;
     }
     return true;
-  }), [profiles, query, filters, athletesOnly, recentPublishers]);
+  }), [profiles, query, filters, athletesOnly]);
+
+  // Vidéos filtrées (onglet vidéos)
+  const filteredVideos = useMemo(() => {
+    const needle = (query || '').toLowerCase().trim();
+    return videos.filter(v => {
+      if (needle) {
+        const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      if (filters.sport && v.sport !== filters.sport) return false;
+      if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
+      if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+      if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
+      if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
+      if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
+      if (filters.levels.length > 0) {
+        const lvl = v.profiles?.level;
+        if (!lvl || !filters.levels.includes(lvl)) return false;
+      }
+      return true;
+    });
+  }, [videos, query, filters]);
 
   const activeFilters = (filters.sport ? 1 : 0)
     + ((filters.ageMin !== 14 || filters.ageMax !== 35) ? 1 : 0)
@@ -3207,8 +3425,9 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     + (filters.city.trim() ? 1 : 0)
     + (filters.nationality.trim() ? 1 : 0)
     + (filters.position.trim() ? 1 : 0)
-    + (filters.periodDays ? 1 : 0)
-    + (filters.levels.length > 0 ? 1 : 0);
+    + (filters.levels.length > 0 ? 1 : 0)
+    + (filters.championship.trim() ? 1 : 0)
+    + (filters.ageCategory.trim() ? 1 : 0);
 
   const resetFilters = () => setFilters(DEFAULT_FILTERS);
   const toggleLevel = (id) => setFilters(f => ({
@@ -3261,15 +3480,39 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           )}
         </div>
         <p className="text-sm" style={{ color: C.textDim }}>
-          {loading ? 'Chargement…' : `${filtered.length} ${labelKind}${filtered.length > 1 ? 's' : ''} trouvé${filtered.length > 1 ? 's' : ''}`}
+          {activeTab === 'profiles'
+            ? (loading ? 'Chargement…' : `${filtered.length} ${labelKind}${filtered.length > 1 ? 's' : ''} trouvé${filtered.length > 1 ? 's' : ''}`)
+            : (videosLoading ? 'Chargement…' : `${filteredVideos.length} vidéo${filteredVideos.length > 1 ? 's' : ''} trouvée${filteredVideos.length > 1 ? 's' : ''}`)}
         </p>
+      </div>
+
+      {/* Onglets Profils / Vidéos */}
+      <div className="px-4 mb-3">
+        <div className="grid grid-cols-2 gap-1 p-1 rounded-xl"
+          style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+          {[
+            { id: 'profiles', label: '👤 Profils' },
+            { id: 'videos', label: '🎬 Vidéos' },
+          ].map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className="py-2.5 rounded-lg text-xs font-bold transition-colors"
+              style={{
+                backgroundColor: activeTab === tab.id ? C.gold : 'transparent',
+                color: activeTab === tab.id ? C.bg : C.textDim,
+              }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="px-4 mb-3 flex gap-2">
         <div className="relative flex-1">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: C.textMute }} />
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder={athletesOnly ? "Rechercher un athlète, un club, un poste…" : "Rechercher un utilisateur, un club, une organisation…"}
+            placeholder={activeTab === 'videos'
+              ? "Titre, championnat, catégorie, ville…"
+              : (athletesOnly ? "Rechercher un athlète, un club, un poste…" : "Rechercher un utilisateur, un club, une organisation…")}
             className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none"
             style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
           {query && (
@@ -3446,34 +3689,29 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
               </p>
             </div>
 
-            {/* Période de publication de vidéo (chips) */}
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📹 Vidéo publiée dans</label>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { id: null,  label: 'Tout' },
-                  { id: 1,     label: '< 24 h' },
-                  { id: 7,     label: '< 1 semaine' },
-                  { id: 30,    label: '< 1 mois' },
-                  { id: 90,    label: '< 3 mois' },
-                  { id: 180,   label: '< 6 mois' },
-                ].map(p => {
-                  const active = (filters.periodDays ?? null) === p.id;
-                  return (
-                    <button key={String(p.id)} type="button"
-                      onClick={() => setFilters(f => ({ ...f, periodDays: p.id }))}
-                      className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                      style={{
-                        backgroundColor: active ? C.goldSoft : C.bg,
-                        color: active ? C.gold : C.text,
-                        border: `1px solid ${active ? C.gold : C.border}`,
-                      }}>
-                      {p.label}
-                    </button>
-                  );
-                })}
+            {/* Championnat (onglet vidéos) */}
+            {activeTab === 'videos' && (
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
+                <input type="text" value={filters.championship}
+                  onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
+                  placeholder="Ex : National 2, Ligue 1, Régional 1…"
+                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
               </div>
-            </div>
+            )}
+
+            {/* Catégorie d'âge (onglet vidéos) */}
+            {activeTab === 'videos' && (
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
+                <input type="text" value={filters.ageCategory}
+                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
+                  placeholder="Ex : U17, U19, Senior, Vétérans…"
+                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               <GoldButton variant="outline" icon={RotateCcw} onClick={resetFilters}>Réinitialiser</GoldButton>
@@ -3483,35 +3721,108 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         </div>
       )}
 
-      {loading ? (
+      {(activeTab === 'profiles' ? loading : videosLoading) ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="px-4 mt-8 text-center">
-          <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
-          <p className="text-sm" style={{ color: C.textDim }}>Aucun {labelKind} trouvé.</p>
-          {(query || activeFilters > 0) && (
-            <button onClick={() => { setQuery(''); resetFilters(); }} className="text-xs mt-2" style={{ color: C.gold }}>
-              Réinitialiser
-            </button>
-          )}
-        </div>
+      ) : activeTab === 'profiles' ? (
+        filtered.length === 0 ? (
+          <div className="px-4 mt-8 text-center">
+            <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
+            <p className="text-sm" style={{ color: C.textDim }}>Aucun {labelKind} trouvé.</p>
+            {(query || activeFilters > 0) && (
+              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-xs mt-2" style={{ color: C.gold }}>
+                Réinitialiser
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="px-4 grid grid-cols-2 gap-3">
+            {filtered.map(p => {
+              const status = dbShortlist?.get(p.id)?.status;
+              const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
+              return (
+                <ProfileCard key={p.id} profile={p}
+                  onSelect={() => onSelectProfile?.(p)}
+                  shortlistStatus={status}
+                  onToggleShortlist={showShortlistButton
+                    ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
+                    : undefined} />
+              );
+            })}
+          </div>
+        )
       ) : (
-        <div className="px-4 grid grid-cols-2 gap-3">
-          {filtered.map(p => {
-            const status = dbShortlist?.get(p.id)?.status;
-            const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
-            return (
-              <ProfileCard key={p.id} profile={p}
-                onSelect={() => onSelectProfile?.(p)}
-                shortlistStatus={status}
-                onToggleShortlist={showShortlistButton
-                  ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
-                  : undefined} />
-            );
-          })}
-        </div>
+        /* ─── Onglet Vidéos ─── */
+        filteredVideos.length === 0 ? (
+          <div className="px-4 mt-8 text-center">
+            <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
+            <p className="text-sm" style={{ color: C.textDim }}>Aucune vidéo trouvée.</p>
+            {(query || activeFilters > 0) && (
+              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-xs mt-2" style={{ color: C.gold }}>
+                Réinitialiser
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="px-4 grid grid-cols-2 gap-2">
+            {filteredVideos.map(v => {
+              const getYouTubeId = (url) => {
+                const m = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
+                return m ? m[1] : null;
+              };
+              const thumb = v.thumbnail_url || (() => {
+                const yId = getYouTubeId(v.youtube_url);
+                return yId ? `https://img.youtube.com/vi/${yId}/hqdefault.jpg` : null;
+              })();
+              return (
+                <button key={v.id} onClick={() => onPlayVideo?.(v)}
+                  className="rounded-xl overflow-hidden text-left fade-in"
+                  style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+                  <div className="relative" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
+                    {thumb
+                      ? <img src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                      : v.video_url
+                        ? <video src={v.video_url} preload="metadata" muted playsInline
+                            className="w-full h-full object-cover" />
+                        : null}
+                    <div className="absolute inset-0 flex items-center justify-center"
+                      style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.7) 100%)' }}>
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
+                        <Play size={16} fill={C.bg} stroke={C.bg} />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-2 space-y-0.5">
+                    <div className="text-xs font-bold truncate" style={{ color: C.text }}>{v.title || 'Vidéo'}</div>
+                    <div className="text-[10px] truncate" style={{ color: C.textDim }}>
+                      par {v.profiles?.full_name || 'Athlète'}
+                      {v.profiles?.age ? ` · ${v.profiles.age} ans` : ''}
+                    </div>
+                    {(v.video_type || v.profiles?.level || v.age_category) && (
+                      <div className="text-[10px] truncate" style={{ color: C.textMute }}>
+                        {v.video_type === 'match' ? '🏆 Match' : v.video_type === 'training' ? '🏋️ Entraînement' : ''}
+                        {v.profiles?.level && ` · ${v.profiles.level.replace('_', ' ')}`}
+                        {v.age_category && ` · ${v.age_category}`}
+                      </div>
+                    )}
+                    {v.championship && (
+                      <div className="text-[10px] truncate" style={{ color: C.gold }}>
+                        🏆 {v.championship}
+                      </div>
+                    )}
+                    {(v.city || v.country) && (
+                      <div className="text-[10px] truncate" style={{ color: C.textMute }}>
+                        📍 {[v.city, v.region, v.country].filter(Boolean).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )
       )}
     </div>
   );
@@ -7545,7 +7856,13 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
 
         {/* Rôle + (sport pour athlètes uniquement) */}
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          {profile.is_recruiter ? (
+          {isObserverRole(profile) ? (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
+              style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+              <Eye size={10} strokeWidth={2.4} />
+              Observateur
+            </span>
+          ) : profile.is_recruiter ? (
             <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
               style={{ backgroundColor: C.goldSoft, color: C.gold }}>
               <Briefcase size={10} strokeWidth={2.4} />
@@ -7562,7 +7879,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
               {isLevelDisplayable(profile) && <LevelChip level={profile.level} />}
             </>
           )}
-          {sport && !profile.is_recruiter && (
+          {sport && !profile.is_recruiter && !isObserverRole(profile) && (
             <span className="text-xs" style={{ color: C.textDim }}>
               {sport.icon} {sport.label}
             </span>
@@ -7697,8 +8014,9 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         </div>
       )}
 
-      {/* Liste des vidéos (athlètes uniquement — les recruteurs ne publient pas de vidéos) */}
-      <div className="px-4 pb-32" style={{ display: profile.is_recruiter ? 'none' : undefined }}>
+      {/* Liste des vidéos (athlètes uniquement — recruteurs et observateurs ne publient pas) */}
+      <div className="px-4 pb-32"
+        style={{ display: (profile.is_recruiter || isObserverRole(profile)) ? 'none' : undefined }}>
         <h3 className="text-xs font-semibold mb-3" style={{ color: C.gold }}>
           🎬 Vidéos publiées
         </h3>
@@ -9123,6 +9441,149 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
   );
 }
 
+// ─── PROFIL OBSERVATEUR (page minimaliste, vidéos enregistrées privées) ──
+function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFollowCounts,
+                                onOpenSettings, onShareProfile,
+                                onLoadSavedVideos, onToggleSaveVideo, onPlayVideo }) {
+  const [counts, setCounts] = useState({ followers: 0, following: 0 });
+
+  // Realtime : recharger les compteurs followers/following en temps réel
+  useEffect(() => {
+    if (!userProfile?.id || !onLoadFollowCounts) return;
+    const reload = async () => {
+      const c = await onLoadFollowCounts(userProfile.id);
+      setCounts(c);
+    };
+    const channel = supabase
+      .channel(`observer-follow-counts-${userProfile.id}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'follows',
+          filter: `following_id=eq.${userProfile.id}` }, reload)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'follows',
+          filter: `follower_id=eq.${userProfile.id}` }, reload)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile?.id]);
+
+  useEffect(() => {
+    if (!userProfile?.id || !onLoadFollowCounts) return;
+    let cancel = false;
+    (async () => {
+      const c = await onLoadFollowCounts(userProfile.id);
+      if (!cancel) setCounts(c);
+    })();
+    return () => { cancel = true; };
+  }, [userProfile?.id]);
+
+  return (
+    <div className="pb-32 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
+      {/* Bannière */}
+      <div className="relative" style={{ height: 140 }}>
+        {userProfile?.banner_url ? (
+          <img src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <div className="absolute inset-0"
+            style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
+        )}
+        <div className="absolute inset-0"
+          style={{ background: `linear-gradient(180deg, transparent 50%, ${C.bg} 100%)` }} />
+        {onShareProfile && (
+          <button onClick={onShareProfile} aria-label="Partager mon compte"
+            className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
+            style={{ backgroundColor: 'rgba(8,15,32,0.55)', backdropFilter: 'blur(8px)',
+                     border: `1px solid ${C.borderGold}`, color: C.gold }}>
+            <Share2 size={16} strokeWidth={2.4} />
+          </button>
+        )}
+      </div>
+
+      {/* Ligne avatar + actions (style X) */}
+      <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
+        <div className="rounded-full overflow-hidden fade-in"
+          style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
+          {userProfile?.avatar_url ? (
+            <img src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
+              style={{ color: C.gold }}>
+              {userProfile?.full_name?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 mt-12">
+          {onOpenSettings && (
+            <button onClick={onOpenSettings} aria-label="Paramètres"
+              className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
+              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, color: C.text }}>
+              <Settings size={16} strokeWidth={2.2} />
+            </button>
+          )}
+          {onEdit && (
+            <button onClick={onEdit}
+              className="px-4 h-10 rounded-full text-sm font-extrabold flex items-center gap-1.5"
+              style={{ backgroundColor: 'transparent', color: C.text, border: `1.5px solid ${C.border}` }}>
+              <Edit3 size={14} strokeWidth={2.4} />
+              Modifier
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Identité minimaliste */}
+      <div className="px-4 mt-3 fade-in">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <h1 className="text-xl font-extrabold" style={{ color: C.text }}>
+            {userProfile?.full_name || 'Nouvel utilisateur'}
+          </h1>
+          {userProfile?.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
+            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+            <Eye size={10} strokeWidth={2.4} />
+            Observateur
+          </span>
+        </div>
+
+        {/* Stats inline */}
+        <div className="flex items-center gap-4 text-sm flex-wrap">
+          <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
+            className="active:opacity-60">
+            <strong style={{ color: C.text }}>{counts.following}</strong>
+            <span className="ml-1" style={{ color: C.textDim }}>Abonnements</span>
+          </button>
+          <button onClick={() => onShowFollowList?.(userProfile.id, 'followers')}
+            className="active:opacity-60">
+            <strong style={{ color: C.text }}>{counts.followers}</strong>
+            <span className="ml-1" style={{ color: C.textDim }}>Abonnés</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="px-4 mt-6">
+        {/* Vidéos enregistrées — privées, visibles uniquement par soi-même */}
+        {onLoadSavedVideos && (
+          <SavedVideosSection currentUserId={userProfile?.id}
+            onLoad={onLoadSavedVideos}
+            onPlay={(v) => onPlayVideo?.(v)}
+            onUnsave={onToggleSaveVideo} />
+        )}
+
+        <div className="rounded-xl p-3 mt-4 flex items-start gap-2.5"
+          style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+          <Lock size={14} style={{ color: C.textDim }} className="mt-0.5 flex-shrink-0" />
+          <p className="text-[11px] leading-relaxed" style={{ color: C.textDim }}>
+            En tant qu'observateur, ton dossier de vidéos enregistrées est <strong style={{ color: C.text }}>privé</strong>.
+            Personne d'autre que toi ne peut le voir.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowList, onLoadFollowCounts,
                                 onLoadSignedPosts, onDeleteSignedPost, onOpenSignedPostModal, onSelectProfile,
                                 onLoadSignedCount, onShowSignedAthletes, onOpenSettings,
@@ -9356,10 +9817,17 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
 
 // ═══ BOTTOM NAV ════════════════════════════════════════════════════
 function BottomNav({ tab, setTab, mode }) {
+  // 3 modes : recruiter, athlete, observer
   const items = mode === 'recruiter' ? [
     { id: 'feed', icon: Home, label: 'Feed' },
     { id: 'discover', icon: Search, label: 'Recherche' },
     { id: 'shortlist', icon: Star, label: 'Short-list' },
+    { id: 'messages', icon: Inbox, label: 'Messages' },
+    { id: 'profile', icon: User, label: 'Profil' },
+  ] : mode === 'observer' ? [
+    // Observateur : pas de publish, pas de shortlist
+    { id: 'feed', icon: Home, label: 'Feed' },
+    { id: 'search', icon: Search, label: 'Recherche' },
     { id: 'messages', icon: Inbox, label: 'Messages' },
     { id: 'profile', icon: User, label: 'Profil' },
   ] : [
@@ -9494,12 +9962,12 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
   const [mode, setMode] = useState('athlete');
-  // Synchroniser le mode avec le rôle du profil Supabase
+  // Synchroniser le mode avec le rôle du profil Supabase (3 valeurs possibles)
   useEffect(() => {
     if (userProfile) {
-      setMode(userProfile.is_recruiter ? 'recruiter' : 'athlete');
+      setMode(getUserRole(userProfile)); // 'athlete' | 'recruiter' | 'observer'
     }
-  }, [userProfile]); // 'athlete' | 'recruiter'
+  }, [userProfile]);
   const [tab, setTab] = useState('feed');
   const [filtered] = useState(() => SportDetectorAI.filter(VIDEOS));
   const [selectedAthlete, setSelectedAthlete] = useState(null);
@@ -10442,6 +10910,7 @@ export default function App() {
     engagement,
     currentUserId: userProfile?.id,
     isRecruiter: userProfile?.is_recruiter,
+    canBookmark: canBookmarkVideos(userProfile),
     dbShortlist,
     onLike: toggleLike,
     onAddComment: addComment,
@@ -10498,13 +10967,30 @@ export default function App() {
                                   onShareProfile={() => setShareProfileOpen(true)}
                                   onLoadSavedVideos={loadSavedVideos}
                                   onToggleSaveVideo={toggleSaveVideo}
-                                  onPlayVideo={(v) => { /* TODO ouvrir player overlay */ }} />;
+                                  onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
+        default: return null;
+      }
+    }
+    // Branche observateur : pas de publish, pas de shortlist, pas de vidéos publiées
+    if (mode === 'observer') {
+      switch (tab) {
+        case 'feed':     return <FeedView {...feedProps} />;
+        case 'search':   return <SearchView currentUserId={userProfile?.id} onSelectProfile={openProfile} onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
+        case 'messages': return <MessagesView {...messagesProps} />;
+        case 'profile':  return <ObserverProfileView userProfile={userProfile}
+                                  onEdit={() => setProfileEditorOpen(true)}
+                                  onShowFollowList={showFollowList} onLoadFollowCounts={loadFollowCounts}
+                                  onOpenSettings={() => setSettingsOpen(true)}
+                                  onShareProfile={() => setShareProfileOpen(true)}
+                                  onLoadSavedVideos={loadSavedVideos}
+                                  onToggleSaveVideo={toggleSaveVideo}
+                                  onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
         default: return null;
       }
     }
     switch (tab) {
       case 'feed':     return <FeedView {...feedProps} />;
-      case 'search':   return <SearchView currentUserId={userProfile?.id} onSelectProfile={openProfile} />;
+      case 'search':   return <SearchView currentUserId={userProfile?.id} onSelectProfile={openProfile} onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
       case 'publish':   return <PublishView userProfile={userProfile} setTab={setTab} />;
       case 'messages': return <MessagesView {...messagesProps} />;
       case 'profile':   return <ProfileView userProfile={userProfile} userEmail={session?.user?.email}
