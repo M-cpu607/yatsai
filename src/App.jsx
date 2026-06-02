@@ -486,6 +486,7 @@ function Avatar({ profile, size = 48, ringColor, ringWidth = 2, className = '' }
     return (
       <div style={style} className={`flex items-center justify-center ${className}`}>
         <img src={url} alt={profile?.full_name || 'avatar'}
+          loading="lazy" decoding="async"
           className="w-full h-full object-cover"
           onError={(e) => { e.currentTarget.style.display = 'none'; }} />
       </div>
@@ -527,7 +528,7 @@ function VideoCard({ data, muted, onToggleMute, onSelectAthlete }) {
   return (
     <div className="relative h-screen snap-start" style={{ backgroundColor: '#000' }}>
       {data.poster && (
-        <img src={data.poster} alt={data.name}
+        <img loading="lazy" decoding="async" src={data.poster} alt={data.name}
           className="absolute inset-0 w-full h-full object-cover" />
       )}
       <div className="absolute inset-0"
@@ -599,6 +600,39 @@ function formatCount(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1).replace('.0', '') + 'K';
   return String(n);
+}
+
+// ─── Helper âge calculé depuis date de naissance ────────────────
+// Retourne l'âge calendaire (mis à jour automatiquement chaque année).
+function computeAge(birthdate) {
+  if (!birthdate) return null;
+  const bd = new Date(birthdate);
+  if (isNaN(bd.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - bd.getFullYear();
+  const hasHadBirthday = (now.getMonth() > bd.getMonth()) ||
+    (now.getMonth() === bd.getMonth() && now.getDate() >= bd.getDate());
+  if (!hasHadBirthday) age -= 1;
+  return age >= 0 ? age : null;
+}
+
+// Retourne la saison sportive courante au format "2025/2026"
+// (basée sur le mois de début configuré : 8 = août, 9 = septembre)
+function currentSeasonLabel(seasonStartMonth = 9) {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const y = now.getFullYear();
+  const startYear = m >= seasonStartMonth ? y : y - 1;
+  return `${startYear}/${startYear + 1}`;
+}
+
+// True si on est dans la fenêtre où l'utilisateur devrait penser à
+// mettre à jour son club / saison / championnat (1er août → 15 septembre).
+function isSeasonReminderWindow() {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  return (m === 8) || (m === 9 && d <= 15);
 }
 
 // ─── Helpers source vidéo (YouTube OU fichier uploadé) ───────────
@@ -702,11 +736,11 @@ function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, o
       {/* Miniature cliquable (YouTube ou frame d'upload) */}
       <button onClick={() => onPlay(data)} className="relative flex-1 w-full overflow-hidden">
         {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt={data.title}
+          <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
             className="absolute inset-0 w-full h-full object-cover" />
         ) : uploaded ? (
           // Fallback : pas de miniature, on affiche la 1ère frame via <video preload="metadata">
-          <video src={data.video_url} preload="metadata" muted playsInline
+          <video src={`${data.video_url}#t=0.1`} preload="metadata" muted playsInline
             className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center"
@@ -819,6 +853,32 @@ function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, o
             <h2 className="text-lg font-extrabold mb-1" style={{ color: C.text }}>
               {data.title}
             </h2>
+
+            {/* Ligne meta : âge · catégorie d'âge · niveau spécifique vidéo */}
+            {(() => {
+              const authorAge = computeAge(data.profiles?.birthdate) ?? data.profiles?.age;
+              const videoLevelLabel = data.level && {
+                amateur: '🌱 Amateur', semi_pro: '⭐ Semi-pro',
+                pro: '🏆 Pro', entrainement: '🏋️ Entraînement',
+              }[data.level];
+              const items = [];
+              if (authorAge) items.push(`${authorAge} ans`);
+              if (data.age_category) items.push(data.age_category);
+              if (videoLevelLabel) items.push(videoLevelLabel);
+              if (items.length === 0) return null;
+              return (
+                <div className="text-xs mb-1" style={{ color: C.textDim }}>
+                  {items.join(' · ')}
+                </div>
+              );
+            })()}
+
+            {/* Championnat (mise en avant gold) */}
+            {data.championship && (
+              <div className="text-xs font-semibold mb-1" style={{ color: C.gold }}>
+                🏆 {data.championship}
+              </div>
+            )}
 
             {data.description && (
               <p className="text-xs line-clamp-2" style={{ color: C.textDim }}>
@@ -1577,6 +1637,7 @@ function PublishView({ userProfile, setTab }) {
   // Nouveaux champs vidéo
   const [championship, setChampionship] = useState('');
   const [ageCategory, setAgeCategory] = useState('');
+  const [videoLevel, setVideoLevel] = useState(''); // amateur | semi_pro | pro | entrainement
   const [city, setCity] = useState(userProfile?.city || '');
   const [region, setRegion] = useState(userProfile?.region || '');
   const [country, setCountry] = useState(userProfile?.country || '');
@@ -1700,6 +1761,7 @@ function PublishView({ userProfile, setTab }) {
       duration_seconds: extra.duration_seconds ?? null,
       championship: championship.trim() || null,
       age_category: ageCategory.trim() || null,
+      level: videoLevel || null,
       city: city.trim() || null,
       region: region.trim() || null,
       country: country.trim() || null,
@@ -1774,7 +1836,7 @@ function PublishView({ userProfile, setTab }) {
       setSuccess(false);
       setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
       setVideoType(null);
-      setChampionship(''); setAgeCategory('');
+      setChampionship(''); setAgeCategory(''); setVideoLevel('');
       setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
       clearUpload();
       setAiResult(null);
@@ -2015,6 +2077,35 @@ function PublishView({ userProfile, setTab }) {
             style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
         </div>
 
+        {/* Niveau de la vidéo */}
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+            🏅 Niveau de la vidéo (optionnel)
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { id: 'amateur', label: '🌱 Amateur' },
+              { id: 'semi_pro', label: '⭐ Semi-pro' },
+              { id: 'pro', label: '🏆 Pro' },
+              { id: 'entrainement', label: '🏋️ Entraînement' },
+            ].map(opt => {
+              const active = videoLevel === opt.id;
+              return (
+                <button key={opt.id} type="button"
+                  onClick={() => setVideoLevel(active ? '' : opt.id)}
+                  className="py-2.5 rounded-xl text-xs font-semibold"
+                  style={{
+                    backgroundColor: active ? C.goldSoft : C.surface,
+                    color: active ? C.gold : C.text,
+                    border: `1px solid ${active ? C.gold : C.border}`,
+                  }}>
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Localisation (pré-remplie depuis le profil) */}
         <div>
           <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
@@ -2212,6 +2303,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                             onAddToShortlist, onRemoveFromShortlist,
                             onSelectProfile, onPlayVideo, onClose }) {
   const [query, setQuery] = useState('');
+  const [searchTab, setSearchTab] = useState('all'); // 'all' | 'users' | 'videos'
   const [profiles, setProfiles] = useState([]);
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2223,6 +2315,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     sport: null,
     videoType: null,       // 'match' | 'training'
     levels: [],            // niveaux d'auteur
+    videoLevels: [],       // niveau spécifique à la vidéo (amateur/semi_pro/pro/entrainement)
     position: '',          // texte libre
     periodDays: null,      // 1, 7, 30, 90, 180
     championship: '',      // nom du championnat
@@ -2278,6 +2371,10 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
       const lvl = v.profiles?.level;
       if (!lvl || !filters.levels.includes(lvl)) return false;
     }
+    // Filtre Niveau spécifique de la vidéo
+    if (filters.videoLevels.length > 0) {
+      if (!v.level || !filters.videoLevels.includes(v.level)) return false;
+    }
     if (filters.position && !norm(v.position).includes(norm(filters.position))) return false;
     if (filters.periodDays && v.created_at) {
       const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
@@ -2308,6 +2405,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
   const activeFilterCount = (filters.sport ? 1 : 0)
     + (filters.videoType ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
+    + (filters.videoLevels.length > 0 ? 1 : 0)
     + (filters.position.trim() ? 1 : 0)
     + (filters.periodDays ? 1 : 0)
     + (filters.championship.trim() ? 1 : 0)
@@ -2441,9 +2539,9 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
-              {/* Niveaux */}
+              {/* Niveaux de l'auteur */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏅 Niveau</label>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏅 Niveau de l'auteur</label>
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     { id: 'amateur',         label: '🌱 Amateur' },
@@ -2455,6 +2553,36 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                     const active = filters.levels.includes(lv.id);
                     return (
                       <button key={lv.id} onClick={() => toggleLevel(lv.id)}
+                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
+                        style={{
+                          backgroundColor: active ? C.goldSoft : C.bg,
+                          color: active ? C.gold : C.text,
+                          border: `1px solid ${active ? C.gold : C.border}`,
+                        }}>{lv.label}</button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Niveau de la vidéo (déclaré à la publication) */}
+              <div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎬 Niveau de la vidéo</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'amateur',      label: '🌱 Amateur' },
+                    { id: 'semi_pro',     label: '⭐ Semi-pro' },
+                    { id: 'pro',          label: '🏆 Pro' },
+                    { id: 'entrainement', label: '🏋️ Entraînement' },
+                  ].map(lv => {
+                    const active = filters.videoLevels.includes(lv.id);
+                    return (
+                      <button key={lv.id}
+                        onClick={() => setFilters(f => ({
+                          ...f,
+                          videoLevels: active
+                            ? f.videoLevels.filter(x => x !== lv.id)
+                            : [...f.videoLevels, lv.id],
+                        }))}
                         className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
                         style={{
                           backgroundColor: active ? C.goldSoft : C.bg,
@@ -2555,13 +2683,37 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
             </div>
           )}
 
+          {/* Onglets Tout / Vidéos / Utilisateurs */}
+          <div className="flex gap-1.5 mb-4 sticky top-0 z-10 fade-in">
+            {[
+              { id: 'all',    label: 'Tout',         icon: '✨' },
+              { id: 'videos', label: `Vidéos (${filteredVideos.length})`,    icon: '🎬' },
+              { id: 'users',  label: `Utilisateurs (${filteredProfiles.length})`, icon: '👤' },
+            ].map(tab => {
+              const active = searchTab === tab.id;
+              return (
+                <button key={tab.id} onClick={() => setSearchTab(tab.id)}
+                  className="flex-1 py-2 rounded-full text-[11px] font-bold flex items-center justify-center gap-1"
+                  style={{
+                    backgroundColor: active ? C.gold : C.surface,
+                    color: active ? C.bg : C.text,
+                    border: `1px solid ${active ? C.gold : C.border}`,
+                  }}>
+                  <span>{tab.icon}</span> {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
             </div>
           ) : (
             <>
-              {/* Section Vidéos */}
+              {/* Section Vidéos (cachée en mode users) */}
+              {searchTab !== 'users' && (
+              <>
               <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
                 🎬 VIDÉOS · {filteredVideos.length}
               </div>
@@ -2583,9 +2735,9 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                         style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
                         <div className="relative" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
                           {thumb
-                            ? <img src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                            ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
                             : v.video_url
-                              ? <video src={v.video_url} preload="metadata" muted playsInline
+                              ? <video src={`${v.video_url}#t=0.1`} preload="metadata" muted playsInline
                                   className="w-full h-full object-cover" />
                               : null}
                           <div className="absolute inset-0 flex items-center justify-center"
@@ -2626,9 +2778,14 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               )}
 
-              {/* Section Profils */}
+              </>
+              )}
+
+              {/* Section Profils (cachée en mode videos) */}
+              {searchTab !== 'videos' && (
+              <>
               <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
-                👤 PROFILS · {filteredProfiles.length}
+                👤 UTILISATEURS · {filteredProfiles.length}
               </div>
               {filteredProfiles.length === 0 ? (
                 <div className="rounded-2xl py-6 px-4 text-center"
@@ -2650,6 +2807,8 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                     );
                   })}
                 </div>
+              )}
+              </>
               )}
             </>
           )}
@@ -2714,7 +2873,7 @@ function ProfileCard({ profile, onSelect, onToggleShortlist, shortlistStatus }) 
         <span className="text-[10px] truncate" style={{ color: C.textDim }}>
           {profile.is_recruiter
             ? (profile.organization || '—')
-            : (profile.club || (profile.age ? `${profile.age} ans` : '—'))}
+            : (profile.club || ((computeAge(profile.birthdate) ?? profile.age) ? `${computeAge(profile.birthdate) ?? profile.age} ans` : '—'))}
         </span>
         {profile.level && (
           <div className="mt-1">
@@ -3781,9 +3940,9 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                   style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
                   <div className="relative" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
                     {thumb
-                      ? <img src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                      ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
                       : v.video_url
-                        ? <video src={v.video_url} preload="metadata" muted playsInline
+                        ? <video src={`${v.video_url}#t=0.1`} preload="metadata" muted playsInline
                             className="w-full h-full object-cover" />
                         : null}
                     <div className="absolute inset-0 flex items-center justify-center"
@@ -4269,7 +4428,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
                         style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
                         <div className="w-10 h-10 rounded-md overflow-hidden flex-shrink-0"
                           style={{ backgroundColor: '#000' }}>
-                          {thumb ? <img src={thumb} alt="" className="w-full h-full object-cover" />
+                          {thumb ? <img loading="lazy" decoding="async" src={thumb} alt="" className="w-full h-full object-cover" />
                             : <div className="w-full h-full flex items-center justify-center"><Play size={12} style={{ color: C.gold }} /></div>}
                         </div>
                         <div className="flex-1 min-w-0 text-xs font-semibold truncate" style={{ color: C.text }}>
@@ -4325,7 +4484,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
                             }}>
                             <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0"
                               style={{ backgroundColor: '#000' }}>
-                              {thumb ? <img src={thumb} alt="" className="w-full h-full object-cover" />
+                              {thumb ? <img loading="lazy" decoding="async" src={thumb} alt="" className="w-full h-full object-cover" />
                                 : <div className="w-full h-full flex items-center justify-center"><Play size={14} style={{ color: C.gold }} /></div>}
                             </div>
                             <div className="flex-1 min-w-0">
@@ -6130,7 +6289,7 @@ function SignedPostModal({ currentUserId, onClose, onCreate, onLoadSignedAthlete
             style={{ aspectRatio: '4/3', backgroundColor: C.surface, border: `1px dashed ${C.border}` }}>
             {previewUrl ? (
               <>
-                <img src={previewUrl} alt="Aperçu" className="w-full h-full object-cover" />
+                <img loading="lazy" decoding="async" src={previewUrl} alt="Aperçu" className="w-full h-full object-cover" />
                 <div className="absolute top-2 right-2 px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1"
                   style={{ backgroundColor: 'rgba(8,15,32,0.85)', color: C.gold, backdropFilter: 'blur(10px)' }}>
                   <Camera size={11} /> Changer
@@ -6272,7 +6431,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
                 aria-label="Afficher la photo en grand"
                 className="relative block w-full"
                 style={{ aspectRatio: '1', backgroundColor: '#000' }}>
-                <img src={p.image_url} alt={p.caption || ''} className="w-full h-full object-cover"
+                <img loading="lazy" decoding="async" src={p.image_url} alt={p.caption || ''} className="w-full h-full object-cover"
                   onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 {isOwn && (
                   <span role="button" tabIndex={0}
@@ -6344,7 +6503,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
           </div>
           <div className="flex-1 flex items-center justify-center p-4 overflow-hidden"
             onClick={(e) => e.stopPropagation()}>
-            <img src={previewPost.image_url} alt={previewPost.caption || ''}
+            <img loading="lazy" decoding="async" src={previewPost.image_url} alt={previewPost.caption || ''}
               className="max-w-full max-h-full object-contain rounded-lg"
               style={{ boxShadow: '0 12px 48px rgba(0,0,0,0.5)' }} />
           </div>
@@ -7766,7 +7925,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       {/* Bannière (ou gradient par défaut) */}
       <div className="relative" style={{ height: 160 }}>
         {profile.banner_url ? (
-          <img src={profile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={profile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <div className="absolute inset-0"
             style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
@@ -7804,7 +7963,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         <div className="rounded-full overflow-hidden fade-in"
           style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
           {profile.avatar_url ? (
-            <img src={profile.avatar_url} alt={profile.full_name} className="w-full h-full object-cover" />
+            <img loading="lazy" decoding="async" src={profile.avatar_url} alt={profile.full_name} className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-3xl font-extrabold"
               style={{ color: C.gold }}>
@@ -7847,9 +8006,9 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
               🌐 {profile.nationality}
             </span>
           )}
-          {profile.age && (
+          {(computeAge(profile.birthdate) ?? profile.age) && (
             <span className="text-xs" style={{ color: C.textDim }}>
-              · {profile.age} ans
+              · {computeAge(profile.birthdate) ?? profile.age} ans
             </span>
           )}
         </div>
@@ -8055,7 +8214,7 @@ function AthleteProfile({ athlete, onClose, isRecruiter, shortlisted, onToggleSh
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto slide-in-right" style={{ backgroundColor: C.bg }}>
       <div className="relative" style={{ height: '38vh' }}>
-        {athlete.poster && <img src={athlete.poster} alt={athlete.name} className="w-full h-full object-cover" />}
+        {athlete.poster && <img loading="lazy" decoding="async" src={athlete.poster} alt={athlete.name} className="w-full h-full object-cover" />}
         <div className="absolute inset-0"
           style={{ background: 'linear-gradient(to top, rgba(8,15,32,1) 0%, rgba(8,15,32,0.3) 50%, rgba(8,15,32,0.5) 100%)' }} />
         <button onClick={onClose}
@@ -8148,12 +8307,53 @@ function AthleteProfile({ athlete, onClose, isRecruiter, shortlisted, onToggleSh
 }
 
 // ─── Helper : upload image vers Supabase Storage ────────────────
+// Redimensionne + compresse une image côté client avant upload.
+// Évite d'envoyer des photos de 5 Mo : on borne la largeur et on ré-encode en JPEG.
+// maxW : largeur max (avatars ~512, bannières ~1280). quality : 0..1.
+async function compressImage(file, maxW, quality = 0.82) {
+  // Les GIF/SVG ne sont pas re-compressés (animation / vectoriel)
+  if (!file.type.startsWith('image/') || /gif|svg/.test(file.type)) return file;
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxW / (img.width || maxW));
+    // Si déjà petite ET légère (<300 Ko), on garde l'original
+    if (scale >= 1 && file.size < 300 * 1024) return file;
+    const w = Math.round((img.width || maxW) * scale);
+    const h = Math.round((img.height || maxW) * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return file;
+    // Si la compression n'a rien gagné, on garde l'original
+    if (blob.size >= file.size) return file;
+    return new File([blob], (file.name || 'image').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file; // en cas d'échec, on retombe sur le fichier original
+  }
+}
+
 async function uploadImage(file, bucket, userId) {
   if (!file || !userId) return { error: 'Fichier ou utilisateur manquant' };
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  // Compression adaptée au type de visuel
+  const maxW = bucket === 'banners' ? 1280 : 512;
+  const compressed = await compressImage(file, maxW, 0.82);
+  const ext = (compressed.name.split('.').pop() || 'jpg').toLowerCase();
   const path = `${userId}/${Date.now()}.${ext}`;
   const { error: upErr } = await supabase.storage.from(bucket)
-    .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type });
+    .upload(path, compressed, { cacheControl: '3600', upsert: false, contentType: compressed.type });
   if (upErr) return { error: upErr.message };
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
   return { url: data.publicUrl, path };
@@ -8292,9 +8492,163 @@ const SOCIAL_LINK_PLATFORMS = [
   { key: 'fiton',     label: 'FitOn',             icon: '💪', placeholder: 'Lien partagé FitOn' },
 ];
 
+// ─── Rappel "début de saison" inline dans le profil (août → 15 septembre)
+function ProfileSeasonReminder({ userProfile, onEdit }) {
+  if (!userProfile) return null;
+  // N'apparaît que dans la fenêtre temporelle ET si season_start_month n'a pas
+  // été défini par l'utilisateur (valeur par défaut = null après refonte).
+  if (!isSeasonReminderWindow()) return null;
+  if (userProfile.season_start_month) return null;
+  const season = currentSeasonLabel(9);
+  return (
+    <div className="mx-4 mb-3 rounded-xl p-3 flex items-start gap-2 fade-in"
+      style={{ backgroundColor: 'rgba(255,184,0,0.1)', border: `1px solid ${C.borderGold}` }}>
+      <span className="text-base flex-shrink-0">📅</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-extrabold mb-0.5" style={{ color: C.text }}>
+          Saison {season} : pense à confirmer ta rentrée
+        </div>
+        <p className="text-[11px] leading-relaxed" style={{ color: C.textDim }}>
+          Précise ton <strong style={{ color: C.text }}>club actuel</strong>,
+          ta <strong style={{ color: C.text }}>localisation</strong> et le
+          <strong style={{ color: C.text }}> mois de début</strong> de ta saison pour
+          que les catégories d'âge soient à jour.
+        </p>
+        <button onClick={onEdit}
+          className="mt-2 px-3 py-1.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1.5"
+          style={{ backgroundColor: C.gold, color: C.bg }}>
+          <Edit3 size={11} strokeWidth={2.6} />
+          Mettre à jour
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Section sécurité du compte (changement email / mot de passe) ──
+function AccountSecuritySection() {
+  const [currentEmail, setCurrentEmail] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [emailStatus, setEmailStatus] = useState(null); // 'idle' | 'pending' | 'sent' | 'error'
+  const [emailMsg, setEmailMsg] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwStatus, setPwStatus] = useState(null);
+  const [pwMsg, setPwMsg] = useState('');
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!cancel) setCurrentEmail(data?.user?.email || '');
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  const handleChangeEmail = async () => {
+    setEmailStatus('pending'); setEmailMsg('');
+    if (!newEmail.trim() || !newEmail.includes('@')) {
+      setEmailStatus('error'); setEmailMsg('Email invalide'); return;
+    }
+    const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+    if (error) {
+      setEmailStatus('error'); setEmailMsg(error.message); return;
+    }
+    setEmailStatus('sent');
+    setEmailMsg('Vérifie ta boîte mail (nouvelle ET ancienne adresse) pour confirmer.');
+    setNewEmail('');
+  };
+
+  const handleChangePassword = async () => {
+    setPwStatus('pending'); setPwMsg('');
+    if (newPassword.length < 6) {
+      setPwStatus('error'); setPwMsg('6 caractères minimum'); return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwStatus('error'); setPwMsg('Les mots de passe ne correspondent pas'); return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setPwStatus('error'); setPwMsg(error.message); return;
+    }
+    setPwStatus('sent');
+    setPwMsg('Mot de passe mis à jour ✅');
+    setNewPassword(''); setConfirmPassword('');
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Email actuel */}
+      <div>
+        <label className="text-[11px] font-semibold mb-1.5 block" style={{ color: C.textDim }}>
+          Email actuel
+        </label>
+        <input type="email" value={currentEmail} readOnly disabled
+          className="w-full px-3 py-2.5 rounded-lg text-xs outline-none cursor-not-allowed"
+          style={{ backgroundColor: 'rgba(15,23,42,0.5)', color: C.textDim, border: `1px solid ${C.border}` }} />
+      </div>
+
+      {/* Changement email */}
+      <div>
+        <label className="text-[11px] font-semibold mb-1.5 block" style={{ color: C.textDim }}>
+          Changer mon email
+        </label>
+        <div className="flex gap-2">
+          <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
+            placeholder="nouveau@email.com"
+            className="flex-1 px-3 py-2.5 rounded-lg text-xs outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+          <button onClick={handleChangeEmail} disabled={emailStatus === 'pending' || !newEmail.trim()}
+            className="px-3 py-2.5 rounded-lg text-xs font-bold"
+            style={{
+              backgroundColor: emailStatus === 'pending' || !newEmail.trim() ? 'rgba(255,184,0,0.4)' : C.gold,
+              color: C.bg,
+            }}>
+            {emailStatus === 'pending' ? '...' : 'Changer'}
+          </button>
+        </div>
+        {emailMsg && (
+          <p className="text-[10px] mt-1"
+            style={{ color: emailStatus === 'error' ? C.red : C.green }}>{emailMsg}</p>
+        )}
+      </div>
+
+      {/* Changement mot de passe */}
+      <div>
+        <label className="text-[11px] font-semibold mb-1.5 block" style={{ color: C.textDim }}>
+          Nouveau mot de passe
+        </label>
+        <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="Min. 6 caractères"
+          className="w-full px-3 py-2.5 rounded-lg text-xs outline-none mb-2"
+          style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+          placeholder="Confirmer le nouveau mot de passe"
+          className="w-full px-3 py-2.5 rounded-lg text-xs outline-none"
+          style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        <button onClick={handleChangePassword} disabled={pwStatus === 'pending' || !newPassword || !confirmPassword}
+          className="w-full mt-2 py-2.5 rounded-lg text-xs font-bold"
+          style={{
+            backgroundColor: pwStatus === 'pending' || !newPassword ? 'rgba(255,184,0,0.4)' : C.gold,
+            color: C.bg,
+          }}>
+          {pwStatus === 'pending' ? '...' : 'Changer le mot de passe'}
+        </button>
+        {pwMsg && (
+          <p className="text-[10px] mt-1"
+            style={{ color: pwStatus === 'error' ? C.red : C.green }}>{pwMsg}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
-  const [fullName, setFullName] = useState(userProfile?.full_name || '');
-  const [age, setAge] = useState(userProfile?.age || '');
+  // Champs NON modifiables après inscription : full_name, birthdate
+  const fullName = userProfile?.full_name || ''; // lecture seule
+  const birthdate = userProfile?.birthdate || ''; // lecture seule
+  const computedAge = computeAge(birthdate);
+  // Champs modifiables
   const [sport, setSport] = useState(userProfile?.sport || '');
   const [position, setPosition] = useState(userProfile?.position || '');
   const [club, setClub] = useState(userProfile?.club || '');
@@ -8303,6 +8657,9 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const [country, setCountry] = useState(userProfile?.country || '');
   const [region, setRegion] = useState(userProfile?.region || '');
   const [city, setCity] = useState(userProfile?.city || '');
+  const [phone, setPhone] = useState(userProfile?.phone || '');
+  const [username, setUsername] = useState(userProfile?.username || '');
+  const [seasonStartMonth, setSeasonStartMonth] = useState(userProfile?.season_start_month || 9);
   const [gender, setGender] = useState(userProfile?.gender || '');
   const [nationality, setNationality] = useState(userProfile?.nationality || '');
   const [hasClubLocal, setHasClubLocal] = useState(
@@ -8355,8 +8712,9 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const handleSave = async () => {
     setError(''); setSaving(true);
     const updates = {
-      full_name: fullName.trim() || null,
-      age: age === '' ? null : Number(age),
+      // full_name et birthdate sont volontairement omis (non modifiables).
+      // L'âge est recalculé en cache à partir de birthdate.
+      age: computedAge,
       sport: sport || null,
       position: position.trim() || null,
       club: isRecruiter ? null : (club.trim() || null),
@@ -8365,6 +8723,9 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       country: country.trim() || null,
       region: region.trim() || null,
       city: city.trim() || null,
+      phone: phone.trim() || null,
+      username: username.trim() || null,
+      season_start_month: seasonStartMonth,
       avatar_url: avatarUrl,
       banner_url: bannerUrl,
       social_links: socialLinks,
@@ -8445,7 +8806,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             <div className="relative rounded-xl overflow-hidden"
               style={{ height: 120, backgroundColor: C.surface2, border: `1px solid ${C.border}` }}>
               {bannerUrl ? (
-                <img src={bannerUrl} alt="Bannière" className="w-full h-full object-cover" />
+                <img loading="lazy" decoding="async" src={bannerUrl} alt="Bannière" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center"
                   style={{ background: `linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)` }}>
@@ -8477,7 +8838,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                 <div className="w-20 h-20 rounded-full overflow-hidden"
                   style={{ backgroundColor: C.surface, border: `3px solid ${C.bg}` }}>
                   {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    <img loading="lazy" decoding="async" src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-2xl font-extrabold"
                       style={{ color: C.gold }}>
@@ -8497,20 +8858,64 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Nom complet *</label>
-            <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
-              maxLength={80} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+              Nom complet <span style={{ color: C.gold }}>🔒 non modifiable</span>
+            </label>
+            <input type="text" value={fullName} readOnly disabled
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none cursor-not-allowed"
+              style={{ backgroundColor: 'rgba(15,23,42,0.5)', color: C.textDim, border: `1px solid ${C.border}` }} />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+              Date de naissance <span style={{ color: C.gold }}>🔒 non modifiable</span>
+            </label>
+            <input type="date" value={birthdate} readOnly disabled
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none cursor-not-allowed"
+              style={{ backgroundColor: 'rgba(15,23,42,0.5)', color: C.textDim, border: `1px solid ${C.border}`, colorScheme: 'dark' }} />
+            {computedAge !== null && (
+              <p className="text-[11px] mt-1.5" style={{ color: C.gold }}>
+                Âge actuel : {computedAge} ans (mis à jour automatiquement)
+              </p>
+            )}
+          </div>
+
+          {/* Téléphone (modifiable) */}
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>📞 Téléphone</label>
+            <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+              placeholder="+33 6 12 34 56 78" maxLength={20}
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
               style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
           </div>
 
-          {!isRecruiter && (
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Âge</label>
-              <input type="number" value={age} onChange={(e) => setAge(e.target.value)}
-                min={10} max={100} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-            </div>
-          )}
+          {/* Nom d'utilisateur (modifiable) */}
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>@ Nom d'utilisateur</label>
+            <input type="text" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+              placeholder="ton_pseudo" maxLength={30}
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+              Lettres minuscules, chiffres et _ uniquement
+            </p>
+          </div>
+
+          {/* Début de saison sportive */}
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+              📅 Début de la saison sportive
+            </label>
+            <select value={seasonStartMonth} onChange={(e) => setSeasonStartMonth(Number(e.target.value))}
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
+              <option value={8}>Août</option>
+              <option value={9}>Septembre</option>
+            </select>
+            <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+              Pense à le mettre à jour chaque rentrée pour que les catégories d'âge soient correctes
+            </p>
+          </div>
 
           <div>
             <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Sport</label>
@@ -8558,12 +8963,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Âge</label>
-                <input type="number" value={age} onChange={(e) => setAge(e.target.value)}
-                  min={16} max={100} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                  style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              {/* Âge recruteur : remplacé par la date de naissance lecture seule (déjà affichée plus haut) */}
 
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Nationalité</label>
@@ -8923,6 +9323,15 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             </div>
           )}
 
+          {/* ─── Section Compte (changement email / mot de passe) ─── */}
+          <div className="rounded-xl p-3 mt-4"
+            style={{ backgroundColor: 'rgba(255,184,0,0.04)', border: `1px solid ${C.border}` }}>
+            <div className="text-[10px] font-mono tracking-widest mb-3" style={{ color: C.gold }}>
+              🔐 COMPTE
+            </div>
+            <AccountSecuritySection />
+          </div>
+
           {error && (
             <div className="px-3 py-2 rounded-lg text-xs"
               style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: `1px solid ${C.red}` }}>
@@ -8932,10 +9341,10 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
         </div>
 
         <div className="px-4 py-3 border-t" style={{ borderColor: C.border }}>
-          <button onClick={handleSave} disabled={saving || !fullName.trim()}
+          <button onClick={handleSave} disabled={saving}
             className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
             style={{
-              backgroundColor: saving || !fullName.trim() ? 'rgba(255,184,0,0.4)' : C.gold,
+              backgroundColor: saving ? 'rgba(255,184,0,0.4)' : C.gold,
               color: C.bg,
             }}>
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -8972,9 +9381,9 @@ function OwnVideoThumb({ video, onPlay, onDelete }) {
       <button onClick={() => onPlay(video)}
         className="relative w-full text-left" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
         {thumb ? (
-          <img src={thumb} alt={video.title} className="w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={thumb} alt={video.title} className="w-full h-full object-cover" />
         ) : uploaded ? (
-          <video src={video.video_url} preload="metadata" muted playsInline
+          <video src={`${video.video_url}#t=0.1`} preload="metadata" muted playsInline
             className="w-full h-full object-cover pointer-events-none" />
         ) : (
           <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: C.surface2 }}>
@@ -9098,7 +9507,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
       {/* Bannière */}
       <div className="relative" style={{ height: 140 }}>
         {userProfile?.banner_url ? (
-          <img src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <div className="absolute inset-0"
             style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
@@ -9116,12 +9525,15 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         )}
       </div>
 
+      {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
+      <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
+
       {/* Ligne avatar + actions (style X) */}
       <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
         <div className="rounded-full overflow-hidden fade-in"
           style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
           {userProfile?.avatar_url ? (
-            <img src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
               style={{ color: C.gold }}>
@@ -9158,9 +9570,9 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
               🌐 {userProfile.nationality}
             </span>
           )}
-          {userProfile?.age && (
+          {(computeAge(userProfile?.birthdate) ?? userProfile?.age) && (
             <span className="text-xs" style={{ color: C.textDim }}>
-              · {userProfile.age} ans
+              · {computeAge(userProfile?.birthdate) ?? userProfile?.age} ans
             </span>
           )}
         </div>
@@ -9310,7 +9722,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
           {previews.length > 0 ? (
             <div className="grid grid-cols-2 gap-0.5 w-full h-full p-1 overflow-hidden rounded">
               {previews.slice(0, 4).map((p, i) => (
-                <img key={i} src={p} alt="" className="w-full h-full object-cover rounded-sm" />
+                <img loading="lazy" decoding="async" key={i} src={p} alt="" className="w-full h-full object-cover rounded-sm" />
               ))}
               {previews.length < 4 && Array.from({ length: 4 - previews.length }).map((_, i) => (
                 <div key={`ph-${i}`} className="w-full h-full rounded-sm"
@@ -9399,9 +9811,9 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
                         style={{ aspectRatio: '1', backgroundColor: '#000' }}
                       >
                         {thumb
-                          ? <img src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                          ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
                           : uploaded
-                            ? <video src={v.video_url} preload="metadata" muted playsInline
+                            ? <video src={`${v.video_url}#t=0.1`} preload="metadata" muted playsInline
                                 className="w-full h-full object-cover pointer-events-none" />
                             : null}
                         <div className="absolute inset-0 flex items-center justify-center"
@@ -9481,7 +9893,7 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
       {/* Bannière */}
       <div className="relative" style={{ height: 140 }}>
         {userProfile?.banner_url ? (
-          <img src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <div className="absolute inset-0"
             style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
@@ -9498,12 +9910,15 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
         )}
       </div>
 
+      {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
+      <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
+
       {/* Ligne avatar + actions (style X) */}
       <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
         <div className="rounded-full overflow-hidden fade-in"
           style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
           {userProfile?.avatar_url ? (
-            <img src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
               style={{ color: C.gold }}>
@@ -9650,7 +10065,7 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
       {/* Bannière */}
       <div className="relative" style={{ height: 140 }}>
         {userProfile?.banner_url ? (
-          <img src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
           <div className="absolute inset-0"
             style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
@@ -9668,12 +10083,15 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
         )}
       </div>
 
+      {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
+      <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
+
       {/* Ligne avatar + actions (style X) */}
       <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
         <div className="rounded-full overflow-hidden fade-in"
           style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
           {userProfile?.avatar_url ? (
-            <img src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
               style={{ color: C.gold }}>
@@ -9942,6 +10360,17 @@ export default function App() {
     if (error) {
       console.error('Erreur chargement profil:', error);
       return;
+    }
+    // Auto-sync de l'âge en cache si birthdate existe (l'âge change chaque année)
+    if (data?.birthdate) {
+      const liveAge = computeAge(data.birthdate);
+      if (liveAge !== null && liveAge !== data.age) {
+        supabase.from('profiles').update({ age: liveAge }).eq('id', userId)
+          .then(({ error: upErr }) => {
+            if (upErr) console.warn('Auto-sync âge échec:', upErr.message);
+          });
+        data.age = liveAge; // miroir immédiat en mémoire
+      }
     }
     setUserProfile(data);
   };
