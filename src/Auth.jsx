@@ -106,7 +106,7 @@ export default function Auth({ initialMode = 'login' }) {
   const [fullName, setFullName] = useState('')
   // Athlète
   const [gender, setGender] = useState(null)        // 'M' | 'F' | 'O'
-  const [age, setAge] = useState('')
+  const [birthdate, setBirthdate] = useState('')    // YYYY-MM-DD, non modifiable après inscription
   const [nationality, setNationality] = useState('')
   const [sport, setSport] = useState('')
   const [position, setPosition] = useState('')      // poste choisi dans la liste du sport
@@ -138,29 +138,50 @@ export default function Auth({ initialMode = 'login' }) {
   const isRecruiter = role === 'recruiter'
   const isObserver = role === 'observer'
 
+  // Calcul de l'âge à partir de la date de naissance (auto, change chaque année)
+  const computeAgeFromBirthdate = (bd) => {
+    if (!bd) return null
+    const d = new Date(bd)
+    if (isNaN(d.getTime())) return null
+    const now = new Date()
+    let a = now.getFullYear() - d.getFullYear()
+    const hadBirthday = (now.getMonth() > d.getMonth()) ||
+      (now.getMonth() === d.getMonth() && now.getDate() >= d.getDate())
+    if (!hadBirthday) a -= 1
+    return a >= 0 ? a : null
+  }
+  const computedAge = computeAgeFromBirthdate(birthdate)
+  const ageOk = computedAge !== null && computedAge >= 10 && computedAge <= 100
+  // Pour la date max autorisée à l'input (= aujourd'hui - 10 ans, prudence)
+  const maxBirthdate = (() => {
+    const d = new Date()
+    d.setFullYear(d.getFullYear() - 10)
+    return d.toISOString().split('T')[0]
+  })()
+
   // Validation côté athlète
   // - Niveau requis dans tous les cas.
   // - Si en club : nom du club requis aussi.
   // - Si young_pro/senior_pro : preuve obligatoire avant de soumettre.
   const needsProof = LEVELS_REQUIRING_PROOF.includes(level)
-  const athleteReady = isAthlete && fullName.trim() && gender && age !== '' && hasClub !== null
+  const athleteReady = isAthlete && fullName.trim() && gender && ageOk && hasClub !== null
     && level
     && (hasClub === false || club.trim())
     && (!needsProof || !!levelProofFile)
   const recruiterReady = isRecruiter && fullName.trim() && organization.trim()
-    && gender && age !== '' && sport && recruitingGender
+    && gender && ageOk && sport && recruitingGender
     && recruitingLevels.length > 0
     && recruitingAgeMin !== '' && recruitingAgeMax !== ''
     && Number(recruitingAgeMin) <= Number(recruitingAgeMax)
-  // Observateur : juste un nom (l'âge et le genre ne sont pas demandés)
+  // Observateur : juste un nom (date de naissance et genre non demandés)
   const observerReady = isObserver && fullName.trim()
   const baseReady = email.trim() && password.length >= 6
 
   // Validation par étape (inscription)
-  // Pour les observateurs : pas besoin de genre/âge — uniquement nom.
+  // Pour les observateurs : pas besoin de genre/date naissance — uniquement nom.
   const step0Ready = isObserver
     ? (role && fullName.trim())
-    : (role && fullName.trim() && gender && age !== '')
+    : (role && fullName.trim() && gender && ageOk)
   const step1Ready = isAthlete
     ? (sport && hasClub !== null && level && (hasClub === false || club.trim())
         && (!needsProof || !!levelProofFile))
@@ -199,7 +220,8 @@ export default function Auth({ initialMode = 'login' }) {
         }
         if (isAthlete) {
           metadata.gender = gender
-          metadata.age = age !== '' ? String(Number(age)) : null
+          metadata.birthdate = birthdate || null
+          metadata.age = computedAge !== null ? String(computedAge) : null
           metadata.nationality = nationality.trim() || null
           metadata.sport = sport || null
           metadata.position = position || null
@@ -209,7 +231,8 @@ export default function Auth({ initialMode = 'login' }) {
         }
         if (isRecruiter) {
           metadata.gender = gender
-          metadata.age = age !== '' ? String(Number(age)) : null
+          metadata.birthdate = birthdate || null
+          metadata.age = computedAge !== null ? String(computedAge) : null
           metadata.nationality = nationality.trim() || null
           metadata.sport = sport || null
           metadata.organization = organization.trim() || null
@@ -241,7 +264,8 @@ export default function Auth({ initialMode = 'login' }) {
           }
           if (isAthlete) {
             profileUpdate.gender = gender
-            profileUpdate.age = age !== '' ? Number(age) : null
+            profileUpdate.birthdate = birthdate || null
+            profileUpdate.age = computedAge // cache, mais source de vérité = birthdate
             profileUpdate.nationality = nationality.trim() || null
             profileUpdate.sport = sport || null
             profileUpdate.position = position || null
@@ -257,7 +281,8 @@ export default function Auth({ initialMode = 'login' }) {
             }
           } else if (isRecruiter) {
             profileUpdate.gender = gender
-            profileUpdate.age = age !== '' ? Number(age) : null
+            profileUpdate.birthdate = birthdate || null
+            profileUpdate.age = computedAge
             profileUpdate.nationality = nationality.trim() || null
             profileUpdate.sport = sport || null
             profileUpdate.organization = organization.trim() || null
@@ -293,8 +318,12 @@ export default function Auth({ initialMode = 'login' }) {
           }
         }
 
-        setMessage('Compte créé ! Tu peux te connecter.')
-        setMode('login')
+        // Le trigger DB `handle_new_user` crée déjà le profil COMPLET à partir
+        // des metadata (role, birthdate, sport, niveau…). L'utilisateur est donc
+        // auto-connecté avec un profil correct : on le laisse entrer directement
+        // dans l'app, sans le forcer à se reconnecter.
+        setMessage('Compte créé ! Bienvenue 🎉')
+        // (la session active déclenche le rendu de l'app principale dans App.jsx)
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
@@ -424,16 +453,28 @@ export default function Auth({ initialMode = 'login' }) {
                   </div>
                 </Section>
 
-                {/* Âge */}
-                <Section title="Quel âge as-tu ?">
+                {/* Date de naissance (non modifiable après inscription) */}
+                <Section title="Quelle est ta date de naissance ?"
+                  hint="Non modifiable après création. Ton âge se mettra à jour automatiquement chaque année.">
                   <div className="relative">
-                    <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2"
+                    <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                       style={{ color: C.textDim }} />
-                    <input type="number" value={age} onChange={(e) => setAge(e.target.value)}
-                      placeholder="Ton âge" min={10} max={100}
+                    <input type="date" value={birthdate}
+                      onChange={(e) => setBirthdate(e.target.value)}
+                      required
+                      max={maxBirthdate}
+                      min="1925-01-01"
                       className="w-full pl-10 pr-3 py-3 rounded-xl text-sm outline-none"
-                      style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                      style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}`, colorScheme: 'dark' }} />
                   </div>
+                  {birthdate && (
+                    <p className="text-[11px] mt-1.5"
+                      style={{ color: ageOk ? C.gold : C.red }}>
+                      {ageOk
+                        ? `Âge actuel : ${computedAge} ans`
+                        : `Âge invalide (doit être entre 10 et 100 ans)`}
+                    </p>
+                  )}
                 </Section>
 
                 {/* Nationalité */}
@@ -637,15 +678,27 @@ export default function Auth({ initialMode = 'login' }) {
                   </div>
                 </Section>
 
-                <Section title="Quel âge as-tu ?">
+                <Section title="Quelle est ta date de naissance ?"
+                  hint="Non modifiable après création. Ton âge se mettra à jour automatiquement chaque année.">
                   <div className="relative">
-                    <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2"
+                    <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                       style={{ color: C.textDim }} />
-                    <input type="number" value={age} onChange={(e) => setAge(e.target.value)}
-                      placeholder="Ton âge" min={16} max={100}
+                    <input type="date" value={birthdate}
+                      onChange={(e) => setBirthdate(e.target.value)}
+                      required
+                      max={maxBirthdate}
+                      min="1925-01-01"
                       className="w-full pl-10 pr-3 py-3 rounded-xl text-sm outline-none"
-                      style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                      style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}`, colorScheme: 'dark' }} />
                   </div>
+                  {birthdate && (
+                    <p className="text-[11px] mt-1.5"
+                      style={{ color: ageOk ? C.gold : C.red }}>
+                      {ageOk
+                        ? `Âge actuel : ${computedAge} ans`
+                        : `Âge invalide (doit être entre 10 et 100 ans)`}
+                    </p>
+                  )}
                 </Section>
 
                 <Section title="Ta nationalité">

@@ -1,0 +1,21 @@
+{
+  "appId": "com.yatsai.app",
+  "appName": "Yatsai",
+  "webDir": "dist",
+  "backgroundColor": "#080F20",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#080F20"
+  },
+  "android": {
+    "backgroundColor": "#080F20"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#080F20",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    }
+  }
+}
