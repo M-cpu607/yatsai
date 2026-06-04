@@ -10,6 +10,10 @@
 	<string>Yatsai accède à tes photos et vidéos pour que tu puisses les publier.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Yatsai peut enregistrer des médias dans ta photothèque.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Yatsai accède à tes contacts pour t'aider à retrouver tes amis déjà présents sur l'application.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Yatsai utilise ta localisation pour te proposer des athlètes et recruteurs proches de toi.</string>
     <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>

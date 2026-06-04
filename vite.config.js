@@ -4,6 +4,11 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Expose le serveur de dev sur le réseau local (pour le live reload sur mobile)
+  server: {
+    host: true,   // écoute sur toutes les interfaces (0.0.0.0)
+    port: 5173,
+  },
   plugins: [
     react(),
     VitePWA({

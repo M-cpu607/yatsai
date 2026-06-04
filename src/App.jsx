@@ -198,6 +198,115 @@ function canBookmarkVideos(profile) {
   return r === 'recruiter' || r === 'observer';
 }
 
+// ─── PERMISSIONS NATIVES (onboarding iOS/Android) ────────────────
+// Chaque fonction déclenche la vraie boîte de dialogue native du téléphone.
+// Sur le web classique, elles ne font rien (ou utilisent l'API web).
+async function isNativeApp() {
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    return !!Capacitor?.isNativePlatform?.();
+  } catch { return false; }
+}
+
+async function requestNotificationsPermission() {
+  try {
+    const { PushNotifications } = await import('@capacitor/push-notifications');
+    const res = await PushNotifications.requestPermissions();
+    if (res.receive === 'granted') { try { await PushNotifications.register(); } catch {} }
+    return res.receive === 'granted';
+  } catch (e) { console.warn('Notifications:', e?.message); return false; }
+}
+
+async function requestCameraMicPermission() {
+  // En WKWebView/Android WebView, getUserMedia déclenche les dialogues natifs
+  // caméra + micro (les textes viennent de l'Info.plist sur iOS).
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(t => t.stop()); // on coupe tout de suite, c'était juste pour l'autorisation
+    return true;
+  } catch (e) { console.warn('Caméra/Micro:', e?.message); return false; }
+}
+
+async function requestContactsPermission() {
+  try {
+    const { Contacts } = await import('@capacitor-community/contacts');
+    const res = await Contacts.requestPermissions();
+    return res?.contacts === 'granted';
+  } catch (e) { console.warn('Contacts:', e?.message); return false; }
+}
+
+async function requestLocationPermission() {
+  try {
+    const { Geolocation } = await import('@capacitor/geolocation');
+    const res = await Geolocation.requestPermissions();
+    return res?.location === 'granted' || res?.coarseLocation === 'granted';
+  } catch (e) { console.warn('Localisation:', e?.message); return false; }
+}
+
+const ONBOARD_FLAG = 'yatsai_permissions_onboarded';
+
+function PermissionsOnboarding({ onDone }) {
+  const STEPS = [
+    { key: 'notifs',   icon: Bell,    title: 'Notifications',  desc: 'Être prévenu des likes, messages, abonnés et opportunités.', run: requestNotificationsPermission },
+    { key: 'camera',   icon: Camera,  title: 'Caméra & micro', desc: 'Filmer et publier tes performances directement depuis l\'app.', run: requestCameraMicPermission },
+    { key: 'contacts', icon: Users,   title: 'Contacts',        desc: 'Retrouver facilement tes amis déjà présents sur Yatsai.', run: requestContactsPermission },
+    { key: 'location', icon: PinIcon, title: 'Localisation',    desc: 'Te proposer des athlètes et recruteurs proches de toi.', run: requestLocationPermission },
+  ];
+  const [i, setI] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const step = STEPS[i];
+  const isLast = i === STEPS.length - 1;
+
+  const finish = () => { try { localStorage.setItem(ONBOARD_FLAG, '1'); } catch {} onDone?.(); };
+  const next = () => { if (isLast) finish(); else setI(n => n + 1); };
+
+  const allow = async () => {
+    setBusy(true);
+    try { await step.run(); } catch {}
+    setBusy(false);
+    next();
+  };
+
+  const Icon = step.icon;
+  return (
+    <div className="fixed inset-0 z-[200] flex flex-col" style={{ backgroundColor: C.bg }}>
+      {/* Progression */}
+      <div className="px-6 pt-14 flex gap-1.5">
+        {STEPS.map((s, idx) => (
+          <div key={s.key} className="flex-1 h-1 rounded-full"
+            style={{ backgroundColor: idx <= i ? C.gold : C.border }} />
+        ))}
+      </div>
+
+      <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
+        <div className="w-24 h-24 rounded-3xl flex items-center justify-center mb-7"
+          style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
+          <Icon size={42} style={{ color: C.gold }} strokeWidth={2} />
+        </div>
+        <h1 className="text-2xl font-extrabold mb-3" style={{ color: C.text }}>
+          {step.title}
+        </h1>
+        <p className="text-base max-w-sm leading-relaxed" style={{ color: C.textDim }}>
+          {step.desc}
+        </p>
+      </div>
+
+      <div className="px-6 pb-10 flex flex-col gap-3">
+        <button onClick={allow} disabled={busy}
+          className="w-full py-4 rounded-2xl font-extrabold text-base flex items-center justify-center gap-2"
+          style={{ backgroundColor: C.gold, color: C.bg, opacity: busy ? 0.6 : 1 }}>
+          {busy ? <Loader2 size={18} className="animate-spin" /> : null}
+          Autoriser
+        </button>
+        <button onClick={next}
+          className="w-full py-3 text-sm font-semibold" style={{ color: C.textDim }}>
+          Plus tard
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── LANDING PAGE ────────────────────────────────────────────────
 function LandingPage({ onStart }) {
   return (
@@ -10302,6 +10411,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [landingDone, setLandingDone] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState('signup'); // 'signup' | 'login'
+  const [permsOnboard, setPermsOnboard] = useState(false); // écran d'autorisations (mobile, 1ère fois)
   const [userProfile, setUserProfile] = useState(null);
   const [videos, setVideos] = useState([]);
 
@@ -10390,6 +10500,19 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+  // Onboarding des permissions natives : à la 1ère ouverture sur mobile, une fois connecté
+  useEffect(() => {
+    if (!session) return;
+    let cancel = false;
+    (async () => {
+      const native = await isNativeApp();
+      let done = false;
+      try { done = localStorage.getItem(ONBOARD_FLAG) === '1'; } catch {}
+      if (!cancel && native && !done) setPermsOnboard(true);
+    })();
+    return () => { cancel = true; };
+  }, [session]);
+
   const [mode, setMode] = useState('athlete');
   // Synchroniser le mode avec le rôle du profil Supabase (3 valeurs possibles)
   useEffect(() => {
@@ -11454,6 +11577,8 @@ export default function App() {
   return (
     <div className="relative" style={{ backgroundColor: C.bg, minHeight: '100dvh' }}>
       <FontStyles />
+      {/* Écran d'autorisations natif (mobile, première ouverture) */}
+      {permsOnboard && <PermissionsOnboarding onDone={() => setPermsOnboard(false)} />}
       {renderScreen()}
       <BottomNav tab={tab} setTab={setTab} mode={mode} />
 
