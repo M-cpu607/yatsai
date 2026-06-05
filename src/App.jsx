@@ -1213,7 +1213,7 @@ function ShareModal({ video, currentUserId, onClose, onShare }) {
     (async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, is_recruiter')
+        .select('id, full_name, is_recruiter, avatar_url')
         .neq('id', currentUserId)
         .order('full_name');
       if (cancel) return;
@@ -4115,7 +4115,7 @@ function timeAgo(iso) {
 }
 
 // ─── NEW CONVERSATION MODAL ─────────────────────────────────────
-function NewConversationModal({ currentUserId, onClose, onSelect }) {
+function NewConversationModal({ currentUserId, onClose, onSelect, onSelectProfile }) {
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -4125,7 +4125,7 @@ function NewConversationModal({ currentUserId, onClose, onSelect }) {
     (async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, is_recruiter, organization, sport')
+        .select('id, full_name, is_recruiter, organization, sport, avatar_url, banner_url')
         .neq('id', currentUserId)
         .order('full_name');
       if (cancel) return;
@@ -4177,19 +4177,30 @@ function NewConversationModal({ currentUserId, onClose, onSelect }) {
           ) : (
             <div className="flex flex-col gap-1">
               {filtered.map(u => (
-                <button key={u.id} onClick={() => onSelect(u)}
-                  className="flex items-center gap-3 p-2.5 rounded-lg text-left"
+                <div key={u.id}
+                  className="flex items-center gap-3 p-2.5 rounded-lg"
                   style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                  <Avatar profile={u} size={44} ringColor={C.gold} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
-                      {u.full_name || 'Utilisateur'}
+                  {/* Tap sur l'utilisateur → voir son profil complet (avec bannière) */}
+                  <button onClick={() => onSelectProfile?.(u)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                    <Avatar profile={u} size={44} ringColor={C.gold} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
+                        {u.full_name || 'Utilisateur'}
+                      </div>
+                      <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+                        {u.is_recruiter ? `💼 ${u.organization || 'Recruteur'}` : '⚽ Athlète'}
+                      </div>
                     </div>
-                    <div className="text-[11px] truncate" style={{ color: C.textDim }}>
-                      {u.is_recruiter ? `💼 ${u.organization || 'Recruteur'}` : '⚽ Athlète'}
-                    </div>
-                  </div>
-                </button>
+                  </button>
+                  {/* Bouton message direct */}
+                  <button onClick={() => onSelect(u)}
+                    aria-label="Envoyer un message"
+                    className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}`, color: C.gold }}>
+                    <Send size={16} strokeWidth={2.2} />
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -11387,9 +11398,16 @@ export default function App() {
   const [newConvOpen, setNewConvOpen] = useState(false);
   // Profil utilisateur ouvert (overlay)
   const [selectedProfile, setSelectedProfile] = useState(null);
-  const openProfile = (profile) => {
+  const openProfile = async (profile) => {
     if (!profile?.id) return;
+    // Affichage immédiat avec ce qu'on a déjà…
     setSelectedProfile(profile);
+    // …puis on complète avec le profil COMPLET (bannière, bio, localisation, etc.)
+    // quel que soit l'endroit d'où on l'ouvre (feed, partage, messagerie…).
+    try {
+      const { data } = await supabase.from('profiles').select('*').eq('id', profile.id).single();
+      if (data) setSelectedProfile(prev => (prev && prev.id === data.id ? data : prev));
+    } catch {}
   };
 
   // FollowsListModal state : { userId, kind: 'followers'|'following' }
@@ -11789,6 +11807,7 @@ export default function App() {
           currentUserId={userProfile?.id}
           onClose={() => setNewConvOpen(false)}
           onSelect={openChatWithProfile}
+          onSelectProfile={(u) => { setNewConvOpen(false); openProfile(u); }}
         />
       )}
     </div>
