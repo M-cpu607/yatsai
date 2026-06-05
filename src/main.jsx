@@ -3,6 +3,27 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 
+// ─── Nettoyage des service workers (TOUTES plateformes) ───────────
+// Le service worker (PWA) a été retiré du build : il provoquait des écrans
+// blancs (un cache périmé servait une coquille d'app cassée). On désinscrit
+// donc tout SW déjà présent et on vide ses caches, à chaque démarrage, pour
+// guérir les installations qui en avaient un.
+async function killServiceWorkers() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map(r => r.unregister()))
+    }
+  } catch {}
+  try {
+    if (window.caches?.keys) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map(k => caches.delete(k)))
+    }
+  } catch {}
+}
+killServiceWorkers()
+
 // ─── Intégration native (Capacitor) ──────────────────────────────
 // Ce bloc ne s'exécute que dans l'app iOS/Android empaquetée.
 // Sur le web classique, Capacitor.isNativePlatform() = false → ignoré.
