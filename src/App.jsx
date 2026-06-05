@@ -1375,7 +1375,7 @@ function YouTubePlayer({ video, onClose }) {
 }
 
 // ─── COMMENTAIRES MODAL ─────────────────────────────────────────
-function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete }) {
+function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete, onReport }) {
   const [comments, setComments] = useState([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1485,10 +1485,15 @@ function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete }) {
                         <span className="text-[10px]" style={{ color: C.textMute }}>
                           {new Date(c.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                         </span>
-                        {isMine && (
+                        {isMine ? (
                           <button onClick={() => handleDelete(c.id)}
                             className="text-[10px]" style={{ color: C.red }}>
                             Supprimer
+                          </button>
+                        ) : (
+                          <button onClick={() => onReport?.('comment', c.id, c.body)}
+                            className="text-[10px] inline-flex items-center gap-1" style={{ color: C.textDim }}>
+                            <Flag size={10} /> Signaler
                           </button>
                         )}
                       </div>
@@ -1850,7 +1855,7 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
       {commentsVideo && (
         <CommentsModal video={commentsVideo} currentUserId={currentUserId}
           onClose={() => setCommentsVideo(null)}
-          onAdd={onAddComment} onDelete={onDeleteComment} />
+          onAdd={onAddComment} onDelete={onDeleteComment} onReport={onReport} />
       )}
 
       {shareVideo && (
@@ -5399,7 +5404,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
 }
 
 function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSendMessage, onMarkRead, onSelectProfile,
-                    onLoadPendingSigning, onRespondToSigning, onDeleteMessage }) {
+                    onLoadPendingSigning, onRespondToSigning, onDeleteMessage, onReport }) {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5596,8 +5601,7 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
           return (
             <div key={m.id} className={`flex ${me ? 'justify-end' : 'justify-start'}`}>
               <div className="max-w-[80%] flex flex-col" style={{ alignItems: me ? 'flex-end' : 'flex-start' }}>
-                <button onClick={() => me && setSelectedMsgId(prev => prev === m.id ? null : m.id)}
-                  disabled={!me}
+                <button onClick={() => setSelectedMsgId(prev => prev === m.id ? null : m.id)}
                   className="px-3.5 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words text-left"
                   style={{
                     backgroundColor: me ? C.gold : C.surface,
@@ -5606,7 +5610,7 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
                     borderBottomLeftRadius: !me ? 4 : undefined,
                     border: me ? 'none' : `1px solid ${C.border}`,
                     opacity: deleting ? 0.5 : 1,
-                    cursor: me ? 'pointer' : 'default',
+                    cursor: 'pointer',
                   }}>
                   {m.content}
                 </button>
@@ -5615,16 +5619,25 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
                   {time}
                 </span>
 
-                {/* Menu actions sur message (mes messages uniquement) */}
-                {me && selected && (
+                {/* Menu actions sur message : Supprimer (les miens) / Signaler (reçus) */}
+                {selected && (
                   <div className="mt-1.5 fade-in rounded-xl overflow-hidden flex"
                     style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                    <button onClick={() => handleDeleteMessage(m.id)} disabled={deleting}
-                      className="px-3 py-1.5 text-[11px] font-semibold flex items-center gap-1.5"
-                      style={{ color: C.red }}>
-                      {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                      {deleting ? 'Suppression…' : 'Supprimer'}
-                    </button>
+                    {me ? (
+                      <button onClick={() => handleDeleteMessage(m.id)} disabled={deleting}
+                        className="px-3 py-1.5 text-[11px] font-semibold flex items-center gap-1.5"
+                        style={{ color: C.red }}>
+                        {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                        {deleting ? 'Suppression…' : 'Supprimer'}
+                      </button>
+                    ) : (
+                      <button onClick={() => { setSelectedMsgId(null); onReport?.('message', m.id, m.content); }}
+                        className="px-3 py-1.5 text-[11px] font-semibold flex items-center gap-1.5"
+                        style={{ color: C.red }}>
+                        <Flag size={11} />
+                        Signaler
+                      </button>
+                    )}
                     <button onClick={() => setSelectedMsgId(null)}
                       className="px-3 py-1.5 text-[11px] font-semibold"
                       style={{ color: C.textDim, borderLeft: `1px solid ${C.border}` }}>
@@ -8404,7 +8417,10 @@ function ReportModal({ targetType, targetId, targetLabel, onClose, onSubmit }) {
     setTimeout(onClose, 1800);
   };
 
-  const titleText = targetType === 'user' ? 'Signaler ce compte' : 'Signaler cette vidéo';
+  const titleText = targetType === 'user' ? 'Signaler ce compte'
+    : targetType === 'message' ? 'Signaler ce message'
+    : targetType === 'comment' ? 'Signaler ce commentaire'
+    : 'Signaler cette vidéo';
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
@@ -12286,6 +12302,7 @@ export default function App() {
             onLoadPendingSigning={loadPendingSigningWith}
             onRespondToSigning={respondToSigning}
             onDeleteMessage={deleteMessage}
+            onReport={openReport}
           />
         </div>
       )}
