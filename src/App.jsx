@@ -845,7 +845,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   const isUpload = !youtubeId && !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
-  const [fitMode, setFitMode] = useState('contain'); // 'contain' = tout voir · 'cover' = plein écran
 
   // Lecture / pause automatique selon la visibilité (façon TikTok)
   useEffect(() => {
@@ -879,6 +878,34 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
     else { v.pause(); setIsPaused(true); }
   };
 
+  // Plein écran « vrai paysage » : sur iPhone, le lecteur natif pivote
+  // automatiquement en paysage pour les vidéos horizontales ; sinon
+  // (Android / navigateur) Fullscreen API + verrouillage en paysage.
+  const goFullscreen = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (typeof v.webkitEnterFullscreen === 'function') {
+      try { v.webkitEnterFullscreen(); return; } catch {}
+    }
+    const req = v.requestFullscreen || v.webkitRequestFullscreen;
+    if (req) {
+      try {
+        Promise.resolve(req.call(v)).then(() => {
+          try { screen.orientation?.lock?.('landscape'); } catch {}
+        }).catch(() => {});
+      } catch {}
+    }
+  };
+
+  // À la sortie du plein écran (Android), on déverrouille l'orientation.
+  useEffect(() => {
+    const onFs = () => {
+      if (!document.fullscreenElement) { try { screen.orientation?.unlock?.(); } catch {} }
+    };
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
   const sport = SPORTS.find(s => s.id === data.sport);
   const authorName = data.profiles?.full_name || 'Athlète';
   const stats = engagement || { likes: 0, comments: 0, shares: 0, likedByMe: false };
@@ -908,7 +935,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               poster={thumbnailUrl || undefined}
               loop muted playsInline preload="metadata"
               onClick={togglePlay}
-              className={`absolute inset-0 w-full h-full ${fitMode === 'cover' ? 'object-cover' : 'object-contain'}`}
+              className="absolute inset-0 w-full h-full object-contain"
               style={{ backgroundColor: '#000' }} />
             {/* Icône play affichée uniquement quand l'utilisateur a mis en pause */}
             {isPaused && (
@@ -970,16 +997,16 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 ? <VolumeX size={18} style={{ color: C.text }} strokeWidth={2.2} />
                 : <Volume2 size={18} style={{ color: C.text }} strokeWidth={2.2} />}
             </button>
-            {/* Bascule plein écran / ajusté */}
-            <button onClick={(e) => { e.stopPropagation(); setFitMode(m => (m === 'cover' ? 'contain' : 'cover')); }}
-              aria-label={fitMode === 'cover' ? 'Voir la vidéo en entier' : "Remplir l'écran"}
+            {/* Plein écran paysage : voir la vidéo en grand, à l'horizontale */}
+            <button onClick={(e) => { e.stopPropagation(); goFullscreen(); }}
+              aria-label="Plein écran paysage"
               className="w-10 h-10 rounded-full flex items-center justify-center"
               style={{
-                backgroundColor: fitMode === 'cover' ? C.gold : 'rgba(8,15,32,0.6)',
+                backgroundColor: 'rgba(8,15,32,0.6)',
                 backdropFilter: 'blur(10px)',
-                border: `1px solid ${fitMode === 'cover' ? C.gold : 'rgba(255,255,255,0.15)'}`,
+                border: `1px solid rgba(255,255,255,0.15)`,
               }}>
-              <FitToggleIcon size={18} color={fitMode === 'cover' ? C.bg : C.text} />
+              <FitToggleIcon size={18} color={C.text} />
             </button>
           </div>
         )}
