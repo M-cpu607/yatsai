@@ -9878,8 +9878,45 @@ function OwnVideoThumb({ video, onPlay, onDelete }) {
   );
 }
 
+// Avatar de l'utilisateur avec un bouton « + » pour ajouter / changer la photo de profil
+function EditableAvatar({ userProfile, onUpdateProfile, size = 96 }) {
+  const inputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const handlePick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !userProfile?.id) return;
+    setUploading(true);
+    const { url, error } = await uploadImage(file, 'avatars', userProfile.id);
+    if (!error && url) { await onUpdateProfile?.({ avatar_url: url }); }
+    setUploading(false);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+  return (
+    <div className="relative fade-in" style={{ width: size, height: size }}>
+      <div className="rounded-full overflow-hidden"
+        style={{ width: size, height: size, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
+        {userProfile?.avatar_url ? (
+          <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-3xl font-bold" style={{ color: C.gold }}>
+            {userProfile?.full_name?.charAt(0)?.toUpperCase() || '?'}
+          </div>
+        )}
+      </div>
+      {/* Bouton + (ajouter / changer la photo) */}
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handlePick} />
+      <button onClick={() => inputRef.current?.click()} disabled={uploading}
+        aria-label="Ajouter ou changer la photo de profil"
+        className="absolute bottom-0 right-0 rounded-full flex items-center justify-center active:opacity-70"
+        style={{ width: 30, height: 30, backgroundColor: C.gold, color: C.bg, border: `3px solid ${C.bg}` }}>
+        {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={16} strokeWidth={3} />}
+      </button>
+    </div>
+  );
+}
+
 function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowList, onLoadFollowCounts,
-                       onDeleteVideo, onOpenSettings, onShareProfile }) {
+                       onDeleteVideo, onOpenSettings, onShareProfile, onUpdateProfile }) {
   const sport = SPORTS.find(s => s.id === userProfile?.sport);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [myVideos, setMyVideos] = useState([]);
@@ -9950,17 +9987,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
 
       {/* Ligne avatar + actions (style X) */}
       <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
-        <div className="rounded-full overflow-hidden fade-in"
-          style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
-          {userProfile?.avatar_url ? (
-            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
-              style={{ color: C.gold }}>
-              {userProfile?.full_name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-          )}
-        </div>
+        <EditableAvatar userProfile={userProfile} onUpdateProfile={onUpdateProfile} />
         <div className="flex items-center gap-2 mt-12">
           {onOpenSettings && (
             <button onClick={onOpenSettings} aria-label="Paramètres"
@@ -10275,7 +10302,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
 
 // ─── PROFIL OBSERVATEUR (page minimaliste, vidéos enregistrées privées) ──
 function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFollowCounts,
-                                onOpenSettings, onShareProfile,
+                                onOpenSettings, onShareProfile, onUpdateProfile,
                                 onLoadSavedVideos, onToggleSaveVideo, onPlayVideo }) {
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
 
@@ -10335,17 +10362,7 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
 
       {/* Ligne avatar + actions (style X) */}
       <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
-        <div className="rounded-full overflow-hidden fade-in"
-          style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
-          {userProfile?.avatar_url ? (
-            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
-              style={{ color: C.gold }}>
-              {userProfile?.full_name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-          )}
-        </div>
+        <EditableAvatar userProfile={userProfile} onUpdateProfile={onUpdateProfile} />
         <div className="flex items-center gap-2 mt-12">
           {onOpenSettings && (
             <button onClick={onOpenSettings} aria-label="Paramètres"
@@ -11860,6 +11877,7 @@ export default function App() {
                                   onShowFollowList={showFollowList} onLoadFollowCounts={loadFollowCounts}
                                   onOpenSettings={() => setSettingsOpen(true)}
                                   onShareProfile={() => setShareProfileOpen(true)}
+                                  onUpdateProfile={updateProfile}
                                   onLoadSavedVideos={loadSavedVideos}
                                   onToggleSaveVideo={toggleSaveVideo}
                                   onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
@@ -11876,7 +11894,8 @@ export default function App() {
                                 onShowFollowList={showFollowList} onLoadFollowCounts={loadFollowCounts}
                                 onDeleteVideo={deleteVideo}
                                 onOpenSettings={() => setSettingsOpen(true)}
-                                onShareProfile={() => setShareProfileOpen(true)} />;
+                                onShareProfile={() => setShareProfileOpen(true)}
+                                onUpdateProfile={updateProfile} />;
       default: return null;
     }
   };

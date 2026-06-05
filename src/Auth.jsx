@@ -791,6 +791,23 @@ export default function Auth({ initialMode = 'login' }) {
                         </button>
                       )
                     })}
+                    {/* Option « Tous » en dernier : sélectionne tous les niveaux d'un coup */}
+                    {(() => {
+                      const allIds = LEVELS.map(l => l.id)
+                      const allActive = allIds.every(id => recruitingLevels.includes(id))
+                      return (
+                        <button type="button"
+                          onClick={() => setRecruitingLevels(allActive ? [] : allIds)}
+                          className="px-3 py-2 rounded-full text-xs font-semibold"
+                          style={{
+                            backgroundColor: allActive ? C.gold : C.surface,
+                            color: allActive ? C.bg : C.text,
+                            border: `1px solid ${allActive ? C.gold : C.border}`,
+                          }}>
+                          ✅ Tous
+                        </button>
+                      )
+                    })()}
                   </div>
                 </Section>
 
@@ -817,8 +834,8 @@ export default function Auth({ initialMode = 'login' }) {
               </>
             )}
 
-            {/* ===== Localisation (athlètes + recruteurs uniquement, dernière étape) ===== */}
-            {!isObserver && signupStep === STEP_LABELS.length - 1 && (
+            {/* ===== Localisation (athlètes + recruteurs) — demandée dès l'étape 1 (Profil) ===== */}
+            {!isObserver && signupStep === 0 && (
               <Section title="Où es-tu basé ?" hint="Permet aux recruteurs / athlètes de ta zone de te trouver.">
                 <div className="grid grid-cols-3 gap-2">
                   <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
