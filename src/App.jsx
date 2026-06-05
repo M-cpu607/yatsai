@@ -64,6 +64,9 @@ const FontStyles = () => (
     .dot-jump > span:nth-child(1) { animation-delay: -0.32s; }
     .dot-jump > span:nth-child(2) { animation-delay: -0.16s; }
     .dot-jump > span:nth-child(3) { animation-delay: 0s; }
+    /* Flèche de suivi du joueur : léger rebond vertical */
+    @keyframes playerArrowBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    .player-arrow-bob { animation: playerArrowBob 1s ease-in-out infinite; }
     input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; width: 100%; }
     input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: ${C.gold}; box-shadow: 0 0 8px rgba(255,184,0,0.5); cursor: pointer; margin-top: -7px; }
     input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: rgba(255,255,255,0.12); border-radius: 2px; }
@@ -817,6 +820,79 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 }
 
 // ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
+// ─── Flèche de suivi du joueur (marquée manuellement par l'athlète) ───
+// points = [{ t: secondes, x: 0..1, y: 0..1 }] en fraction du cadre vidéo.
+// On interpole linéairement la position entre deux points marqués.
+function interpTrackingPoint(pts, t) {
+  if (!pts || pts.length === 0) return null;
+  if (t <= pts[0].t) return { x: pts[0].x, y: pts[0].y };
+  const last = pts[pts.length - 1];
+  if (t >= last.t) return { x: last.x, y: last.y };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const f = (t - a.t) / ((b.t - a.t) || 1);
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    }
+  }
+  return { x: last.x, y: last.y };
+}
+
+// Triangle rouge pointant vers le bas, placé au-dessus de la tête du joueur.
+function PlayerArrowMarker({ size = 26 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24"
+      className="player-arrow-bob"
+      style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.65))' }} aria-hidden="true">
+      <polygon points="3,3 21,3 12,20" fill="#FF3B30" stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Superpose la flèche sur une vidéo en lecture : suit currentTime en interpolant.
+// videoRef = ref vers l'élément <video> ; le conteneur parent doit être `relative`.
+function VideoTrackingArrow({ videoRef, points, size = 26 }) {
+  const arrowRef = useRef(null);
+  const sorted = useMemo(
+    () => (Array.isArray(points)
+      ? points.filter(p => p && typeof p.t === 'number').slice().sort((a, b) => a.t - b.t)
+      : []),
+    [points]
+  );
+  useEffect(() => {
+    if (sorted.length === 0) return;
+    let raf;
+    const loop = () => {
+      const v = videoRef.current, el = arrowRef.current;
+      if (v && el && v.videoWidth && v.videoHeight) {
+        const cw = v.clientWidth, ch = v.clientHeight;
+        const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+        const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
+        const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
+        const p = interpTrackingPoint(sorted, v.currentTime || 0);
+        if (p) {
+          el.style.display = 'block';
+          el.style.left = `${oX + p.x * dW}px`;
+          el.style.top = `${oY + p.y * dH}px`;
+        } else {
+          el.style.display = 'none';
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [sorted, videoRef]);
+
+  if (sorted.length === 0) return null;
+  return (
+    <div ref={arrowRef} className="absolute pointer-events-none"
+      style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
+      <PlayerArrowMarker size={size} />
+    </div>
+  );
+}
+
 // Icône bascule plein écran / ajusté : un petit carré surmonté
 // d'une flèche courbée dans le sens des aiguilles d'une montre.
 function FitToggleIcon({ size = 18, color = '#fff' }) {
@@ -980,6 +1056,9 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
         {/* Overlay gradient (laisse passer les clics vers la vidéo) */}
         <div className="absolute inset-0 pointer-events-none"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
+
+        {/* Flèche de suivi du joueur (si l'athlète l'a marquée à la publication) */}
+        {isUpload && <VideoTrackingArrow videoRef={videoRef} points={data.tracking_points} />}
 
         {/* Boutons flottants (son + plein écran) — vidéos uploadées uniquement */}
         {isUpload && (
@@ -1146,6 +1225,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
 function YouTubePlayer({ video, onClose }) {
   const youtubeId = getYouTubeIdFromUrl(video.youtube_url);
   const isUpload = !youtubeId && !!video.video_url;
+  const vidRef = useRef(null);
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col"
@@ -1166,7 +1246,7 @@ function YouTubePlayer({ video, onClose }) {
       </div>
 
       {/* Lecteur */}
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center relative">
         {youtubeId ? (
           <iframe
             width="100%"
@@ -1179,6 +1259,7 @@ function YouTubePlayer({ video, onClose }) {
           />
         ) : isUpload ? (
           <video
+            ref={vidRef}
             src={video.video_url}
             poster={video.thumbnail_url || undefined}
             controls
@@ -1190,6 +1271,8 @@ function YouTubePlayer({ video, onClose }) {
         ) : (
           <div style={{ color: C.textDim }}>Vidéo introuvable</div>
         )}
+        {/* Flèche de suivi du joueur */}
+        {isUpload && <VideoTrackingArrow videoRef={vidRef} points={video.tracking_points} />}
       </div>
     </div>
   );
@@ -1864,6 +1947,129 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
 
 // ═══ PUBLISH (avec tracker conservé) ══════════════════════════════
 // ─── PUBLISH (Upload direct OU lien YouTube) ──────────────────────
+// Éditeur de flèche de suivi (avant publication) : l'athlète met la vidéo en
+// pause et tape sur sa tête à plusieurs moments. La flèche suit en interpolant.
+function PlayerTrackingEditor({ src, points, onChange }) {
+  const vref = useRef(null);
+  const arrowRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [cur, setCur] = useState(0);
+  const [dur, setDur] = useState(0);
+
+  const sorted = useMemo(
+    () => (points || []).slice().sort((a, b) => a.t - b.t),
+    [points]
+  );
+
+  // Aperçu temps réel de la flèche pendant l'édition
+  useEffect(() => {
+    let raf;
+    const loop = () => {
+      const v = vref.current, el = arrowRef.current;
+      if (v && el && v.videoWidth && v.videoHeight) {
+        const cw = v.clientWidth, ch = v.clientHeight;
+        const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+        const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
+        const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
+        const p = interpTrackingPoint(sorted, v.currentTime || 0);
+        if (p) {
+          el.style.display = 'block';
+          el.style.left = `${oX + p.x * dW}px`;
+          el.style.top = `${oY + p.y * dH}px`;
+        } else el.style.display = 'none';
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [sorted]);
+
+  const addPointAt = (clientX, clientY) => {
+    const v = vref.current;
+    if (!v || !v.videoWidth) return;
+    const rect = v.getBoundingClientRect();
+    const cw = rect.width, ch = rect.height;
+    const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+    const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
+    const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
+    const px = clientX - rect.left - oX;
+    const py = clientY - rect.top - oY;
+    if (px < 0 || py < 0 || px > dW || py > dH) return; // tap hors image (bandes noires)
+    const x = Math.max(0, Math.min(1, px / dW));
+    const y = Math.max(0, Math.min(1, py / dH));
+    const t = v.currentTime || 0;
+    // remplace un point proche (< 0.25s), sinon ajoute
+    const next = [...(points || []).filter(p => Math.abs(p.t - t) > 0.25), { t, x, y }]
+      .sort((a, b) => a.t - b.t);
+    onChange(next);
+  };
+
+  const togglePlay = () => {
+    const v = vref.current; if (!v) return;
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+  };
+
+  return (
+    <div>
+      <div className="relative rounded-xl overflow-hidden"
+        style={{ aspectRatio: '16/9', backgroundColor: '#000' }}>
+        <video ref={vref} src={src} playsInline preload="metadata"
+          onClick={(e) => addPointAt(e.clientX, e.clientY)}
+          onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+          onTimeUpdate={(e) => setCur(e.target.currentTime || 0)}
+          onLoadedMetadata={(e) => setDur(e.target.duration || 0)}
+          className="absolute inset-0 w-full h-full object-contain" />
+        <div ref={arrowRef} className="absolute pointer-events-none"
+          style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
+          <PlayerArrowMarker size={26} />
+        </div>
+      </div>
+
+      {/* Contrôles lecture + position */}
+      <div className="flex items-center gap-2 mt-2">
+        <button type="button" onClick={togglePlay}
+          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: C.gold, color: C.bg }}>
+          {playing ? <Pause size={16} /> : <Play size={16} fill={C.bg} stroke={C.bg} />}
+        </button>
+        <input type="range" min={0} max={dur || 0} step={0.05} value={cur}
+          onChange={(e) => { const v = vref.current; const val = Number(e.target.value); if (v) { v.currentTime = val; } setCur(val); }}
+          className="flex-1" style={{ accentColor: C.gold }} />
+        <span className="text-[10px] font-mono flex-shrink-0" style={{ color: C.textDim }}>
+          {cur.toFixed(1)}s
+        </span>
+      </div>
+
+      {/* Aide + compteur de points */}
+      <div className="flex items-center justify-between mt-2 gap-2">
+        <p className="text-[11px] flex-1" style={{ color: C.textMute }}>
+          Mets en pause puis tape sur ta tête. Recommence à plusieurs moments pour que la flèche te suive.
+        </p>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+            {(points || []).length} pt{(points || []).length > 1 ? 's' : ''}
+          </span>
+          {(points || []).length > 0 && (
+            <>
+              <button type="button" onClick={() => onChange((points || []).slice(0, -1))}
+                className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{ color: C.text, border: `1px solid ${C.border}` }}>
+                Annuler
+              </button>
+              <button type="button" onClick={() => onChange([])}
+                className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{ color: C.red, border: `1px solid ${C.red}` }}>
+                Effacer
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PublishView({ userProfile, setTab }) {
   const [mode, setMode] = useState('upload'); // 'upload' | 'youtube'
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -1875,6 +2081,8 @@ function PublishView({ userProfile, setTab }) {
   const [thumbBlob, setThumbBlob] = useState(null); // Blob JPEG (pour Storage)
   const [videoDuration, setVideoDuration] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100
+  const [trackingOn, setTrackingOn] = useState(false);       // flèche de suivi activée ?
+  const [trackingPoints, setTrackingPoints] = useState([]);  // [{ t, x, y }]
   const fileInputRef = useRef(null);
   const captureInputRef = useRef(null);
 
@@ -1953,6 +2161,8 @@ function PublishView({ userProfile, setTab }) {
     setThumbBlob(null);
     setVideoDuration(null);
     setUploadProgress(0);
+    setTrackingOn(false);
+    setTrackingPoints([]);
     setAiResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (captureInputRef.current) captureInputRef.current.value = '';
@@ -2014,6 +2224,7 @@ function PublishView({ userProfile, setTab }) {
       city: city.trim() || null,
       region: region.trim() || null,
       country: country.trim() || null,
+      tracking_points: (trackingOn && trackingPoints.length) ? trackingPoints : null,
     };
     const { error: insertError } = await supabase.from('videos').insert(row);
     if (insertError) { setError('Erreur : ' + insertError.message); return false; }
@@ -2206,6 +2417,41 @@ function PublishView({ userProfile, setTab }) {
                       style={{ width: `${uploadProgress}%`, backgroundColor: C.gold }} />
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* FLÈCHE DE SUIVI (upload uniquement, quand une vidéo est choisie) */}
+        {mode === 'upload' && videoFile && videoPreviewUrl && (
+          <div className="rounded-xl p-3" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: C.text }}>
+                  🎯 Flèche de suivi
+                  <span style={{ color: C.textMute, fontWeight: 400 }}>(optionnel)</span>
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: C.textDim }}>
+                  Affiche une flèche au-dessus de toi tout au long de la vidéo pour qu'on te suive.
+                </div>
+              </div>
+              {/* Switch d'activation */}
+              <button type="button"
+                onClick={() => { const v = !trackingOn; setTrackingOn(v); if (!v) setTrackingPoints([]); }}
+                aria-label={trackingOn ? 'Désactiver la flèche' : 'Activer la flèche'}
+                className="rounded-full relative flex-shrink-0"
+                style={{ width: 44, height: 26, backgroundColor: trackingOn ? C.gold : C.surface2,
+                         transition: 'background-color 0.25s ease' }}>
+                <span className="absolute rounded-full" style={{ top: 3, left: 3, width: 20, height: 20,
+                  backgroundColor: trackingOn ? C.bg : C.text,
+                  transform: trackingOn ? 'translateX(18px)' : 'translateX(0)',
+                  transition: 'transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+              </button>
+            </div>
+            {trackingOn && (
+              <div className="mt-3">
+                <PlayerTrackingEditor src={videoPreviewUrl} points={trackingPoints} onChange={setTrackingPoints} />
               </div>
             )}
           </div>
