@@ -10420,6 +10420,13 @@ export default function App() {
 // ─── AUTHENTIFICATION SUPABASE ─────────────────────────────────
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  // Écran de lancement Yatsai : durée minimale ~3 s (même si la session
+  // se charge plus vite), pour une intro de marque propre.
+  const [splashMinElapsed, setSplashMinElapsed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSplashMinElapsed(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
   const [landingDone, setLandingDone] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState('signup'); // 'signup' | 'login'
   const [permsOnboard, setPermsOnboard] = useState(false); // écran d'autorisations (mobile, 1ère fois)
@@ -11573,12 +11580,24 @@ export default function App() {
       default: return null;
     }
   };
-// Pendant le chargement de la session
-  if (authLoading) {
+// Écran de lancement Yatsai — affiché pendant le chargement de la session
+// ET au moins 3 secondes (intro de marque).
+  if (authLoading || !splashMinElapsed) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#080F20' }}>
-        <div className="text-3xl font-extrabold" style={{ color: '#FFFFFF' }}>
+      <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden"
+        style={{ backgroundColor: '#080F20' }}>
+        {/* Halo doré */}
+        <div className="absolute" style={{
+          width: 420, height: 420, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(255,184,0,0.18) 0%, transparent 70%)',
+          filter: 'blur(20px)',
+        }} />
+        <div className="relative text-5xl font-extrabold fade-in"
+          style={{ color: '#FFFFFF', letterSpacing: '-0.03em' }}>
           Yat<span style={{ color: '#FFB800' }}>sai</span>
+        </div>
+        <div className="relative mt-6">
+          <Loader2 size={22} className="animate-spin" style={{ color: 'rgba(255,184,0,0.7)' }} />
         </div>
       </div>
     );
