@@ -11,6 +11,16 @@ async function initNative() {
     const { Capacitor } = await import('@capacitor/core')
     if (!Capacitor?.isNativePlatform?.()) return
 
+    // Dans l'app native, on désactive le service worker (cache PWA) :
+    // c'est une cause fréquente d'écran blanc (une version vide périmée est
+    // servie depuis le cache). L'app native embarque déjà tout son code.
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(regs.map(r => r.unregister()))
+      }
+    } catch {}
+
     // Barre de statut : texte clair sur fond sombre Yatsai
     try {
       const { StatusBar, Style } = await import('@capacitor/status-bar')
