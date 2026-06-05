@@ -7952,7 +7952,14 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
   const [playingVideo, setPlayingVideo] = useState(null); // vidéo en lecture depuis le profil visité
   // Copie live du profil visité — patchée en temps réel via Realtime
   const [liveProfile, setLiveProfile] = useState(profileProp);
-  useEffect(() => { setLiveProfile(profileProp); }, [profileProp?.id]);
+  // Se resynchronise dès que le profil reçu change (y compris quand openProfile
+  // remplace l'objet partiel par le profil COMPLET avec le même id → bannière, bio…).
+  useEffect(() => {
+    if (!profileProp) return;
+    setLiveProfile(prev =>
+      (prev && prev.id === profileProp.id) ? { ...prev, ...profileProp } : profileProp
+    );
+  }, [profileProp]);
   useEffect(() => {
     if (!profileProp?.id) return;
     const channel = supabase
