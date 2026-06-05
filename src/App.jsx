@@ -10175,10 +10175,11 @@ function TrackingEditorModal({ video, onClose, onSaved }) {
   const handleSave = async () => {
     setSaving(true); setError('');
     const value = points.length ? points : null;
-    const { error: err } = await supabase.from('videos')
-      .update({ tracking_points: value }).eq('id', video.id);
+    const { data, error: err } = await supabase.from('videos')
+      .update({ tracking_points: value }).eq('id', video.id).select('id');
     setSaving(false);
     if (err) { setError(err.message); return; }
+    if (!data || data.length === 0) { setError('Modification refusée (autorisation manquante).'); return; }
     onSaved?.(video.id, value);
   };
 
@@ -11131,6 +11132,16 @@ export default function App() {
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'videos' },
         () => loadVideos())
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'videos' },
+        (payload) => {
+          // Patch local d'une vidéo modifiée (ex : flèche de suivi) sans tout recharger.
+          const u = payload.new;
+          if (!u?.id) return;
+          setVideos(prev => prev.map(v =>
+            v.id === u.id ? { ...v, ...u, profiles: v.profiles, likes: v.likes } : v
+          ));
+        })
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'profiles' },
         (payload) => {
