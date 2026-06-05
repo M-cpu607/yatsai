@@ -10041,7 +10041,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
 // ═══ PROFIL VIEWS (athlète & recruteur) ═════════════════════════════
 // ─── Card vidéo "ma vidéo" avec bouton de suppression ──────────────
-function OwnVideoThumb({ video, onPlay, onDelete }) {
+function OwnVideoThumb({ video, onPlay, onDelete, onEditTracking }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -10118,12 +10118,21 @@ function OwnVideoThumb({ video, onPlay, onDelete }) {
                 </div>
               </div>
             ) : (
-              <button onClick={() => setConfirm(true)}
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold"
-                style={{ color: C.red }}>
-                <Trash2 size={12} />
-                Supprimer
-              </button>
+              <>
+                {onEditTracking && uploaded && (
+                  <button onClick={() => { setMenuOpen(false); onEditTracking(video); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold border-b"
+                    style={{ color: C.gold, borderColor: C.border }}>
+                    🎯 Modifier la flèche de suivi
+                  </button>
+                )}
+                <button onClick={() => setConfirm(true)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold"
+                  style={{ color: C.red }}>
+                  <Trash2 size={12} />
+                  Supprimer
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -10134,6 +10143,56 @@ function OwnVideoThumb({ video, onPlay, onDelete }) {
         {vsport && (
           <div className="text-[10px] mt-0.5" style={{ color: C.textDim }}>
             {vsport.icon} {vsport.label}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Modale d'édition de la flèche de suivi sur une vidéo DÉJÀ publiée (depuis le profil).
+function TrackingEditorModal({ video, onClose, onSaved }) {
+  const [points, setPoints] = useState(Array.isArray(video.tracking_points) ? video.tracking_points : []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    setSaving(true); setError('');
+    const value = points.length ? points : null;
+    const { error: err } = await supabase.from('videos')
+      .update({ tracking_points: value }).eq('id', video.id);
+    setSaving(false);
+    if (err) { setError(err.message); return; }
+    onSaved?.(video.id, value);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col" style={{ backgroundColor: C.bg }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
+        <button onClick={onClose} className="w-10 h-10 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: C.surface }}>
+          <X size={20} style={{ color: C.text }} />
+        </button>
+        <div className="text-sm font-bold truncate flex-1 mx-3 text-center" style={{ color: C.text }}>
+          🎯 Flèche de suivi
+        </div>
+        <button onClick={handleSave} disabled={saving}
+          className="px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"
+          style={{ backgroundColor: saving ? 'rgba(255,184,0,0.4)' : C.gold, color: C.bg }}>
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          {saving ? 'Enregistrement…' : 'Enregistrer'}
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <p className="text-xs mb-3" style={{ color: C.textDim }}>
+          Mets la vidéo en pause et tape sur ta tête à plusieurs moments pour repositionner la flèche.
+          Laisse vide (Effacer) pour retirer complètement la flèche.
+        </p>
+        <PlayerTrackingEditor src={video.video_url} points={points} onChange={setPoints} />
+        {error && (
+          <div className="mt-3 px-3 py-2 rounded-lg text-xs"
+            style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: `1px solid ${C.red}` }}>
+            {error}
           </div>
         )}
       </div>
@@ -10184,6 +10243,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [myVideos, setMyVideos] = useState([]);
   const [playingVideo, setPlayingVideo] = useState(null);
+  const [trackingEditVideo, setTrackingEditVideo] = useState(null); // édition flèche depuis le profil
 
   // Realtime : recharger les compteurs followers/following en temps réel
   useEffect(() => {
@@ -10365,7 +10425,8 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {myVideos.map(v => (
-              <OwnVideoThumb key={v.id} video={v} onPlay={setPlayingVideo} onDelete={onDeleteVideo} />
+              <OwnVideoThumb key={v.id} video={v} onPlay={setPlayingVideo} onDelete={onDeleteVideo}
+                onEditTracking={setTrackingEditVideo} />
             ))}
           </div>
         )}
@@ -10375,6 +10436,18 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
 
       {playingVideo && (
         <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
+      )}
+
+      {/* Édition de la flèche de suivi sur une vidéo déjà publiée */}
+      {trackingEditVideo && (
+        <TrackingEditorModal
+          video={trackingEditVideo}
+          onClose={() => setTrackingEditVideo(null)}
+          onSaved={(id, pts) => {
+            setMyVideos(prev => prev.map(v => v.id === id ? { ...v, tracking_points: pts } : v));
+            setTrackingEditVideo(null);
+          }}
+        />
       )}
     </div>
   );
