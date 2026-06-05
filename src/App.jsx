@@ -2321,12 +2321,21 @@ function PublishView({ userProfile, setTab }) {
 }
 
 // ═══ NOTIFICATIONS PANEL ════════════════════════════════════════════
-function NotificationsPanel({ notifications, onClose, onMarkAllRead, onDelete,
+function NotificationsPanel({ notifications: allNotifs, onClose, onMarkAllRead, onDelete,
                                 onSelectProfile, currentUserId }) {
   useEffect(() => {
     // Auto-mark all as read when opened
     onMarkAllRead?.();
   }, []);
+
+  // Respecte les réglages de notifications (Paramètres). Un type désactivé
+  // n'est plus affiché ici → les toggles ont un effet réel.
+  const pref = (k) => { try { const v = localStorage.getItem('pref_' + k); return v === null ? true : v === '1'; } catch { return true; } };
+  const TYPE_PREF = { like: 'notif_likes', comment: 'notif_comments', message: 'notif_messages', follow: 'notif_follows' };
+  const notifications = (allNotifs || []).filter(n => {
+    const prefKey = TYPE_PREF[n.type];
+    return prefKey ? pref(prefKey) : true; // types sans réglage (ex : video_published) toujours affichés
+  });
 
   const ICONS = {
     comment: '💬',
@@ -3408,8 +3417,8 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
       // Athlètes + vidéos (avec leur auteur) + signatures
       const [profilesRes, videosRes, signedRes] = await Promise.all([
         supabase.from('profiles')
-          .select('id, full_name, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status')
-          .eq('is_recruiter', false).neq('id', currentUserId || ''),
+          .select('id, full_name, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status, is_private, hide_location')
+          .eq('is_recruiter', false).neq('id', currentUserId || '').or('is_private.is.null,is_private.eq.false'),
         supabase.from('videos')
           .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)'),
         supabase.from('signed_posts').select('id, athlete_id, caption'),
@@ -3577,7 +3586,7 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
                             </div>
                             <div className="text-[11px] truncate" style={{ color: C.textDim }}>
                               {sport ? `${sport.icon} ${sport.label}` : ''}{a.position ? ` · ${a.position}` : ''}
-                              {a.city ? ` · 📍 ${a.city}` : ''}
+                              {(!a.hide_location && a.city) ? ` · 📍 ${a.city}` : ''}
                             </div>
                             {isLevelDisplayable(a) && (
                               <div className="mt-1"><LevelChip level={a.level} /></div>
@@ -3778,6 +3787,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
   const norm = (s) => (s || '').toLowerCase().trim();
 
   const filtered = useMemo(() => profiles.filter(p => {
+    // Compte privé : exclu de la recherche pour les autres (le propriétaire se voit toujours)
+    if (p.is_private && p.id !== currentUserId) return false;
     if (filters.sport && p.sport !== filters.sport) return false;
     // Filtre âge (s'applique dès qu'un profil a un âge renseigné, athlète OU recruteur)
     if (p.age != null && (filters.ageMin !== 14 || filters.ageMax !== 35)) {
@@ -3799,7 +3810,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       if (!hay.includes(needle)) return false;
     }
     return true;
-  }), [profiles, query, filters, athletesOnly]);
+  }), [profiles, query, filters, athletesOnly, currentUserId]);
 
   // Vidéos filtrées (onglet vidéos)
   const filteredVideos = useMemo(() => {
@@ -7248,13 +7259,20 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout }) {
   };
 
   const Toggle = ({ on, onChange }) => (
-    <button onClick={() => onChange(!on)}
-      className="w-10 h-6 rounded-full relative transition-colors"
-      style={{ backgroundColor: on ? C.gold : C.surface2 }}>
-      <span className="absolute top-0.5 w-5 h-5 rounded-full transition-transform"
+    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
+      className="rounded-full relative flex-shrink-0"
+      style={{
+        width: 44, height: 26,
+        backgroundColor: on ? C.gold : C.surface2,
+        transition: 'background-color 0.25s ease',
+      }}>
+      <span className="absolute rounded-full"
         style={{
+          top: 3, left: 3, width: 20, height: 20,
           backgroundColor: on ? C.bg : C.text,
-          transform: on ? 'translateX(18px)' : 'translateX(2px)',
+          transform: on ? 'translateX(18px)' : 'translateX(0)',
+          transition: 'transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
         }} />
     </button>
   );
@@ -8277,7 +8295,8 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
               🌐 {profile.nationality}
             </span>
           )}
-          {(computeAge(profile.birthdate) ?? profile.age) && (
+          {/* Âge — masqué si le réglage de confidentialité « Masquer mon âge » est actif */}
+          {!profile.hide_age && (computeAge(profile.birthdate) ?? profile.age) && (
             <span className="text-xs" style={{ color: C.textDim }}>
               · {computeAge(profile.birthdate) ?? profile.age} ans
             </span>
@@ -8331,8 +8350,8 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
                 {profile.club && ` · ${profile.club}`}
               </div>
             )}
-            {/* Localisation (ville · région · pays) — sous poste/club */}
-            {(profile.city || profile.region || profile.country) && (
+            {/* Localisation — masquée si le réglage « Masquer ma localisation » est actif */}
+            {!profile.hide_location && (profile.city || profile.region || profile.country) && (
               <div className="text-xs mt-0.5" style={{ color: C.textDim }}>
                 📍 {[profile.city, profile.region, profile.country].filter(Boolean).join(' · ')}
               </div>
