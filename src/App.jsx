@@ -9743,36 +9743,6 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             </div>
           </div>
 
-          {/* Liens externes : recruteurs uniquement (les athlètes n'en affichent pas) */}
-          {isRecruiter && (
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                🔗 Mes liens externes (réseaux sociaux, apps fitness)
-              </label>
-              <p className="text-[11px] mb-2" style={{ color: C.textMute }}>
-                Colle l'URL de ton profil ou laisse vide. Affiché publiquement sur ta page profil.
-              </p>
-              <div className="flex flex-col gap-2">
-                {SOCIAL_LINK_PLATFORMS.map(p => (
-                  <div key={p.key} className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-base"
-                      style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                      {p.icon}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[10px]" style={{ color: C.textDim }}>{p.label}</div>
-                      <input type="url" value={socialLinks?.[p.key] || ''}
-                        onChange={(e) => setSocialLinks(prev => ({ ...prev, [p.key]: e.target.value }))}
-                        placeholder={p.placeholder}
-                        className="w-full px-2.5 py-1.5 rounded text-xs outline-none"
-                        style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* ─── Section Compte (changement email / mot de passe) ─── */}
           <div className="rounded-xl p-3 mt-4"
             style={{ backgroundColor: 'rgba(255,184,0,0.04)', border: `1px solid ${C.border}` }}>
