@@ -9088,7 +9088,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const birthdate = userProfile?.birthdate || ''; // lecture seule
   const computedAge = computeAge(birthdate);
   // Champs modifiables
-  const [sport, setSport] = useState(userProfile?.sport || '');
+  // sport : défini à l'inscription, non modifiable après coup
   const [position, setPosition] = useState(userProfile?.position || '');
   const [club, setClub] = useState(userProfile?.club || '');
   const [organization, setOrganization] = useState(userProfile?.organization || '');
@@ -9153,7 +9153,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       // full_name et birthdate sont volontairement omis (non modifiables).
       // L'âge est recalculé en cache à partir de birthdate.
       age: computedAge,
-      sport: sport || null,
+      // sport non modifiable (défini à l'inscription)
       position: position.trim() || null,
       club: isRecruiter ? null : (club.trim() || null),
       organization: isRecruiter ? (organization.trim() || null) : null,
@@ -9354,18 +9354,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             </div>
           )}
 
-          {/* Sport — athlètes + recruteurs (pas les observateurs) */}
-          {!isObserverEditor && (
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Sport</label>
-              <select value={sport} onChange={(e) => { setSport(e.target.value); setPosition(''); }}
-                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
-                <option value="">— Choisir —</option>
-                {SPORTS.map(s => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
-              </select>
-            </div>
-          )}
+          {/* Sport : défini à l'inscription, non modifiable ici */}
 
           {/* Poste sur le terrain — athlètes uniquement */}
           {isAthleteEditor && (
