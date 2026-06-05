@@ -891,7 +891,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               poster={thumbnailUrl || undefined}
               loop muted playsInline preload="metadata"
               onClick={togglePlay}
-              className="absolute inset-0 w-full h-full object-cover"
+              className="absolute inset-0 w-full h-full object-contain"
               style={{ backgroundColor: '#000' }} />
             {/* Icône play affichée uniquement quand l'utilisateur a mis en pause */}
             {isPaused && (
