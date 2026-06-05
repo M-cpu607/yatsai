@@ -3375,12 +3375,12 @@ function detectGender(q) {
 // Comprend une phrase ("attaquant gaucher U18 à Lyon, niveau national"), en
 // extrait les critères, et renvoie de VRAIS athlètes cliquables + de l'aide.
 function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilters,
-                          dbShortlist, onAddToShortlist }) {
-  const intro = "👋 Je suis ton assistant de recrutement Yatsai.\n\nDécris l'athlète que tu cherches en une phrase — je te sors les meilleurs profils. Je réponds aussi à tes questions sur l'app.";
+                          dbShortlist, onAddToShortlist, onPlayVideo }) {
+  const intro = "👋 Je suis ton assistant de recrutement Yatsai.\n\nJe peux :\n🔎 Trouver des **athlètes** (« attaquant U18 à Lyon »)\n🎬 Trouver des **vidéos** (« vidéos de match foot National »)\n❓ Répondre sur l'**app** (« comment marche la shortlist ? »)";
   const SUGGESTIONS = [
     'Attaquant U18 à Lyon',
+    'Vidéos de match foot',
     'Gardien senior pro',
-    'Milieu rapide niveau national',
     'Comment marche la shortlist ?',
   ];
 
@@ -3405,12 +3405,13 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
     if (sensitiveAnswer) { push({ role: 'assistant', content: sensitiveAnswer }); setLoading(false); return; }
 
     try {
-      // On charge les athlètes (le recruteur cherche des athlètes) + leurs vidéos
+      // Athlètes + vidéos (avec leur auteur) + signatures
       const [profilesRes, videosRes, signedRes] = await Promise.all([
         supabase.from('profiles')
           .select('id, full_name, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status')
           .eq('is_recruiter', false).neq('id', currentUserId || ''),
-        supabase.from('videos').select('id, user_id, title, description, sport, position'),
+        supabase.from('videos')
+          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)'),
         supabase.from('signed_posts').select('id, athlete_id, caption'),
       ]);
       const athletes = profilesRes.data || [];
@@ -3428,25 +3429,60 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
       const gender = detectGender(q);
       if (gender) matched.push('Genre : ' + (gender === 'F' ? 'féminin' : 'masculin'));
 
-      // Critères STRUCTURÉS (sport, lieu, niveau, âge, genre) = signal fort de recherche
+      const lq = stripAccents(q.toLowerCase());
+      // Intention vidéo ?
+      const videoIntent = /\b(video|videos|clip|clips|extrait|extraits|sequence|sequences|replay|images|montre|highlight|highlights)\b/.test(lq);
+      // Type de vidéo demandé
+      const videoType = /\bmatchs?\b/.test(lq) ? 'match'
+        : /\b(entrainement|entrainements|training|entraine)\b/.test(lq) ? 'training' : null;
+      if (videoType) matched.push('Type : ' + (videoType === 'match' ? 'match' : 'entraînement'));
+
+      // Critères STRUCTURÉS (sport, lieu, niveau, âge, genre)
       const hasStructured = !!filters.sport || !!filters.city || !!filters.region
         || !!filters.country || filters.levels.length > 0
         || filters.ageMin !== 14 || filters.ageMax !== 35 || !!gender;
-      // Mots évoquant un athlète / un poste → recherche aussi
-      const lq = stripAccents(q.toLowerCase());
       const athleteHint = /\b(athlete|joueur|joueuse|attaquant|buteur|defenseur|defenseuse|gardien|gardienne|milieu|ailier|meneur|pivot|arriere|avant|lateral|ailiere|passeur|libero|talent|profil)\b/.test(lq);
-      const isSearch = hasStructured || athleteHint;
 
-      // 2) Pas de recherche claire → on répond en mode AIDE (FAQ)
-      if (!isSearch) {
-        const kbAnswer = findKBAnswer(q, { isAthlete: false });
-        push({ role: 'assistant', content: kbAnswer
-          || "Je peux t'aider à deux choses :\n\n🔎 **Trouver des athlètes** — décris qui tu cherches (« ailier U19 à Paris », « gardienne niveau national »).\n❓ **L'app** — pose une question (shortlist, signature, messages…)." });
+      // ─── BRANCHE VIDÉO ───
+      if (videoIntent) {
+        // Mots-clés sans les termes "vidéo" eux-mêmes
+        const vkw = keywords.filter(k => !/^(video|videos|clip|clips|extrait|extraits|sequence|replay|images|montre|highlight|highlights|match|matchs|entrainement|entrainements|training)$/.test(k));
+        const scoredV = [];
+        for (const v of videos) {
+          const author = v.profiles || null;
+          let s = 1 + scoreVideo(v, author, filters, vkw); // base 1 → "vidéos" seul = vidéos récentes
+          if (videoType && v.video_type === videoType) s += 4;
+          if (gender && author?.gender === gender) s += 2;
+          scoredV.push({ video: v, score: s, t: v.created_at || '' });
+        }
+        scoredV.sort((a, b) => (b.score - a.score) || (a.t < b.t ? 1 : -1));
+        const topV = scoredV.slice(0, 8).map(s => s.video);
+        const headV = matched.length > 0 ? '🎬 ' + matched.join(' · ') : '🎬 Vidéos';
+        if (topV.length === 0) {
+          push({ role: 'assistant', content: headV + '\n\nAucune vidéo ne correspond. Essaie d\'élargir tes critères.' });
+        } else {
+          push({
+            role: 'assistant',
+            content: headV + `\n\n${topV.length} vidéo${topV.length > 1 ? 's' : ''} :`,
+            videoResults: topV,
+          });
+        }
         setLoading(false);
         return;
       }
 
-      // 3) Recherche : score chaque athlète
+      const isSearch = hasStructured || athleteHint;
+
+      // ─── PAS DE RECHERCHE → AIDE (FAQ) ───
+      if (!isSearch) {
+        const kbAnswer = findKBAnswer(q, { isAthlete: false });
+        push({ role: 'assistant', content: kbAnswer
+          || "Je peux t'aider à 3 choses :\n\n🔎 **Athlètes** — « ailier U19 à Paris », « gardienne niveau national »\n🎬 **Vidéos** — « vidéos de match basket », « extraits U17 foot »\n❓ **L'app** — shortlist, signature, messages…" });
+        setLoading(false);
+        return;
+      }
+
+      // ─── BRANCHE ATHLÈTE ───
       let pool = athletes;
       if (gender) pool = pool.filter(p => p.gender === gender);
 
@@ -3570,6 +3606,45 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
                       <SlidersHorizontal size={13} /> Voir tous les résultats dans la recherche
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Vignettes vidéo (résultats cliquables → lecture) */}
+              {m.videoResults && m.videoResults.length > 0 && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {m.videoResults.map(v => {
+                    const thumb = getVideoThumb(v);
+                    const vsport = SPORTS.find(s => s.id === v.sport);
+                    return (
+                      <button key={v.id} onClick={() => onPlayVideo?.(v)}
+                        className="rounded-xl overflow-hidden text-left"
+                        style={{ backgroundColor: C.surface, border: '1px solid ' + C.border }}>
+                        <div className="relative" style={{ aspectRatio: '16/10', backgroundColor: '#000' }}>
+                          {thumb
+                            ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center"><Video size={20} style={{ color: C.textMute }} /></div>}
+                          <div className="absolute inset-0 flex items-center justify-center"
+                            style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }}>
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center"
+                              style={{ backgroundColor: 'rgba(255,184,0,0.92)' }}>
+                              <Play size={13} fill={C.bg} stroke={C.bg} />
+                            </div>
+                          </div>
+                          {v.video_type && (
+                            <div className="absolute top-1.5 left-1.5">
+                              <VideoTypeBadge type={v.video_type} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-2">
+                          <div className="text-[11px] font-bold truncate" style={{ color: C.text }}>{v.title || 'Vidéo'}</div>
+                          <div className="text-[10px] truncate" style={{ color: C.textDim }}>
+                            {vsport ? `${vsport.icon} ${vsport.label}` : ''}{v.profiles?.full_name ? ` · ${v.profiles.full_name}` : ''}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3900,6 +3975,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           onSelectProfile={(p) => { setChatbotOpen(false); onSelectProfile?.(p); }}
           dbShortlist={dbShortlist}
           onAddToShortlist={onAddToShortlist}
+          onPlayVideo={(v) => { setChatbotOpen(false); onPlayVideo?.(v); }}
         />
       )}
 
