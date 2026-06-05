@@ -817,12 +817,50 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 }
 
 // ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
-function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, onOpenShare,
+function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOpenComments, onOpenShare,
                              isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
                              onReport, isSaved, onToggleSave }) {
   const [infoHidden, setInfoHidden] = useState(false);
   const thumbnailUrl = getVideoThumb(data);
-  const uploaded = isUploadedVideo(data);
+
+  const videoRef = useRef(null);
+  const wrapRef = useRef(null);
+  const youtubeId = getYouTubeIdFromUrl(data.youtube_url);
+  const isUpload = !youtubeId && !!data.video_url;
+  const [isPaused, setIsPaused] = useState(false);
+  const [ytOpen, setYtOpen] = useState(false);
+
+  // Lecture / pause automatique selon la visibilité (façon TikTok)
+  useEffect(() => {
+    if (!isUpload) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[0];
+      const v = videoRef.current;
+      if (!v) return;
+      if (e.isIntersecting && e.intersectionRatio >= 0.6) {
+        v.play().then(() => setIsPaused(false)).catch(() => {});
+      } else {
+        v.pause();
+        try { v.currentTime = 0; } catch {}
+      }
+    }, { threshold: [0, 0.6, 1] });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isUpload]);
+
+  // Synchronise le son avec l'état global (muet par défaut)
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = muted;
+  }, [muted]);
+
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { v.play().catch(() => {}); setIsPaused(false); }
+    else { v.pause(); setIsPaused(true); }
+  };
 
   const sport = SPORTS.find(s => s.id === data.sport);
   const authorName = data.profiles?.full_name || 'Athlète';
@@ -842,34 +880,79 @@ function SupabaseVideoCard({ data, onPlay, engagement, onLike, onOpenComments, o
     <div className="relative h-screen snap-start flex flex-col"
       style={{ backgroundColor: '#000' }}>
 
-      {/* Miniature cliquable (YouTube ou frame d'upload) */}
-      <button onClick={() => onPlay(data)} className="relative flex-1 w-full overflow-hidden">
-        {thumbnailUrl ? (
-          <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
-            className="absolute inset-0 w-full h-full object-cover" />
-        ) : uploaded ? (
-          // Fallback : pas de miniature, on affiche la 1ère frame via <video preload="metadata">
-          <video src={`${data.video_url}#t=0.1`} preload="metadata" muted playsInline
-            className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+      {/* Zone vidéo — lecture INTÉGRÉE dans la carte (façon TikTok, sans agrandissement) */}
+      <div ref={wrapRef} className="relative flex-1 w-full overflow-hidden">
+        {isUpload ? (
+          <>
+            {/* Vidéo uploadée : lecture auto en plein cadre, tap pour pause/lecture */}
+            <video
+              ref={videoRef}
+              src={data.video_url}
+              poster={thumbnailUrl || undefined}
+              loop muted playsInline preload="metadata"
+              onClick={togglePlay}
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ backgroundColor: '#000' }} />
+            {/* Icône play affichée uniquement quand l'utilisateur a mis en pause */}
+            {isPaused && (
+              <button onClick={togglePlay} aria-label="Lecture"
+                className="absolute inset-0 flex items-center justify-center">
+                <div className="w-20 h-20 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+                  <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
+                </div>
+              </button>
+            )}
+          </>
+        ) : ytOpen && youtubeId ? (
+          // Vidéo YouTube : iframe intégré DANS la carte (pas d'overlay plein écran)
+          <iframe
+            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`}
+            title={data.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            className="absolute inset-0 w-full h-full"
+            style={{ border: 0 }} />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center"
-            style={{ backgroundColor: C.surface }}>
-            <span style={{ color: C.textDim }}>Vidéo</span>
-          </div>
+          // Miniature YouTube : tap = lecture intégrée dans la carte
+          <button onClick={() => setYtOpen(true)} className="absolute inset-0 w-full h-full">
+            {thumbnailUrl ? (
+              <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
+                className="absolute inset-0 w-full h-full object-cover" />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center"
+                style={{ backgroundColor: C.surface }}>
+                <span style={{ color: C.textDim }}>Vidéo</span>
+              </div>
+            )}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+                <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
+              </div>
+            </div>
+          </button>
         )}
 
-        {/* Overlay gradient */}
-        <div className="absolute inset-0"
+        {/* Overlay gradient (laisse passer les clics vers la vidéo) */}
+        <div className="absolute inset-0 pointer-events-none"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
 
-        {/* Gros bouton play au centre */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
-            <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
-          </div>
-        </div>
-      </button>
+        {/* Bouton son (muet/activé) — vidéos uploadées uniquement */}
+        {isUpload && (
+          <button onClick={(e) => { e.stopPropagation(); onToggleMute?.(); }}
+            aria-label={muted ? 'Activer le son' : 'Couper le son'}
+            className="absolute top-24 right-3 w-10 h-10 rounded-full flex items-center justify-center z-10"
+            style={{
+              backgroundColor: 'rgba(8,15,32,0.6)',
+              backdropFilter: 'blur(10px)',
+              border: `1px solid rgba(255,255,255,0.15)`,
+            }}>
+            {muted
+              ? <VolumeX size={18} style={{ color: C.text }} strokeWidth={2.2} />
+              : <Volume2 size={18} style={{ color: C.text }} strokeWidth={2.2} />}
+          </button>
+        )}
+      </div>
 
       {/* Colonne droite : actions like/commentaire/partage + shortlist + menu options */}
       <div className="absolute right-3 bottom-32 flex flex-col gap-3 z-10">
@@ -1417,7 +1500,7 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
                     onAddToShortlist, onSelectProfile, onOpenSearch, onReport,
                     onOpenNotifications, notifUnreadCount,
                     savedVideoIds, onToggleSaveVideo }) {
-  const [playingVideo, setPlayingVideo] = useState(null);
+  const [muted, setMuted] = useState(true);      // son global du feed (muet par défaut)
   const [commentsVideo, setCommentsVideo] = useState(null);
   const [shareVideo, setShareVideo] = useState(null);
 
@@ -1477,7 +1560,8 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
           {videos.map(v => {
             const slStatus = dbShortlist?.get(v.user_id)?.status;
             return (
-              <SupabaseVideoCard key={v.id} data={v} onPlay={setPlayingVideo}
+              <SupabaseVideoCard key={v.id} data={v}
+                muted={muted} onToggleMute={() => setMuted(m => !m)}
                 engagement={engagement?.[v.id]}
                 onLike={onLike}
                 onOpenComments={setCommentsVideo}
@@ -1524,9 +1608,7 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
         )}
       </button>
 
-      {playingVideo && (
-        <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
-      )}
+      {/* Plus d'overlay plein écran : la vidéo se lit directement dans chaque carte */}
 
       {commentsVideo && (
         <CommentsModal video={commentsVideo} currentUserId={currentUserId}
