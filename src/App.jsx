@@ -893,6 +893,102 @@ function VideoTrackingArrow({ videoRef, points, size = 26 }) {
   );
 }
 
+// Lecteur plein écran « paysage » maison (affiche la flèche de suivi, contrairement
+// au lecteur natif d'iOS). S'oriente selon le téléphone :
+//  - téléphone tenu en portrait : la vidéo est pivotée pour remplir en paysage
+//    (l'utilisateur tourne son téléphone pour la voir à l'endroit) ;
+//  - téléphone tourné (l'app passe en paysage) : affichage plein écran normal.
+function LandscapePlayerOverlay({ src, poster, points, startTime = 0, muted: initialMuted = false, onClose }) {
+  const vidRef = useRef(null);
+  const [muted, setMuted] = useState(initialMuted);
+  const [paused, setPaused] = useState(false);
+  const [portrait, setPortrait] = useState(true);
+
+  useEffect(() => {
+    const update = () => setPortrait(window.innerHeight >= window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const v = vidRef.current;
+    if (!v) return;
+    v.muted = muted;
+    try { if (startTime) v.currentTime = startTime; } catch {}
+    v.play().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const togglePlay = () => {
+    const v = vidRef.current;
+    if (!v) return;
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+  };
+  const toggleMute = () => {
+    const v = vidRef.current;
+    const next = !muted;
+    if (v) v.muted = next;
+    setMuted(next);
+  };
+
+  // Scène contenant vidéo + flèche : pivotée à 90° si le téléphone est en portrait.
+  const stageStyle = portrait
+    ? { position: 'absolute', top: '50%', left: '50%', width: '100vh', height: '100vw',
+        transform: 'translate(-50%, -50%) rotate(90deg)' }
+    : { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' };
+
+  return (
+    <div className="fixed inset-0 z-[80]" style={{ backgroundColor: '#000' }}>
+      <div style={stageStyle}>
+        <video ref={vidRef} src={src} poster={poster || undefined}
+          playsInline loop onClick={togglePlay}
+          onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit: 'contain', backgroundColor: '#000' }} />
+        {/* La flèche est DANS la scène : elle pivote avec la vidéo et reste correcte
+            une fois le téléphone tourné. */}
+        <VideoTrackingArrow videoRef={vidRef} points={points} />
+      </div>
+
+      {/* Icône lecture quand en pause (repère écran) */}
+      {paused && (
+        <button onClick={togglePlay} aria-label="Lecture"
+          className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 5 }}>
+          <div className="w-20 h-20 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+            <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
+          </div>
+        </button>
+      )}
+
+      {/* Boutons (repère écran, toujours accessibles) */}
+      <button onClick={onClose} aria-label="Fermer"
+        className="absolute top-4 left-4 w-11 h-11 rounded-full flex items-center justify-center"
+        style={{ zIndex: 10, backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(10px)',
+                 border: '1px solid rgba(255,255,255,0.2)' }}>
+        <X size={22} style={{ color: '#fff' }} />
+      </button>
+      <button onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}
+        className="absolute top-4 right-4 w-11 h-11 rounded-full flex items-center justify-center"
+        style={{ zIndex: 10, backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(10px)',
+                 border: '1px solid rgba(255,255,255,0.2)' }}>
+        {muted ? <VolumeX size={20} style={{ color: '#fff' }} /> : <Volume2 size={20} style={{ color: '#fff' }} />}
+      </button>
+      {portrait && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap"
+          style={{ zIndex: 10, backgroundColor: 'rgba(8,15,32,0.7)', color: '#fff', backdropFilter: 'blur(10px)' }}>
+          ↻ Tourne ton téléphone
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Icône bascule plein écran / ajusté : un petit carré surmonté
 // d'une flèche courbée dans le sens des aiguilles d'une montre.
 function FitToggleIcon({ size = 18, color = '#fff' }) {
@@ -921,6 +1017,8 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   const isUpload = !youtubeId && !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
+  const [fsOpen, setFsOpen] = useState(false);   // lecteur plein écran paysage ouvert ?
+  const [fsStart, setFsStart] = useState(0);      // instant de reprise en plein écran
 
   // Lecture / pause automatique selon la visibilité (façon TikTok)
   useEffect(() => {
@@ -954,33 +1052,19 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
     else { v.pause(); setIsPaused(true); }
   };
 
-  // Plein écran « vrai paysage » : sur iPhone, le lecteur natif pivote
-  // automatiquement en paysage pour les vidéos horizontales ; sinon
-  // (Android / navigateur) Fullscreen API + verrouillage en paysage.
-  const goFullscreen = () => {
+  // Plein écran paysage : on ouvre notre lecteur maison (qui affiche la flèche de
+  // suivi, contrairement au lecteur natif d'iOS). On mémorise l'instant courant
+  // pour reprendre au même endroit, et on met la vidéo du feed en pause.
+  const openFullscreen = () => {
     const v = videoRef.current;
-    if (!v) return;
-    if (typeof v.webkitEnterFullscreen === 'function') {
-      try { v.webkitEnterFullscreen(); return; } catch {}
-    }
-    const req = v.requestFullscreen || v.webkitRequestFullscreen;
-    if (req) {
-      try {
-        Promise.resolve(req.call(v)).then(() => {
-          try { screen.orientation?.lock?.('landscape'); } catch {}
-        }).catch(() => {});
-      } catch {}
-    }
+    setFsStart(v?.currentTime || 0);
+    v?.pause();
+    setFsOpen(true);
   };
-
-  // À la sortie du plein écran (Android), on déverrouille l'orientation.
-  useEffect(() => {
-    const onFs = () => {
-      if (!document.fullscreenElement) { try { screen.orientation?.unlock?.(); } catch {} }
-    };
-    document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
+  const closeFullscreen = () => {
+    setFsOpen(false);
+    setTimeout(() => { videoRef.current?.play().catch(() => {}); }, 0);
+  };
 
   const sport = SPORTS.find(s => s.id === data.sport);
   const authorName = data.profiles?.full_name || 'Athlète';
@@ -1077,7 +1161,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 : <Volume2 size={18} style={{ color: C.text }} strokeWidth={2.2} />}
             </button>
             {/* Plein écran paysage : voir la vidéo en grand, à l'horizontale */}
-            <button onClick={(e) => { e.stopPropagation(); goFullscreen(); }}
+            <button onClick={(e) => { e.stopPropagation(); openFullscreen(); }}
               aria-label="Plein écran paysage"
               className="w-10 h-10 rounded-full flex items-center justify-center"
               style={{
@@ -1217,6 +1301,18 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           </>
         )}
       </div>
+
+      {/* Lecteur plein écran paysage maison (affiche la flèche de suivi) */}
+      {fsOpen && isUpload && (
+        <LandscapePlayerOverlay
+          src={data.video_url}
+          poster={thumbnailUrl}
+          points={data.tracking_points}
+          startTime={fsStart}
+          muted={muted}
+          onClose={closeFullscreen}
+        />
+      )}
     </div>
   );
 }
