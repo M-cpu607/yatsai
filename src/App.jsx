@@ -9099,8 +9099,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const [phone, setPhone] = useState(userProfile?.phone || '');
   const [username, setUsername] = useState(userProfile?.username || '');
   const [seasonStartMonth, setSeasonStartMonth] = useState(userProfile?.season_start_month || 9);
-  const [gender, setGender] = useState(userProfile?.gender || '');
-  const [nationality, setNationality] = useState(userProfile?.nationality || '');
+  // genre et nationalité : définis à l'inscription, non modifiables après coup
   const [hasClubLocal, setHasClubLocal] = useState(
     userProfile?.has_club === true ? true : userProfile?.has_club === false ? false : null
   );
@@ -9170,8 +9169,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       social_links: socialLinks,
     };
     if (!isRecruiter) {
-      updates.gender = gender || null;
-      updates.nationality = nationality.trim() || null;
+      // genre et nationalité non modifiables (définis à l'inscription)
       updates.has_club = hasClubLocal === true ? true : hasClubLocal === false ? false : null;
       // Cohérence : si pas en club -> level=no_club, sinon le niveau choisi
       updates.club = (hasClubLocal === true && club.trim()) ? club.trim() : null;
@@ -9211,9 +9209,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       }
       // Sinon : niveau inchangé et preuve déjà présente → on n'écrase rien
     } else {
-      // Recruteur : identité + critères de recrutement
-      updates.gender = gender || null;
-      updates.nationality = nationality.trim() || null;
+      // Recruteur : critères de recrutement (genre/nationalité non modifiables)
       updates.recruiting_gender = recruitingGender || null;
       updates.recruiting_levels = recruitingLevels || [];
       updates.recruiting_age_min = recruitingAgeMin === '' ? null : Number(recruitingAgeMin);
@@ -9386,39 +9382,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
           {isRecruiter ? (
             <>
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Genre</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'M', label: '♂ Homme' },
-                    { id: 'F', label: '♀ Femme' },
-                    { id: 'O', label: '⚧ Autre' },
-                  ].map(opt => {
-                    const active = gender === opt.id;
-                    return (
-                      <button key={opt.id} type="button" onClick={() => setGender(opt.id)}
-                        className="py-2.5 rounded-xl text-xs font-semibold"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.surface,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Âge recruteur : remplacé par la date de naissance lecture seule (déjà affichée plus haut) */}
-
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Nationalité</label>
-                <input type="text" value={nationality} onChange={(e) => setNationality(e.target.value)}
-                  placeholder="Ex : Française, Sénégalaise…" maxLength={60}
-                  className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                  style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              {/* Genre et nationalité : définis à l'inscription, non modifiables ici */}
 
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Organisation</label>
@@ -9517,39 +9481,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             </>
           ) : (
             <>
-              {/* Genre */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Genre</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'M', label: '♂ Homme' },
-                    { id: 'F', label: '♀ Femme' },
-                    { id: 'O', label: '⚧ Autre' },
-                  ].map(opt => {
-                    const active = gender === opt.id;
-                    return (
-                      <button key={opt.id} type="button" onClick={() => setGender(opt.id)}
-                        className="py-2.5 rounded-xl text-xs font-semibold"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.surface,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Nationalité */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Nationalité</label>
-                <input type="text" value={nationality} onChange={(e) => setNationality(e.target.value)}
-                  placeholder="Ex : Française, Sénégalaise…" maxLength={60}
-                  className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                  style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              {/* Genre et nationalité : définis à l'inscription, non modifiables ici */}
 
               {/* Club + niveau — athlètes uniquement (pas les observateurs) */}
               {isAthleteEditor && (<>
