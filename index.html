@@ -18,9 +18,33 @@
     <meta name="mobile-web-app-capable" content="yes" />
 
     <title>Yatsai</title>
+
+    <!-- Fond sombre appliqué IMMÉDIATEMENT (avant le chargement du JS/CSS)
+         pour supprimer le flash blanc au démarrage -->
+    <style>
+      html, body, #root {
+        margin: 0;
+        background-color: #080F20;
+        min-height: 100%;
+      }
+      html { height: 100%; }
+      /* Splash de démarrage (remplacé par React dès qu'il est prêt) */
+      #boot-splash {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        background-color: #080F20;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        font-weight: 800; font-size: 40px; letter-spacing: -0.03em;
+        color: #FFFFFF;
+        z-index: 0;
+      }
+      #boot-splash .accent { color: #FFB800; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-splash">Yat<span class="accent">sai</span></div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
