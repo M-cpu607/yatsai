@@ -231,11 +231,17 @@ async function requestCameraMicPermission() {
 }
 
 async function requestContactsPermission() {
+  // Le plugin natif @capacitor-community/contacts n'est pas encore compatible
+  // Capacitor 8 (conflit de version qui cassait tout le build iOS). En attendant
+  // une version à jour, on utilise l'API web Contact Picker si elle est dispo,
+  // sinon on ignore proprement.
   try {
-    const { Contacts } = await import('@capacitor-community/contacts');
-    const res = await Contacts.requestPermissions();
-    return res?.contacts === 'granted';
-  } catch (e) { console.warn('Contacts:', e?.message); return false; }
+    if (typeof navigator !== 'undefined' && navigator.contacts?.select) {
+      await navigator.contacts.select(['name'], { multiple: false });
+      return true;
+    }
+  } catch (e) { console.warn('Contacts:', e?.message); }
+  return false;
 }
 
 async function requestLocationPermission() {

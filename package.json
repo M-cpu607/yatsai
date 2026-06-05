@@ -14,7 +14,6 @@
     "mobile:icons": "capacitor-assets generate --iconBackgroundColor '#080F20' --iconBackgroundColorDark '#080F20' --splashBackgroundColor '#080F20' --splashBackgroundColorDark '#080F20'"
   },
   "dependencies": {
-    "@capacitor-community/contacts": "^7.2.0",
     "@capacitor/android": "^8.4.0",
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
