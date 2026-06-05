@@ -7412,12 +7412,17 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout }) {
         {/* Notifications */}
         <div className="rounded-xl overflow-hidden" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
           <div className="px-4 pt-3 pb-2 text-xs font-semibold" style={{ color: C.gold }}>Notifications</div>
-          <Row icon={Heart} title="Likes sur mes vidéos"
-            right={<Toggle on={notifLikes} onChange={setNotifLikes} />} />
-          <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
-          <Row icon={MessageCircle} title="Nouveaux commentaires"
-            right={<Toggle on={notifComments} onChange={setNotifComments} />} />
-          <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
+          {/* Likes & commentaires : athlètes uniquement (eux seuls publient des vidéos) */}
+          {isAthleteRole(userProfile) && (
+            <>
+              <Row icon={Heart} title="Likes sur mes vidéos"
+                right={<Toggle on={notifLikes} onChange={setNotifLikes} />} />
+              <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
+              <Row icon={MessageCircle} title="Nouveaux commentaires"
+                right={<Toggle on={notifComments} onChange={setNotifComments} />} />
+              <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
+            </>
+          )}
           <Row icon={Send} title="Messages privés"
             right={<Toggle on={notifMessages} onChange={setNotifMessages} />} />
           <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
