@@ -8939,6 +8939,10 @@ function AccountSecuritySection() {
 }
 
 function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
+  // Rôle réel (3 valeurs) pour adapter les champs affichés
+  const editorRole = getUserRole(userProfile);
+  const isObserverEditor = editorRole === 'observer';
+  const isAthleteEditor = editorRole === 'athlete';
   // Champs NON modifiables après inscription : full_name, birthdate
   const fullName = userProfile?.full_name || ''; // lecture seule
   const birthdate = userProfile?.birthdate || ''; // lecture seule
@@ -9196,41 +9200,49 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
             </p>
           </div>
 
-          {/* Début de saison sportive */}
-          <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              📅 Début de la saison sportive
-            </label>
-            <select value={seasonStartMonth} onChange={(e) => setSeasonStartMonth(Number(e.target.value))}
-              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
-              <option value={8}>Août</option>
-              <option value={9}>Septembre</option>
-            </select>
-            <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
-              Pense à le mettre à jour chaque rentrée pour que les catégories d'âge soient correctes
-            </p>
-          </div>
+          {/* Début de saison sportive — athlètes uniquement (catégories d'âge U17/U18…) */}
+          {isAthleteEditor && (
+            <div>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+                📅 Début de la saison sportive
+              </label>
+              <select value={seasonStartMonth} onChange={(e) => setSeasonStartMonth(Number(e.target.value))}
+                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
+                <option value={8}>Août</option>
+                <option value={9}>Septembre</option>
+              </select>
+              <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                Sert à calculer ta catégorie d'âge (U17, U18…) par rapport à la saison
+              </p>
+            </div>
+          )}
 
-          <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Sport</label>
-            <select value={sport} onChange={(e) => { setSport(e.target.value); setPosition(''); }}
-              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
-              <option value="">— Choisir —</option>
-              {SPORTS.map(s => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
-            </select>
-          </div>
+          {/* Sport — athlètes + recruteurs (pas les observateurs) */}
+          {!isObserverEditor && (
+            <div>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Sport</label>
+              <select value={sport} onChange={(e) => { setSport(e.target.value); setPosition(''); }}
+                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
+                <option value="">— Choisir —</option>
+                {SPORTS.map(s => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
+              </select>
+            </div>
+          )}
 
-          <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              {isRecruiter ? 'Poste / fonction' : 'Poste sur le terrain'}
-            </label>
-            <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-              placeholder={isRecruiter ? 'Ex : Head Scout' : 'Ex : Milieu offensif, Gardien, 100 m…'}
-              maxLength={60} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-          </div>
+          {/* Poste sur le terrain — athlètes uniquement */}
+          {isAthleteEditor && (
+            <div>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+                Poste sur le terrain
+              </label>
+              <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
+                placeholder="Ex : Milieu offensif, Gardien, 100 m…"
+                maxLength={60} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            </div>
+          )}
 
           {isRecruiter ? (
             <>
@@ -9399,6 +9411,8 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                   style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
               </div>
 
+              {/* Club + niveau — athlètes uniquement (pas les observateurs) */}
+              {isAthleteEditor && (<>
               {/* Inscrit en club ? */}
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
@@ -9554,6 +9568,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                   )}
                 </div>
               )}
+              </>)}
             </>
           )}
 
