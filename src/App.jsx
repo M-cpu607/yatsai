@@ -3363,122 +3363,127 @@ function checkSensitive(query) {
   return null;
 }
 
-function ScoutAIChatbot({ onApplyFilters, onClose, viewerRole }) {
-  const isAthlete = viewerRole === 'athlete';
-  const intro = isAthlete
-    ? "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n👤 **Trouver un recruteur** : sport, pays, région, ville…\n🎬 **Trouver des vidéos** : championnat, catégorie d'âge, sport, ville…\n\n💡 Exemples : « vidéos U17 football Paris », « recruteur basket à Lyon », « match Régional 1 ».\n\nPose-moi ta question !"
-    : "👋 Salut ! Je suis l'assistant Yatsai. Je peux t'aider à :\n\n👤 **Trouver des athlètes** : sport, niveau, ville, poste…\n🎬 **Trouver des vidéos** : championnat, catégorie d'âge (U17, U19…), localisation…\n\n💡 Exemples : « attaquant U18 Régional 1 Bordeaux », « vidéos football National 2 », « gardien senior Lyon ».\n\nPose-moi ta question !";
-  const placeholder = isAthlete ? 'Ex : Vidéos U17 foot Paris…' : 'Ex : Attaquant U18 Régional 1…';
+// Détecte un genre recherché dans la requête ('M' | 'F' | null)
+function detectGender(q) {
+  const s = stripAccents((q || '').toLowerCase());
+  if (/\b(feminin|feminine|femme|femmes|fille|filles|joueuse|joueuses)\b/.test(s)) return 'F';
+  if (/\b(masculin|masculine|homme|hommes|garcon|garcons|joueur|joueurs)\b/.test(s)) return 'M';
+  return null;
+}
+
+// Assistant de recrutement Yatsai — local (sans API), réservé aux recruteurs.
+// Comprend une phrase ("attaquant gaucher U18 à Lyon, niveau national"), en
+// extrait les critères, et renvoie de VRAIS athlètes cliquables + de l'aide.
+function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilters,
+                          dbShortlist, onAddToShortlist }) {
+  const intro = "👋 Je suis ton assistant de recrutement Yatsai.\n\nDécris l'athlète que tu cherches en une phrase — je te sors les meilleurs profils. Je réponds aussi à tes questions sur l'app.";
+  const SUGGESTIONS = [
+    'Attaquant U18 à Lyon',
+    'Gardien senior pro',
+    'Milieu rapide niveau national',
+    'Comment marche la shortlist ?',
+  ];
 
   const [messages, setMessages] = useState([{ role: 'assistant', content: intro }]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [proposed, setProposed] = useState(null);
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current && endRef.current.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
+
+  const push = (msg) => setMessages(prev => prev.concat([msg]));
 
   const send = async (text) => {
     const q = (text == null ? input : text).trim();
     if (!q || loading) return;
     setLoading(true);
-    setMessages(prev => prev.concat([{ role: 'user', content: q }]));
+    push({ role: 'user', content: q });
     setInput('');
 
-    // 1. Garde-fou : refuse les questions sur les données sensibles (messages privés, mots de passe)
+    // 1) Garde-fou données sensibles
     const sensitiveAnswer = checkSensitive(q);
-    if (sensitiveAnswer) {
-      setMessages(prev => prev.concat([{ role: 'assistant', content: sensitiveAnswer }]));
-      setLoading(false);
-      return;
-    }
-
-    // 2. Base de connaissances : si la question concerne le fonctionnement de l'app, répond direct
-    const kbAnswer = findKBAnswer(q, { isAthlete });
-    if (kbAnswer) {
-      setMessages(prev => prev.concat([{ role: 'assistant', content: kbAnswer }]));
-      setLoading(false);
-      return;
-    }
+    if (sensitiveAnswer) { push({ role: 'assistant', content: sensitiveAnswer }); setLoading(false); return; }
 
     try {
-      const profilesRes = await supabase.from('profiles').select('id, full_name, is_recruiter, organization, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified');
-      const videosRes = await supabase.from('videos').select('id, user_id, title, description, sport, position');
-      const signedRes = await supabase.from('signed_posts').select('id, recruiter_id, athlete_id, caption');
-      const profiles = profilesRes.data || [];
+      // On charge les athlètes (le recruteur cherche des athlètes) + leurs vidéos
+      const [profilesRes, videosRes, signedRes] = await Promise.all([
+        supabase.from('profiles')
+          .select('id, full_name, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status')
+          .eq('is_recruiter', false).neq('id', currentUserId || ''),
+        supabase.from('videos').select('id, user_id, title, description, sport, position'),
+        supabase.from('signed_posts').select('id, athlete_id, caption'),
+      ]);
+      const athletes = profilesRes.data || [];
       const videos = videosRes.data || [];
       const signedPosts = signedRes.data || [];
 
-      // Construire le vocabulaire dynamique (villes/régions/pays/nationalités vues dans les profils)
       const vocab = {
-        cities: uniqueValues(profiles, 'city'),
-        regions: uniqueValues(profiles, 'region'),
-        countries: uniqueValues(profiles, 'country'),
-        nationalities: uniqueValues(profiles, 'nationality'),
+        cities: uniqueValues(athletes, 'city'),
+        regions: uniqueValues(athletes, 'region'),
+        countries: uniqueValues(athletes, 'country'),
+        nationalities: uniqueValues(athletes, 'nationality'),
       };
       const parsed = parseSmartQuery(q, vocab);
-      const filters = parsed.filters;
-      const matched = parsed.matched;
-      const keywords = parsed.keywords;
+      const { filters, matched, keywords } = parsed;
+      const gender = detectGender(q);
+      if (gender) matched.push('Genre : ' + (gender === 'F' ? 'féminin' : 'masculin'));
 
-      let candidates = profiles;
+      // Critères STRUCTURÉS (sport, lieu, niveau, âge, genre) = signal fort de recherche
+      const hasStructured = !!filters.sport || !!filters.city || !!filters.region
+        || !!filters.country || filters.levels.length > 0
+        || filters.ageMin !== 14 || filters.ageMax !== 35 || !!gender;
+      // Mots évoquant un athlète / un poste → recherche aussi
       const lq = stripAccents(q.toLowerCase());
-      const wantsRecruiters = /recruteur|recrute|scout|club/.test(lq);
-      const wantsAthletes = /athlete|joueur|joueuse|attaquant|defenseur|gardien|milieu|ailier/.test(lq);
-      if (wantsRecruiters && !wantsAthletes) candidates = profiles.filter(p => p.is_recruiter);
-      else if (wantsAthletes && !wantsRecruiters) candidates = profiles.filter(p => !p.is_recruiter);
+      const athleteHint = /\b(athlete|joueur|joueuse|attaquant|buteur|defenseur|defenseuse|gardien|gardienne|milieu|ailier|meneur|pivot|arriere|avant|lateral|ailiere|passeur|libero|talent|profil)\b/.test(lq);
+      const isSearch = hasStructured || athleteHint;
+
+      // 2) Pas de recherche claire → on répond en mode AIDE (FAQ)
+      if (!isSearch) {
+        const kbAnswer = findKBAnswer(q, { isAthlete: false });
+        push({ role: 'assistant', content: kbAnswer
+          || "Je peux t'aider à deux choses :\n\n🔎 **Trouver des athlètes** — décris qui tu cherches (« ailier U19 à Paris », « gardienne niveau national »).\n❓ **L'app** — pose une question (shortlist, signature, messages…)." });
+        setLoading(false);
+        return;
+      }
+
+      // 3) Recherche : score chaque athlète
+      let pool = athletes;
+      if (gender) pool = pool.filter(p => p.gender === gender);
 
       const scored = [];
-      for (let i = 0; i < candidates.length; i++) {
-        const p = candidates[i];
+      for (const p of pool) {
         const pv = videos.filter(v => v.user_id === p.id);
-        const ps = signedPosts.filter(s => s.recruiter_id === p.id || s.athlete_id === p.id);
+        const ps = signedPosts.filter(s => s.athlete_id === p.id);
         const s = scoreProfile(p, pv, ps, filters, keywords);
         if (s > 0) scored.push({ profile: p, score: s });
       }
       scored.sort((a, b) => b.score - a.score);
-      const top = scored.slice(0, 10);
+      const top = scored.slice(0, 8).map(s => s.profile);
 
-      let reply;
+      const head = matched.length > 0 ? '🔎 ' + matched.join(' · ') : 'Voici les meilleurs résultats';
       if (top.length === 0) {
-        reply = matched.length > 0
-          ? 'J\'ai compris : ' + matched.join(' · ') + ' — mais aucun profil ne correspond. Essaie d\'élargir tes critères.'
-          : 'Je n\'ai pas trouvé de profil. Précise un sport, niveau, ville, ou un mot-clé.';
+        push({ role: 'assistant', content: head + '\n\nAucun athlète ne correspond pour le moment. Essaie d\'élargir (retire la ville ou le niveau).' });
       } else {
-        const names = top.slice(0, 3).map(s => s.profile.full_name || 'Anonyme').join(', ');
-        const head = matched.length > 0 ? 'J\'ai compris : ' + matched.join(' · ') + '.' : 'Voici les meilleurs résultats.';
-        reply = head + '\n\n' + top.length + ' profil' + (top.length > 1 ? 's' : '') + ' trouvé' + (top.length > 1 ? 's' : '') + '. Top : ' + names + '.';
-      }
-
-      setMessages(prev => prev.concat([{ role: 'assistant', content: reply }]));
-      const usefulFilters = filters.sport || filters.country || filters.city
-        || filters.levels.length > 0
-        || filters.ageMin !== 14 || filters.ageMax !== 35;
-      if (usefulFilters || top.length > 0) {
-        setProposed({ filters: filters, suggestedProfileIds: top.map(s => s.profile.id) });
-      } else {
-        setProposed(null);
+        push({
+          role: 'assistant',
+          content: head + `\n\n${top.length} athlète${top.length > 1 ? 's' : ''} trouvé${top.length > 1 ? 's' : ''} :`,
+          results: top,
+          filters,
+        });
       }
     } catch (err) {
       console.error('Chatbot error:', err);
-      setMessages(prev => prev.concat([{ role: 'assistant', content: 'Erreur : ' + (err.message || String(err)) }]));
+      push({ role: 'assistant', content: 'Erreur : ' + (err.message || String(err)) });
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleApply = () => {
-    if (!proposed) return;
-    onApplyFilters(proposed.filters);
-    setMessages(prev => prev.concat([{ role: 'assistant', content: '✓ Filtres appliqués !' }]));
-    setProposed(null);
   };
 
   return (
     <div className="fixed inset-0 z-[88] flex items-end" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
       onClick={onClose}>
       <div className="w-full rounded-t-2xl flex flex-col"
-        style={{ backgroundColor: C.bg, height: '85dvh', border: '1px solid ' + C.border }}
+        style={{ backgroundColor: C.bg, height: '88dvh', border: '1px solid ' + C.border }}
         onClick={(e) => e.stopPropagation()}>
 
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
@@ -3488,8 +3493,8 @@ function ScoutAIChatbot({ onApplyFilters, onClose, viewerRole }) {
               <Bot size={16} style={{ color: C.gold }} />
             </div>
             <div>
-              <div className="text-sm font-extrabold" style={{ color: C.text }}>Assistant Yatsai</div>
-              <div className="text-[10px]" style={{ color: C.textDim }}>Recherche intelligente locale</div>
+              <div className="text-sm font-extrabold" style={{ color: C.text }}>Assistant recrutement</div>
+              <div className="text-[10px]" style={{ color: C.textDim }}>IA locale · 100% privée</div>
             </div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -3500,48 +3505,105 @@ function ScoutAIChatbot({ onApplyFilters, onClose, viewerRole }) {
 
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3">
           {messages.map((m, i) => (
-            <div key={i} className={'flex ' + (m.role === 'user' ? 'justify-end' : 'justify-start') + ' fade-in'}>
-              <div className="max-w-[88%]">
-                <div className="px-3.5 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
-                  style={{
-                    backgroundColor: m.role === 'user' ? C.gold : C.surface,
-                    color: m.role === 'user' ? C.bg : C.text,
-                    borderBottomRightRadius: m.role === 'user' ? 4 : undefined,
-                    borderBottomLeftRadius: m.role === 'assistant' ? 4 : undefined,
-                    border: m.role === 'assistant' ? '1px solid ' + C.border : 'none',
-                  }}>
-                  {m.content}
+            <div key={i} className="fade-in">
+              <div className={'flex ' + (m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div className="max-w-[88%]">
+                  <div className="px-3.5 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+                    style={{
+                      backgroundColor: m.role === 'user' ? C.gold : C.surface,
+                      color: m.role === 'user' ? C.bg : C.text,
+                      borderBottomRightRadius: m.role === 'user' ? 4 : undefined,
+                      borderBottomLeftRadius: m.role === 'assistant' ? 4 : undefined,
+                      border: m.role === 'assistant' ? '1px solid ' + C.border : 'none',
+                    }}>
+                    {m.content}
+                  </div>
                 </div>
               </div>
+
+              {/* Cartes d'athlètes (résultats cliquables) */}
+              {m.results && m.results.length > 0 && (
+                <div className="mt-2 flex flex-col gap-2">
+                  {m.results.map(a => {
+                    const sport = SPORTS.find(s => s.id === a.sport);
+                    const inShortlist = !!dbShortlist?.get?.(a.id);
+                    return (
+                      <div key={a.id} className="rounded-xl p-2.5 flex items-center gap-3"
+                        style={{ backgroundColor: C.surface, border: '1px solid ' + C.border }}>
+                        <button onClick={() => onSelectProfile?.(a)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                          <Avatar profile={a} size={42} ringColor={C.gold} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <span className="text-sm font-bold truncate" style={{ color: C.text }}>
+                                {a.full_name || 'Athlète'}
+                              </span>
+                              {a.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
+                            </div>
+                            <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+                              {sport ? `${sport.icon} ${sport.label}` : ''}{a.position ? ` · ${a.position}` : ''}
+                              {a.city ? ` · 📍 ${a.city}` : ''}
+                            </div>
+                            {isLevelDisplayable(a) && (
+                              <div className="mt-1"><LevelChip level={a.level} /></div>
+                            )}
+                          </div>
+                        </button>
+                        {onAddToShortlist && (
+                          <button onClick={() => onAddToShortlist(a.id)} disabled={inShortlist}
+                            aria-label="Ajouter à la shortlist"
+                            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                            style={{
+                              backgroundColor: inShortlist ? C.gold : C.goldSoft,
+                              border: '1px solid ' + C.borderGold,
+                              color: inShortlist ? C.bg : C.gold,
+                            }}>
+                            <Star size={15} fill={inShortlist ? C.bg : 'transparent'} strokeWidth={2.2} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {onApplyFilters && m.filters && (
+                    <button onClick={() => onApplyFilters(m.filters)}
+                      className="mt-1 w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
+                      style={{ backgroundColor: 'transparent', color: C.gold, border: '1px solid ' + C.borderGold }}>
+                      <SlidersHorizontal size={13} /> Voir tous les résultats dans la recherche
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
+
+          {/* Suggestions cliquables (uniquement au début) */}
+          {messages.length === 1 && !loading && (
+            <div className="flex flex-wrap gap-2 mt-1">
+              {SUGGESTIONS.map(s => (
+                <button key={s} onClick={() => send(s)}
+                  className="px-3 py-1.5 rounded-full text-xs font-medium"
+                  style={{ backgroundColor: C.surface, color: C.gold, border: '1px solid ' + C.borderGold }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
           {loading && (
             <div className="flex justify-start fade-in">
               <div className="px-3.5 py-2.5 rounded-2xl flex items-center gap-2"
                 style={{ backgroundColor: C.surface, border: '1px solid ' + C.border }}>
                 <Loader2 size={14} className="animate-spin" style={{ color: C.gold }} />
-                <span className="text-xs" style={{ color: C.textDim }}>Recherche...</span>
+                <span className="text-xs" style={{ color: C.textDim }}>Analyse…</span>
               </div>
             </div>
           )}
           <div ref={endRef} />
         </div>
 
-        {proposed && (
-          <div className="px-4 pb-2 fade-in">
-            <button onClick={handleApply}
-              className="w-full py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-              style={{ backgroundColor: C.gold, color: C.bg }}>
-              <Wand2 size={14} strokeWidth={2.6} />
-              Appliquer les filtres suggérés
-            </button>
-          </div>
-        )}
-
         <div className="px-3 py-3 flex gap-2" style={{ borderTop: '1px solid ' + C.border }}>
           <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
-            placeholder={placeholder} disabled={loading}
+            placeholder="Ex : attaquant gaucher U18 à Lyon…" disabled={loading}
             className="flex-1 px-3.5 py-2.5 rounded-xl text-sm outline-none"
             style={{ backgroundColor: C.surface, color: C.text, border: '1px solid ' + C.border }} />
           <button onClick={() => send()} disabled={!input.trim() || loading}
@@ -3818,20 +3880,26 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           {filtersOpen ? <ChevronUp size={16} strokeWidth={2.4} /> : <ChevronDown size={16} strokeWidth={2.4} />}
         </button>
 
-        <button onClick={() => setChatbotOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-3 rounded-xl"
-          style={{ backgroundColor: C.surface, color: C.gold, border: `1px solid ${C.borderGold}` }}
-          aria-label="Assistant IA">
-          <Bot size={16} strokeWidth={2.4} />
-          <span className="text-sm font-semibold">IA</span>
-        </button>
+        {/* Assistant IA — recruteurs uniquement (athletesOnly = vue recruteur) */}
+        {athletesOnly && (
+          <button onClick={() => setChatbotOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-3 rounded-xl"
+            style={{ backgroundColor: C.surface, color: C.gold, border: `1px solid ${C.borderGold}` }}
+            aria-label="Assistant IA">
+            <Bot size={16} strokeWidth={2.4} />
+            <span className="text-sm font-semibold">IA</span>
+          </button>
+        )}
       </div>
 
-      {chatbotOpen && (
+      {chatbotOpen && athletesOnly && (
         <ScoutAIChatbot
+          currentUserId={currentUserId}
           onApplyFilters={applyAIFilters}
           onClose={() => setChatbotOpen(false)}
-          viewerRole={athletesOnly ? 'recruiter' : 'athlete'}
+          onSelectProfile={(p) => { setChatbotOpen(false); onSelectProfile?.(p); }}
+          dbShortlist={dbShortlist}
+          onAddToShortlist={onAddToShortlist}
         />
       )}
 
