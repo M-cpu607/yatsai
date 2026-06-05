@@ -817,6 +817,22 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 }
 
 // ─── COMPOSANT pour afficher les vraies vidéos Supabase ──────────
+// Icône bascule plein écran / ajusté : un petit carré surmonté
+// d'une flèche courbée dans le sens des aiguilles d'une montre.
+function FitToggleIcon({ size = 18, color = '#fff' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      {/* Cadre carré (l'écran de la vidéo) */}
+      <rect x="6" y="10" width="12" height="10" rx="2.5" />
+      {/* Flèche courbée au-dessus, sens des aiguilles d'une montre */}
+      <path d="M7 6.8A6.4 6.4 0 0 1 17 6.6" />
+      <polyline points="17 3.2 17 6.9 13.3 6.9" />
+    </svg>
+  );
+}
+
 function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOpenComments, onOpenShare,
                              isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
                              onReport, isSaved, onToggleSave }) {
@@ -829,6 +845,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   const isUpload = !youtubeId && !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
+  const [fitMode, setFitMode] = useState('contain'); // 'contain' = tout voir · 'cover' = plein écran
 
   // Lecture / pause automatique selon la visibilité (façon TikTok)
   useEffect(() => {
@@ -891,7 +908,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               poster={thumbnailUrl || undefined}
               loop muted playsInline preload="metadata"
               onClick={togglePlay}
-              className="absolute inset-0 w-full h-full object-contain"
+              className={`absolute inset-0 w-full h-full ${fitMode === 'cover' ? 'object-cover' : 'object-contain'}`}
               style={{ backgroundColor: '#000' }} />
             {/* Icône play affichée uniquement quand l'utilisateur a mis en pause */}
             {isPaused && (
@@ -937,20 +954,34 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
         <div className="absolute inset-0 pointer-events-none"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
 
-        {/* Bouton son (muet/activé) — vidéos uploadées uniquement */}
+        {/* Boutons flottants (son + plein écran) — vidéos uploadées uniquement */}
         {isUpload && (
-          <button onClick={(e) => { e.stopPropagation(); onToggleMute?.(); }}
-            aria-label={muted ? 'Activer le son' : 'Couper le son'}
-            className="absolute top-24 right-3 w-10 h-10 rounded-full flex items-center justify-center z-10"
-            style={{
-              backgroundColor: 'rgba(8,15,32,0.6)',
-              backdropFilter: 'blur(10px)',
-              border: `1px solid rgba(255,255,255,0.15)`,
-            }}>
-            {muted
-              ? <VolumeX size={18} style={{ color: C.text }} strokeWidth={2.2} />
-              : <Volume2 size={18} style={{ color: C.text }} strokeWidth={2.2} />}
-          </button>
+          <div className="absolute top-24 right-3 flex flex-col gap-2 z-10">
+            {/* Son global */}
+            <button onClick={(e) => { e.stopPropagation(); onToggleMute?.(); }}
+              aria-label={muted ? 'Activer le son' : 'Couper le son'}
+              className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{
+                backgroundColor: 'rgba(8,15,32,0.6)',
+                backdropFilter: 'blur(10px)',
+                border: `1px solid rgba(255,255,255,0.15)`,
+              }}>
+              {muted
+                ? <VolumeX size={18} style={{ color: C.text }} strokeWidth={2.2} />
+                : <Volume2 size={18} style={{ color: C.text }} strokeWidth={2.2} />}
+            </button>
+            {/* Bascule plein écran / ajusté */}
+            <button onClick={(e) => { e.stopPropagation(); setFitMode(m => (m === 'cover' ? 'contain' : 'cover')); }}
+              aria-label={fitMode === 'cover' ? 'Voir la vidéo en entier' : "Remplir l'écran"}
+              className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{
+                backgroundColor: fitMode === 'cover' ? C.gold : 'rgba(8,15,32,0.6)',
+                backdropFilter: 'blur(10px)',
+                border: `1px solid ${fitMode === 'cover' ? C.gold : 'rgba(255,255,255,0.15)'}`,
+              }}>
+              <FitToggleIcon size={18} color={fitMode === 'cover' ? C.bg : C.text} />
+            </button>
+          </div>
         )}
       </div>
 
