@@ -2113,6 +2113,8 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
   const pointsRef = useRef(points || []);
   const trackRef = useRef({ active: false });
   const [tracking, setTracking] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ active: false, lastRecT: -1 });
   const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
   const [warn, setWarn] = useState('');
@@ -2227,18 +2229,54 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
     trackRef.current.raf = requestAnimationFrame(loop);
   };
 
-  const onTapVideo = (e) => {
-    const v = vref.current; if (!v || !v.videoWidth) return;
+  // Position du doigt -> fraction (x,y) dans le cadre vidéo
+  const pointerToFrac = (e) => {
+    const v = vref.current; if (!v || !v.videoWidth) return null;
     const rect = v.getBoundingClientRect();
     const cw = rect.width, ch = rect.height;
     const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
     const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
     const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
     const px = e.clientX - rect.left - oX, py = e.clientY - rect.top - oY;
-    if (px < 0 || py < 0 || px > dW || py > dH) return;
-    const fx = Math.max(0, Math.min(1, px / dW)), fy = Math.max(0, Math.min(1, py / dH));
-    if (tracking) stopTrack();
-    startTrack(fx, fy);   // (re)démarre le suivi auto depuis ce point
+    return { fx: Math.max(0, Math.min(1, px / dW)), fy: Math.max(0, Math.min(1, py / dH)) };
+  };
+
+  // ── SUIVI AU DOIGT : on maintient et on glisse le long du joueur, la vidéo
+  //    joue et la flèche suit le doigt en enregistrant le trajet. ──
+  const onDragStart = (e) => {
+    const v = vref.current; if (!v || !v.videoWidth) return;
+    if (trackRef.current.active) stopTrack();   // coupe le suivi auto éventuel
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
+    dragRef.current = { active: true, lastRecT: -1 };
+    setDragging(true);
+    setWarn('');
+    v.play().catch(() => {});
+    onDragMove(e);
+  };
+  const onDragMove = (e) => {
+    if (!dragRef.current.active) return;
+    const fr = pointerToFrac(e); if (!fr) return;
+    const v = vref.current; const t = v.currentTime || 0;
+    if (dragRef.current.lastRecT < 0 || t - dragRef.current.lastRecT >= 0.05) {
+      dragRef.current.lastRecT = t;
+      pointsRef.current = [...pointsRef.current.filter(p => Math.abs(p.t - t) > 0.04), { t, x: fr.fx, y: fr.fy }].sort((a, b) => a.t - b.t);
+      onChange(pointsRef.current.slice());
+    }
+  };
+  const onDragEnd = () => {
+    if (!dragRef.current.active) return;
+    dragRef.current.active = false;
+    setDragging(false);
+    const v = vref.current; if (v) v.pause();
+  };
+
+  // Suivi automatique (analyse d'image) depuis la position actuelle de la flèche
+  const runAutoFromHere = () => {
+    const v = vref.current; if (!v || !v.videoWidth) return;
+    const p = interpTrackingPoint(pointsRef.current.slice().sort((a, b) => a.t - b.t), v.currentTime || 0);
+    if (!p) { setWarn('Touche d\'abord le joueur (glisse le doigt) pour placer la flèche.'); return; }
+    startTrack(p.x, p.y);
   };
 
   const nb = (points || []).length;
@@ -2249,19 +2287,22 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
       <div className="relative rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9', backgroundColor: '#000' }}>
         <video ref={vref} src={src} playsInline preload="metadata" crossOrigin="anonymous"
-          onClick={onTapVideo}
           onTimeUpdate={(e) => setCur(e.target.currentTime || 0)}
           onLoadedMetadata={(e) => setDur(e.target.duration || 0)}
           className="absolute inset-0 w-full h-full object-contain" />
+        {/* Couche de capture du doigt : maintenir + glisser pour suivre le joueur */}
+        <div className="absolute inset-0" style={{ touchAction: 'none', zIndex: 4, cursor: 'crosshair' }}
+          onPointerDown={onDragStart} onPointerMove={onDragMove}
+          onPointerUp={onDragEnd} onPointerCancel={onDragEnd} />
         <div ref={arrowRef} className="absolute pointer-events-none"
           style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
           <PlayerArrowMarker size={26} color={arrowColor} />
         </div>
-        {tracking && (
+        {(tracking || dragging) && (
           <div className="absolute top-2 left-2 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5"
-            style={{ backgroundColor: 'rgba(255,59,48,0.9)', color: '#fff' }}>
+            style={{ zIndex: 5, backgroundColor: dragging ? 'rgba(34,197,94,0.92)' : 'rgba(255,59,48,0.9)', color: '#fff' }}>
             <span className="dot-jump" aria-hidden="true"><span /><span /><span /></span>
-            Suivi en cours…
+            {dragging ? 'Suis le joueur avec ton doigt…' : 'Suivi auto…'}
           </div>
         )}
       </div>
@@ -2298,11 +2339,18 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
       {/* Aide + actions */}
       <div className="flex items-center justify-between mt-2 gap-2">
         <p className="text-[11px] flex-1" style={{ color: C.textMute }}>
-          {tracking
-            ? 'La flèche suit le joueur… Tape ailleurs pour corriger, ou ⏸ pour arrêter.'
-            : 'Tape sur la tête du joueur : la flèche le suivra automatiquement dans la vidéo.'}
+          {dragging
+            ? 'Garde le doigt sur le joueur et suis-le : la flèche bouge avec ton doigt.'
+            : tracking
+              ? 'Suivi auto en cours… ⏸ pour arrêter.'
+              : 'Glisse ton doigt sur le joueur (la vidéo joue) pour que la flèche le suive. Ou « 🤖 Auto ».'}
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button type="button" onClick={runAutoFromHere}
+            className="text-[10px] font-bold px-2 py-0.5 rounded"
+            style={{ color: C.text, border: `1px solid ${C.border}` }}>
+            🤖 Auto
+          </button>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
             style={{ backgroundColor: C.goldSoft, color: C.gold }}>{nb} pt{nb > 1 ? 's' : ''}</span>
           {nb > 0 && (
