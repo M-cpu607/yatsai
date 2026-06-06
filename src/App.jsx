@@ -2146,7 +2146,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
 
   // Garde pointsRef synchro quand on n'édite pas (ni glissement, ni suivi auto)
   useEffect(() => {
-    if (!trackRef.current.active && !dragRef.current.active) pointsRef.current = (points || []).slice();
+    if (!trackRef.current.active && !dragRef.current.dragging) pointsRef.current = (points || []).slice();
   }, [points]);
 
   // Aperçu temps réel de la flèche — lit pointsRef (ref) : la boucle ne redémarre
@@ -2155,7 +2155,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     let raf;
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      if (dragRef.current.active) return;
+      if (dragRef.current.dragging) return;
       const v = vref.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
         const cw = v.clientWidth, ch = v.clientHeight;
@@ -2264,22 +2264,30 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
 
   // ── SUIVI AU DOIGT : on maintient et on glisse le long du joueur, la vidéo
   //    joue et la flèche suit le doigt en enregistrant le trajet. ──
+  // pointerdown : on attend de savoir si c'est un simple TAP (-> suivi auto
+  // mains libres, façon FIFA) ou un GLISSEMENT (-> placement manuel).
   const onDragStart = (e) => {
     const v = vref.current; if (!v || !v.videoWidth) return;
-    if (trackRef.current.active) stopTrack();   // coupe le suivi auto éventuel
+    const fr = pointerToFrac(e); if (!fr) return;
+    if (trackRef.current.active) stopTrack();
     e.preventDefault();
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
-    dragRef.current = { active: true, lastRecT: -1 };
-    setDragging(true);
+    dragRef.current = { pending: true, dragging: false, downFx: fr.fx, downFy: fr.fy, downX: e.clientX, downY: e.clientY, lastRecT: -1 };
     setWarn('');
-    v.play().catch(() => {});
-    onDragMove(e);
   };
   const onDragMove = (e) => {
-    if (!dragRef.current.active) return;
+    const dr = dragRef.current;
+    if (!dr.pending && !dr.dragging) return;
+    // bascule en glissement dès qu'on bouge assez (sinon ça reste un tap)
+    if (dr.pending && (Math.abs(e.clientX - dr.downX) > 8 || Math.abs(e.clientY - dr.downY) > 8)) {
+      dr.pending = false; dr.dragging = true;
+      setDragging(true);
+      const v = vref.current; v.play().catch(() => {});
+    }
+    if (!dr.dragging) return;
     const fr = pointerToFrac(e); if (!fr) return;
     const v = vref.current; const t = v.currentTime || 0;
-    // 1) La flèche suit le doigt INSTANTANÉMENT (DOM direct, 60 fps → fluide)
+    // La flèche suit le doigt INSTANTANÉMENT (DOM direct, 60 fps → fluide)
     const el = arrowRef.current;
     if (el && v.videoWidth) {
       const cw = v.clientWidth, ch = v.clientHeight;
@@ -2290,8 +2298,6 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
       el.style.left = `${oX + fr.fx * dW}px`;
       el.style.top = `${oY + fr.fy * dH}px`;
     }
-    // 2) Enregistre le trajet (throttle temps vidéo) + sync parent espacé (évite les saccades)
-    const dr = dragRef.current;
     if (dr.lastRecT < 0 || t - dr.lastRecT >= 0.05) {
       dr.lastRecT = t;
       pointsRef.current = [...pointsRef.current.filter(p => Math.abs(p.t - t) > 0.04), { t, x: fr.fx, y: fr.fy }].sort((a, b) => a.t - b.t);
@@ -2299,18 +2305,26 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     }
   };
   const onDragEnd = () => {
-    if (!dragRef.current.active) return;
-    dragRef.current.active = false;
-    setDragging(false);
-    onChange(pointsRef.current.slice());   // sync final du trajet
-    const v = vref.current; if (v) v.pause();
+    const dr = dragRef.current;
+    if (dr.dragging) {
+      dr.dragging = false;
+      setDragging(false);
+      onChange(pointsRef.current.slice());   // sync final du trajet manuel
+      const v = vref.current; if (v) v.pause();
+      return;
+    }
+    if (dr.pending) {
+      dr.pending = false;
+      // SIMPLE TAP → suivi automatique mains libres depuis ce point (façon FIFA)
+      startTrack(dr.downFx, dr.downFy);
+    }
   };
 
-  // Suivi automatique (analyse d'image) depuis la position actuelle de la flèche
+  // Relance le suivi automatique depuis la position actuelle du marqueur
   const runAutoFromHere = () => {
     const v = vref.current; if (!v || !v.videoWidth) return;
     const p = interpTrackingPoint(pointsRef.current.slice().sort((a, b) => a.t - b.t), v.currentTime || 0);
-    if (!p) { setWarn('Touche d\'abord le joueur (glisse le doigt) pour placer la flèche.'); return; }
+    if (!p) { setWarn('Tape d\'abord sur le joueur pour démarrer.'); return; }
     startTrack(p.x, p.y);
   };
 
@@ -2391,10 +2405,10 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
       <div className="flex items-center justify-between mt-2 gap-2">
         <p className="text-[11px] flex-1" style={{ color: C.textMute }}>
           {dragging
-            ? 'Garde le doigt sur le joueur et suis-le : la flèche bouge avec ton doigt.'
+            ? 'Placement manuel… relâche pour valider.'
             : tracking
               ? 'Suivi auto en cours… ⏸ pour arrêter.'
-              : 'Glisse ton doigt sur le joueur (la vidéo joue) pour que la flèche le suive. Ou « 🤖 Auto ».'}
+              : 'Tape une fois sur le joueur : le marqueur le suit tout seul. (Ou glisse le doigt pour le placer à la main.)'}
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button type="button" onClick={runAutoFromHere}
