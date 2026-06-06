@@ -2125,33 +2125,35 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
   const ADAPT = 26;        // seuil d'adaptation du modèle (score SAD par px)
   const arrowColor = color || '#FF3B30';
 
-  const sorted = useMemo(() => (points || []).slice().sort((a, b) => a.t - b.t), [points]);
+  // Garde pointsRef synchro quand on n'édite pas (ni glissement, ni suivi auto)
+  useEffect(() => {
+    if (!trackRef.current.active && !dragRef.current.active) pointsRef.current = (points || []).slice();
+  }, [points]);
 
-  // Garde pointsRef synchro quand on ne suit pas
-  useEffect(() => { if (!trackRef.current.active) pointsRef.current = (points || []).slice(); }, [points]);
-
-  // Aperçu temps réel de la flèche
+  // Aperçu temps réel de la flèche — lit pointsRef (ref) : la boucle ne redémarre
+  // jamais (aucune saccade). Pendant le glissement, c'est le doigt qui pilote.
   useEffect(() => {
     let raf;
     const loop = () => {
+      raf = requestAnimationFrame(loop);
+      if (dragRef.current.active) return;
       const v = vref.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
         const cw = v.clientWidth, ch = v.clientHeight;
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const p = interpTrackingPoint(pointsRef.current.slice().sort((a, b) => a.t - b.t), v.currentTime || 0);
+        const p = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
         if (p) {
           el.style.display = 'block';
           el.style.left = `${oX + p.x * dW}px`;
           el.style.top = `${oY + p.y * dH}px`;
         } else el.style.display = 'none';
       }
-      raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [sorted]);
+  }, []);
 
   // Capture la frame courante en niveaux de gris (null si pas prêt, 'tainted' si CORS)
   const grabFrame = () => {
@@ -2258,16 +2260,30 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
     if (!dragRef.current.active) return;
     const fr = pointerToFrac(e); if (!fr) return;
     const v = vref.current; const t = v.currentTime || 0;
-    if (dragRef.current.lastRecT < 0 || t - dragRef.current.lastRecT >= 0.05) {
-      dragRef.current.lastRecT = t;
+    // 1) La flèche suit le doigt INSTANTANÉMENT (DOM direct, 60 fps → fluide)
+    const el = arrowRef.current;
+    if (el && v.videoWidth) {
+      const cw = v.clientWidth, ch = v.clientHeight;
+      const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+      const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
+      const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
+      el.style.display = 'block';
+      el.style.left = `${oX + fr.fx * dW}px`;
+      el.style.top = `${oY + fr.fy * dH}px`;
+    }
+    // 2) Enregistre le trajet (throttle temps vidéo) + sync parent espacé (évite les saccades)
+    const dr = dragRef.current;
+    if (dr.lastRecT < 0 || t - dr.lastRecT >= 0.05) {
+      dr.lastRecT = t;
       pointsRef.current = [...pointsRef.current.filter(p => Math.abs(p.t - t) > 0.04), { t, x: fr.fx, y: fr.fy }].sort((a, b) => a.t - b.t);
-      onChange(pointsRef.current.slice());
+      if (dr.lastSyncT === undefined || t - dr.lastSyncT >= 0.25) { dr.lastSyncT = t; onChange(pointsRef.current.slice()); }
     }
   };
   const onDragEnd = () => {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setDragging(false);
+    onChange(pointsRef.current.slice());   // sync final du trajet
     const v = vref.current; if (v) v.pause();
   };
 
