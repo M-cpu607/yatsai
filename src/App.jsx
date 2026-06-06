@@ -845,19 +845,22 @@ function interpTrackingPoint(pts, t) {
 }
 
 // Triangle rouge pointant vers le bas, placé au-dessus de la tête du joueur.
-function PlayerArrowMarker({ size = 26 }) {
+function PlayerArrowMarker({ size = 26, color = '#FF3B30' }) {
+  // Contour adapté pour rester visible quelle que soit la couleur (blanc, sauf si
+  // la flèche est blanche -> contour sombre).
+  const stroke = (color || '').toLowerCase() === '#ffffff' ? '#0B1020' : '#fff';
   return (
     <svg width={size} height={size} viewBox="0 0 24 24"
       className="player-arrow-bob"
       style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.65))' }} aria-hidden="true">
-      <polygon points="3,3 21,3 12,20" fill="#FF3B30" stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" />
+      <polygon points="3,3 21,3 12,20" fill={color} stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
   );
 }
 
 // Superpose la flèche sur une vidéo en lecture : suit currentTime en interpolant.
 // videoRef = ref vers l'élément <video> ; le conteneur parent doit être `relative`.
-function VideoTrackingArrow({ videoRef, points, size = 26 }) {
+function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30' }) {
   const arrowRef = useRef(null);
   const sorted = useMemo(
     () => (Array.isArray(points)
@@ -894,7 +897,7 @@ function VideoTrackingArrow({ videoRef, points, size = 26 }) {
   return (
     <div ref={arrowRef} className="absolute pointer-events-none"
       style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
-      <PlayerArrowMarker size={size} />
+      <PlayerArrowMarker size={size} color={color} />
     </div>
   );
 }
@@ -904,7 +907,7 @@ function VideoTrackingArrow({ videoRef, points, size = 26 }) {
 //  - téléphone tenu en portrait : la vidéo est pivotée pour remplir en paysage
 //    (l'utilisateur tourne son téléphone pour la voir à l'endroit) ;
 //  - téléphone tourné (l'app passe en paysage) : affichage plein écran normal.
-function LandscapePlayerOverlay({ src, poster, points, startTime = 0, muted: initialMuted = false, onClose }) {
+function LandscapePlayerOverlay({ src, poster, points, color, startTime = 0, muted: initialMuted = false, onClose }) {
   const vidRef = useRef(null);
   const [muted, setMuted] = useState(initialMuted);
   const [paused, setPaused] = useState(false);
@@ -958,7 +961,7 @@ function LandscapePlayerOverlay({ src, poster, points, startTime = 0, muted: ini
           style={{ objectFit: 'contain', backgroundColor: '#000' }} />
         {/* La flèche est DANS la scène : elle pivote avec la vidéo et reste correcte
             une fois le téléphone tourné. */}
-        <VideoTrackingArrow videoRef={vidRef} points={points} />
+        <VideoTrackingArrow videoRef={vidRef} points={points} color={color} />
       </div>
 
       {/* Icône lecture quand en pause (repère écran) */}
@@ -1148,7 +1151,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 50%)' }} />
 
         {/* Flèche de suivi du joueur (si l'athlète l'a marquée à la publication) */}
-        {isUpload && <VideoTrackingArrow videoRef={videoRef} points={data.tracking_points} />}
+        {isUpload && <VideoTrackingArrow videoRef={videoRef} points={data.tracking_points} color={data.tracking_color} />}
 
         {/* Boutons flottants (son + plein écran) — vidéos uploadées uniquement */}
         {isUpload && (
@@ -1314,6 +1317,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           src={data.video_url}
           poster={thumbnailUrl}
           points={data.tracking_points}
+          color={data.tracking_color}
           startTime={fsStart}
           muted={muted}
           onClose={closeFullscreen}
@@ -1374,7 +1378,7 @@ function YouTubePlayer({ video, onClose }) {
           <div style={{ color: C.textDim }}>Vidéo introuvable</div>
         )}
         {/* Flèche de suivi du joueur */}
-        {isUpload && <VideoTrackingArrow videoRef={vidRef} points={video.tracking_points} />}
+        {isUpload && <VideoTrackingArrow videoRef={vidRef} points={video.tracking_points} color={video.tracking_color} />}
       </div>
     </div>
   );
@@ -2058,14 +2062,16 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
 // pause et tape sur sa tête à plusieurs moments. La flèche suit en interpolant.
 // Extrait un patch (modèle) centré sur (cx,cy) dans une frame en niveaux de gris.
 function extractTemplate(frame, cx, cy, tw, th) {
-  const { gray, w, h } = frame;
-  const out = new Float32Array(tw * th);
+  const { rgba, w, h } = frame;
+  const out = new Float32Array(tw * th * 3);
   const x0 = cx - (tw >> 1), y0 = cy - (th >> 1);
+  let o = 0;
   for (let j = 0; j < th; j++) {
     const sy = Math.min(h - 1, Math.max(0, y0 + j));
     for (let i = 0; i < tw; i++) {
       const sx = Math.min(w - 1, Math.max(0, x0 + i));
-      out[j * tw + i] = gray[sy * w + sx];
+      const p = (sy * w + sx) * 4;
+      out[o++] = rgba[p]; out[o++] = rgba[p + 1]; out[o++] = rgba[p + 2];
     }
   }
   return out;
@@ -2073,7 +2079,7 @@ function extractTemplate(frame, cx, cy, tw, th) {
 
 // Cherche le modèle autour de (cx,cy) dans un rayon R (SAD, sortie anticipée).
 function matchTemplate(frame, tmpl, tw, th, cx, cy, R) {
-  const { gray, w, h } = frame;
+  const { rgba, w, h } = frame;
   let best = Infinity, bx = cx, by = cy;
   const hw = tw >> 1, hh = th >> 1;
   for (let dy = -R; dy <= R; dy++) {
@@ -2082,24 +2088,25 @@ function matchTemplate(frame, tmpl, tw, th, cx, cy, R) {
     for (let dx = -R; dx <= R; dx++) {
       const ncx = cx + dx;
       if (ncx - hw < 0 || ncx + hw >= w) continue;
-      let sad = 0;
+      let sad = 0, ti = 0;
       for (let j = 0; j < th && sad < best; j++) {
-        const row = (ncy - hh + j) * w + (ncx - hw);
-        const trow = j * tw;
+        let p = ((ncy - hh + j) * w + (ncx - hw)) * 4;
         for (let i = 0; i < tw; i++) {
-          const d = gray[row + i] - tmpl[trow + i];
-          sad += d < 0 ? -d : d;
+          let d = rgba[p] - tmpl[ti]; sad += d < 0 ? -d : d;
+          d = rgba[p + 1] - tmpl[ti + 1]; sad += d < 0 ? -d : d;
+          d = rgba[p + 2] - tmpl[ti + 2]; sad += d < 0 ? -d : d;
+          p += 4; ti += 3;
         }
       }
       if (sad < best) { best = sad; bx = ncx; by = ncy; }
     }
   }
-  return { x: bx, y: by, score: best / (tw * th) };
+  return { x: bx, y: by, score: best / (tw * th * 3) };
 }
 
 // Éditeur de flèche avec SUIVI AUTOMATIQUE : un clic sur la tête du joueur, la
 // vidéo joue et la flèche suit le joueur (analyse d'image image par image).
-function PlayerTrackingEditor({ src, points, onChange }) {
+function PlayerTrackingEditor({ src, points, onChange, color, onColorChange }) {
   const vref = useRef(null);
   const arrowRef = useRef(null);
   const canvasRef = useRef(null);
@@ -2110,9 +2117,11 @@ function PlayerTrackingEditor({ src, points, onChange }) {
   const [dur, setDur] = useState(0);
   const [warn, setWarn] = useState('');
 
-  const AW = 240;          // largeur d'analyse (downscale pour la vitesse)
-  const TW = 24, TH = 24;  // taille du modèle
-  const SEARCH = 18;       // rayon de recherche
+  const AW = 300;          // largeur d'analyse (plus fin = meilleur suivi)
+  const TW = 30, TH = 30;  // taille du modèle (couleur)
+  const SEARCH = 24;       // rayon de recherche
+  const ADAPT = 26;        // seuil d'adaptation du modèle (score SAD par px)
+  const arrowColor = color || '#FF3B30';
 
   const sorted = useMemo(() => (points || []).slice().sort((a, b) => a.t - b.t), [points]);
 
@@ -2151,10 +2160,8 @@ function PlayerTrackingEditor({ src, points, onChange }) {
     const ctx = c.getContext('2d', { willReadFrequently: true });
     try {
       ctx.drawImage(v, 0, 0, AW, ah);
-      const d = ctx.getImageData(0, 0, AW, ah).data;
-      const n = AW * ah, gray = new Float32Array(n);
-      for (let i = 0; i < n; i++) gray[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
-      return { gray, w: AW, h: ah };
+      const rgba = ctx.getImageData(0, 0, AW, ah).data;
+      return { rgba, w: AW, h: ah };
     } catch { return 'tainted'; }
   };
 
@@ -2200,8 +2207,15 @@ function PlayerTrackingEditor({ src, points, onChange }) {
         const m = matchTemplate(f, st.template, TW, TH, st.lastX, st.lastY, SEARCH);
         if (m) {
           st.lastX = m.x; st.lastY = m.y;
+          // Modèle adaptatif : suit l'évolution d'apparence du joueur quand la
+          // correspondance est bonne (sinon on garde le modèle pour éviter la dérive).
+          if (m.score < ADAPT) {
+            const np = extractTemplate(f, m.x, m.y, TW, TH);
+            const tp = st.template;
+            for (let k = 0; k < tp.length; k++) tp[k] = tp[k] * 0.85 + np[k] * 0.15;
+          }
           const t = v.currentTime || 0;
-          if (t - st.lastRecT >= 0.12) {
+          if (t - st.lastRecT >= 0.1) {
             st.lastRecT = t;
             pushPoint(t, m.x / f.w, m.y / f.h);
           }
@@ -2241,7 +2255,7 @@ function PlayerTrackingEditor({ src, points, onChange }) {
           className="absolute inset-0 w-full h-full object-contain" />
         <div ref={arrowRef} className="absolute pointer-events-none"
           style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
-          <PlayerArrowMarker size={26} />
+          <PlayerArrowMarker size={26} color={arrowColor} />
         </div>
         {tracking && (
           <div className="absolute top-2 left-2 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5"
@@ -2264,6 +2278,21 @@ function PlayerTrackingEditor({ src, points, onChange }) {
           onChange={(e) => { const v = vref.current; const val = Number(e.target.value); if (v) { v.currentTime = val; } setCur(val); }}
           className="flex-1" style={{ accentColor: C.gold }} />
         <span className="text-[10px] font-mono flex-shrink-0" style={{ color: C.textDim }}>{cur.toFixed(1)}s</span>
+      </div>
+
+      {/* Choix de la couleur de la flèche */}
+      <div className="flex items-center gap-2 mt-2 flex-wrap">
+        <span className="text-[11px] flex-shrink-0" style={{ color: C.textDim }}>Couleur :</span>
+        {['#FF3B30', '#FFB800', '#3B82F6', '#22C55E', '#FFFFFF', '#EC4899', '#000000'].map(col => {
+          const active = arrowColor.toLowerCase() === col.toLowerCase();
+          return (
+            <button key={col} type="button" onClick={() => onColorChange?.(col)}
+              aria-label={`Couleur ${col}`}
+              className="w-6 h-6 rounded-full flex-shrink-0"
+              style={{ backgroundColor: col, border: `1px solid rgba(255,255,255,0.25)`,
+                       boxShadow: active ? `0 0 0 2px ${C.bg}, 0 0 0 4px ${C.gold}` : 'none' }} />
+          );
+        })}
       </div>
 
       {/* Aide + actions */}
@@ -2303,6 +2332,7 @@ function PublishView({ userProfile, setTab }) {
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100
   const [trackingOn, setTrackingOn] = useState(false);       // flèche de suivi activée ?
   const [trackingPoints, setTrackingPoints] = useState([]);  // [{ t, x, y }]
+  const [trackingColor, setTrackingColor] = useState('#FF3B30'); // couleur de la flèche
   const fileInputRef = useRef(null);
   const captureInputRef = useRef(null);
 
@@ -2383,6 +2413,7 @@ function PublishView({ userProfile, setTab }) {
     setUploadProgress(0);
     setTrackingOn(false);
     setTrackingPoints([]);
+    setTrackingColor('#FF3B30');
     setAiResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (captureInputRef.current) captureInputRef.current.value = '';
@@ -2445,6 +2476,7 @@ function PublishView({ userProfile, setTab }) {
       region: region.trim() || null,
       country: country.trim() || null,
       tracking_points: (trackingOn && trackingPoints.length) ? trackingPoints : null,
+      tracking_color: (trackingOn && trackingPoints.length) ? trackingColor : null,
     };
     const { error: insertError } = await supabase.from('videos').insert(row);
     if (insertError) { setError('Erreur : ' + insertError.message); return false; }
@@ -2671,7 +2703,8 @@ function PublishView({ userProfile, setTab }) {
             </div>
             {trackingOn && (
               <div className="mt-3">
-                <PlayerTrackingEditor src={videoPreviewUrl} points={trackingPoints} onChange={setTrackingPoints} />
+                <PlayerTrackingEditor src={videoPreviewUrl} points={trackingPoints} onChange={setTrackingPoints}
+                  color={trackingColor} onColorChange={setTrackingColor} />
               </div>
             )}
           </div>
@@ -10288,18 +10321,20 @@ function OwnVideoThumb({ video, onPlay, onDelete, onEditTracking }) {
 // Modale d'édition de la flèche de suivi sur une vidéo DÉJÀ publiée (depuis le profil).
 function TrackingEditorModal({ video, onClose, onSaved }) {
   const [points, setPoints] = useState(Array.isArray(video.tracking_points) ? video.tracking_points : []);
+  const [trackColor, setTrackColor] = useState(video.tracking_color || '#FF3B30');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const handleSave = async () => {
     setSaving(true); setError('');
     const value = points.length ? points : null;
+    const col = points.length ? trackColor : null;
     const { data, error: err } = await supabase.from('videos')
-      .update({ tracking_points: value }).eq('id', video.id).select('id');
+      .update({ tracking_points: value, tracking_color: col }).eq('id', video.id).select('id');
     setSaving(false);
     if (err) { setError(err.message); return; }
     if (!data || data.length === 0) { setError('Modification refusée (autorisation manquante).'); return; }
-    onSaved?.(video.id, value);
+    onSaved?.(video.id, value, col);
   };
 
   return (
@@ -10324,7 +10359,8 @@ function TrackingEditorModal({ video, onClose, onSaved }) {
           Mets la vidéo en pause et tape sur ta tête à plusieurs moments pour repositionner la flèche.
           Laisse vide (Effacer) pour retirer complètement la flèche.
         </p>
-        <PlayerTrackingEditor src={video.video_url} points={points} onChange={setPoints} />
+        <PlayerTrackingEditor src={video.video_url} points={points} onChange={setPoints}
+          color={trackColor} onColorChange={setTrackColor} />
         {error && (
           <div className="mt-3 px-3 py-2 rounded-lg text-xs"
             style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: `1px solid ${C.red}` }}>
@@ -10579,8 +10615,8 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         <TrackingEditorModal
           video={trackingEditVideo}
           onClose={() => setTrackingEditVideo(null)}
-          onSaved={(id, pts) => {
-            setMyVideos(prev => prev.map(v => v.id === id ? { ...v, tracking_points: pts } : v));
+          onSaved={(id, pts, col) => {
+            setMyVideos(prev => prev.map(v => v.id === id ? { ...v, tracking_points: pts, tracking_color: col } : v));
             setTrackingEditVideo(null);
           }}
         />
