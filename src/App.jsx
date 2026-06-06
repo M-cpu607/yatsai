@@ -2056,19 +2056,70 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
 // ─── PUBLISH (Upload direct OU lien YouTube) ──────────────────────
 // Éditeur de flèche de suivi (avant publication) : l'athlète met la vidéo en
 // pause et tape sur sa tête à plusieurs moments. La flèche suit en interpolant.
+// Extrait un patch (modèle) centré sur (cx,cy) dans une frame en niveaux de gris.
+function extractTemplate(frame, cx, cy, tw, th) {
+  const { gray, w, h } = frame;
+  const out = new Float32Array(tw * th);
+  const x0 = cx - (tw >> 1), y0 = cy - (th >> 1);
+  for (let j = 0; j < th; j++) {
+    const sy = Math.min(h - 1, Math.max(0, y0 + j));
+    for (let i = 0; i < tw; i++) {
+      const sx = Math.min(w - 1, Math.max(0, x0 + i));
+      out[j * tw + i] = gray[sy * w + sx];
+    }
+  }
+  return out;
+}
+
+// Cherche le modèle autour de (cx,cy) dans un rayon R (SAD, sortie anticipée).
+function matchTemplate(frame, tmpl, tw, th, cx, cy, R) {
+  const { gray, w, h } = frame;
+  let best = Infinity, bx = cx, by = cy;
+  const hw = tw >> 1, hh = th >> 1;
+  for (let dy = -R; dy <= R; dy++) {
+    const ncy = cy + dy;
+    if (ncy - hh < 0 || ncy + hh >= h) continue;
+    for (let dx = -R; dx <= R; dx++) {
+      const ncx = cx + dx;
+      if (ncx - hw < 0 || ncx + hw >= w) continue;
+      let sad = 0;
+      for (let j = 0; j < th && sad < best; j++) {
+        const row = (ncy - hh + j) * w + (ncx - hw);
+        const trow = j * tw;
+        for (let i = 0; i < tw; i++) {
+          const d = gray[row + i] - tmpl[trow + i];
+          sad += d < 0 ? -d : d;
+        }
+      }
+      if (sad < best) { best = sad; bx = ncx; by = ncy; }
+    }
+  }
+  return { x: bx, y: by, score: best / (tw * th) };
+}
+
+// Éditeur de flèche avec SUIVI AUTOMATIQUE : un clic sur la tête du joueur, la
+// vidéo joue et la flèche suit le joueur (analyse d'image image par image).
 function PlayerTrackingEditor({ src, points, onChange }) {
   const vref = useRef(null);
   const arrowRef = useRef(null);
-  const [playing, setPlaying] = useState(false);
+  const canvasRef = useRef(null);
+  const pointsRef = useRef(points || []);
+  const trackRef = useRef({ active: false });
+  const [tracking, setTracking] = useState(false);
   const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
+  const [warn, setWarn] = useState('');
 
-  const sorted = useMemo(
-    () => (points || []).slice().sort((a, b) => a.t - b.t),
-    [points]
-  );
+  const AW = 240;          // largeur d'analyse (downscale pour la vitesse)
+  const TW = 24, TH = 24;  // taille du modèle
+  const SEARCH = 18;       // rayon de recherche
 
-  // Aperçu temps réel de la flèche pendant l'édition
+  const sorted = useMemo(() => (points || []).slice().sort((a, b) => a.t - b.t), [points]);
+
+  // Garde pointsRef synchro quand on ne suit pas
+  useEffect(() => { if (!trackRef.current.active) pointsRef.current = (points || []).slice(); }, [points]);
+
+  // Aperçu temps réel de la flèche
   useEffect(() => {
     let raf;
     const loop = () => {
@@ -2078,7 +2129,7 @@ function PlayerTrackingEditor({ src, points, onChange }) {
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const p = interpTrackingPoint(sorted, v.currentTime || 0);
+        const p = interpTrackingPoint(pointsRef.current.slice().sort((a, b) => a.t - b.t), v.currentTime || 0);
         if (p) {
           el.style.display = 'block';
           el.style.left = `${oX + p.x * dW}px`;
@@ -2091,38 +2142,100 @@ function PlayerTrackingEditor({ src, points, onChange }) {
     return () => cancelAnimationFrame(raf);
   }, [sorted]);
 
-  const addPointAt = (clientX, clientY) => {
-    const v = vref.current;
-    if (!v || !v.videoWidth) return;
+  // Capture la frame courante en niveaux de gris (null si pas prêt, 'tainted' si CORS)
+  const grabFrame = () => {
+    const v = vref.current, c = canvasRef.current;
+    if (!v || !c || !v.videoWidth) return null;
+    const ah = Math.max(1, Math.round(AW * v.videoHeight / v.videoWidth));
+    if (c.width !== AW) { c.width = AW; c.height = ah; }
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    try {
+      ctx.drawImage(v, 0, 0, AW, ah);
+      const d = ctx.getImageData(0, 0, AW, ah).data;
+      const n = AW * ah, gray = new Float32Array(n);
+      for (let i = 0; i < n; i++) gray[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+      return { gray, w: AW, h: ah };
+    } catch { return 'tainted'; }
+  };
+
+  const stopTrack = () => {
+    const st = trackRef.current;
+    st.active = false;
+    if (st.raf) cancelAnimationFrame(st.raf);
+    const v = vref.current; if (v) v.pause();
+    setTracking(false);
+  };
+
+  const pushPoint = (t, x, y) => {
+    pointsRef.current = [...pointsRef.current, { t, x, y }];
+    onChange(pointsRef.current.slice());
+  };
+
+  // Démarre le suivi auto à partir du point (fraction fx,fy) et du temps courant
+  const startTrack = (fx, fy) => {
+    const v = vref.current; if (!v || !v.videoWidth) return;
+    const frame = grabFrame();
+    if (frame === 'tainted') {
+      setWarn('Suivi auto indisponible sur cette vidéo — point ajouté manuellement.');
+      const t = v.currentTime || 0;
+      pointsRef.current = [...pointsRef.current.filter(p => Math.abs(p.t - t) > 0.25), { t, x: fx, y: fy }].sort((a, b) => a.t - b.t);
+      onChange(pointsRef.current.slice());
+      return;
+    }
+    if (!frame) return;
+    setWarn('');
+    const cx = Math.round(fx * frame.w), cy = Math.round(fy * frame.h);
+    const tmpl = extractTemplate(frame, cx, cy, TW, TH);
+    const t0 = v.currentTime || 0;
+    pointsRef.current = [...pointsRef.current.filter(p => p.t < t0 - 0.01), { t: t0, x: fx, y: fy }].sort((a, b) => a.t - b.t);
+    onChange(pointsRef.current.slice());
+    trackRef.current = { active: true, template: tmpl, lastX: cx, lastY: cy, lastRecT: t0, raf: 0 };
+    setTracking(true);
+    v.play().catch(() => {});
+    const loop = () => {
+      const st = trackRef.current;
+      if (!st.active) return;
+      const f = grabFrame();
+      if (f && f !== 'tainted') {
+        const m = matchTemplate(f, st.template, TW, TH, st.lastX, st.lastY, SEARCH);
+        if (m) {
+          st.lastX = m.x; st.lastY = m.y;
+          const t = v.currentTime || 0;
+          if (t - st.lastRecT >= 0.12) {
+            st.lastRecT = t;
+            pushPoint(t, m.x / f.w, m.y / f.h);
+          }
+        }
+      }
+      if (v.paused || v.ended || (v.duration && v.currentTime >= v.duration - 0.05)) { stopTrack(); return; }
+      st.raf = requestAnimationFrame(loop);
+    };
+    trackRef.current.raf = requestAnimationFrame(loop);
+  };
+
+  const onTapVideo = (e) => {
+    const v = vref.current; if (!v || !v.videoWidth) return;
     const rect = v.getBoundingClientRect();
     const cw = rect.width, ch = rect.height;
     const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
     const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
     const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-    const px = clientX - rect.left - oX;
-    const py = clientY - rect.top - oY;
-    if (px < 0 || py < 0 || px > dW || py > dH) return; // tap hors image (bandes noires)
-    const x = Math.max(0, Math.min(1, px / dW));
-    const y = Math.max(0, Math.min(1, py / dH));
-    const t = v.currentTime || 0;
-    // remplace un point proche (< 0.25s), sinon ajoute
-    const next = [...(points || []).filter(p => Math.abs(p.t - t) > 0.25), { t, x, y }]
-      .sort((a, b) => a.t - b.t);
-    onChange(next);
+    const px = e.clientX - rect.left - oX, py = e.clientY - rect.top - oY;
+    if (px < 0 || py < 0 || px > dW || py > dH) return;
+    const fx = Math.max(0, Math.min(1, px / dW)), fy = Math.max(0, Math.min(1, py / dH));
+    if (tracking) stopTrack();
+    startTrack(fx, fy);   // (re)démarre le suivi auto depuis ce point
   };
 
-  const togglePlay = () => {
-    const v = vref.current; if (!v) return;
-    if (v.paused) v.play().catch(() => {}); else v.pause();
-  };
+  const nb = (points || []).length;
 
   return (
     <div>
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
       <div className="relative rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9', backgroundColor: '#000' }}>
-        <video ref={vref} src={src} playsInline preload="metadata"
-          onClick={(e) => addPointAt(e.clientX, e.clientY)}
-          onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+        <video ref={vref} src={src} playsInline preload="metadata" crossOrigin="anonymous"
+          onClick={onTapVideo}
           onTimeUpdate={(e) => setCur(e.target.currentTime || 0)}
           onLoadedMetadata={(e) => setDur(e.target.duration || 0)}
           className="absolute inset-0 w-full h-full object-contain" />
@@ -2130,49 +2243,49 @@ function PlayerTrackingEditor({ src, points, onChange }) {
           style={{ display: 'none', transform: 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
           <PlayerArrowMarker size={26} />
         </div>
+        {tracking && (
+          <div className="absolute top-2 left-2 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5"
+            style={{ backgroundColor: 'rgba(255,59,48,0.9)', color: '#fff' }}>
+            <span className="dot-jump" aria-hidden="true"><span /><span /><span /></span>
+            Suivi en cours…
+          </div>
+        )}
       </div>
 
-      {/* Contrôles lecture + position */}
+      {/* Contrôles */}
       <div className="flex items-center gap-2 mt-2">
-        <button type="button" onClick={togglePlay}
+        <button type="button"
+          onClick={() => { const v = vref.current; if (!v) return; if (tracking) { stopTrack(); } else if (v.paused) { v.play().catch(() => {}); } else { v.pause(); } }}
           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: C.gold, color: C.bg }}>
-          {playing ? <Pause size={16} /> : <Play size={16} fill={C.bg} stroke={C.bg} />}
+          style={{ backgroundColor: tracking ? C.red : C.gold, color: tracking ? '#fff' : C.bg }}>
+          {tracking ? <Pause size={16} /> : <Play size={16} fill={C.bg} stroke={C.bg} />}
         </button>
         <input type="range" min={0} max={dur || 0} step={0.05} value={cur}
           onChange={(e) => { const v = vref.current; const val = Number(e.target.value); if (v) { v.currentTime = val; } setCur(val); }}
           className="flex-1" style={{ accentColor: C.gold }} />
-        <span className="text-[10px] font-mono flex-shrink-0" style={{ color: C.textDim }}>
-          {cur.toFixed(1)}s
-        </span>
+        <span className="text-[10px] font-mono flex-shrink-0" style={{ color: C.textDim }}>{cur.toFixed(1)}s</span>
       </div>
 
-      {/* Aide + compteur de points */}
+      {/* Aide + actions */}
       <div className="flex items-center justify-between mt-2 gap-2">
         <p className="text-[11px] flex-1" style={{ color: C.textMute }}>
-          Mets en pause puis tape sur ta tête. Recommence à plusieurs moments pour que la flèche te suive.
+          {tracking
+            ? 'La flèche suit le joueur… Tape ailleurs pour corriger, ou ⏸ pour arrêter.'
+            : 'Tape sur la tête du joueur : la flèche le suivra automatiquement dans la vidéo.'}
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
-            {(points || []).length} pt{(points || []).length > 1 ? 's' : ''}
-          </span>
-          {(points || []).length > 0 && (
-            <>
-              <button type="button" onClick={() => onChange((points || []).slice(0, -1))}
-                className="text-[10px] font-bold px-2 py-0.5 rounded"
-                style={{ color: C.text, border: `1px solid ${C.border}` }}>
-                Annuler
-              </button>
-              <button type="button" onClick={() => onChange([])}
-                className="text-[10px] font-bold px-2 py-0.5 rounded"
-                style={{ color: C.red, border: `1px solid ${C.red}` }}>
-                Effacer
-              </button>
-            </>
+            style={{ backgroundColor: C.goldSoft, color: C.gold }}>{nb} pt{nb > 1 ? 's' : ''}</span>
+          {nb > 0 && (
+            <button type="button" onClick={() => { stopTrack(); pointsRef.current = []; onChange([]); }}
+              className="text-[10px] font-bold px-2 py-0.5 rounded"
+              style={{ color: C.red, border: `1px solid ${C.red}` }}>
+              Effacer
+            </button>
           )}
         </div>
       </div>
+      {warn && <p className="text-[10px] mt-1" style={{ color: C.gold }}>{warn}</p>}
     </div>
   );
 }
