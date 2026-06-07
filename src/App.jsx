@@ -1955,6 +1955,31 @@ function loadMobileNetOnce() {
   return _mobilenetPromise;
 }
 
+// Cache du modèle de détection de personnes COCO-SSD (lazy load) — sert au suivi
+// automatique de la tête du joueur.
+let _cocoPromise = null;
+function loadCocoOnce() {
+  if (_cocoPromise) return _cocoPromise;
+  _cocoPromise = (async () => {
+    const tf = await import('@tensorflow/tfjs');
+    await tf.ready();
+    const cocoSsd = await import('@tensorflow-models/coco-ssd');
+    return await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+  })();
+  return _cocoPromise;
+}
+
+// Place une vidéo à un instant précis et attend que la frame soit prête.
+function seekVideoTo(v, t) {
+  return new Promise((resolve) => {
+    const target = Math.max(0, Math.min(t, (v.duration || 0) - 0.001));
+    if (Math.abs((v.currentTime || 0) - target) < 0.001) { resolve(); return; }
+    const onSeeked = () => { v.removeEventListener('seeked', onSeeked); resolve(); };
+    v.addEventListener('seeked', onSeeked);
+    try { v.currentTime = target; } catch { v.removeEventListener('seeked', onSeeked); resolve(); }
+  });
+}
+
 function extractYouTubeId(url) {
   if (!url) return null;
   const m = url.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
@@ -2137,6 +2162,9 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
   const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
   const [warn, setWarn] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);   // analyse IA de la tête en cours
+  const [progress, setProgress] = useState(0);
+  const analyzeRef = useRef(false);
 
   const AW = 300;          // largeur d'analyse (plus fin = meilleur suivi)
   const TW = 30, TH = 30;  // taille du modèle (couleur)
@@ -2273,9 +2301,10 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     const v = vref.current; if (!v || !v.videoWidth) return;
     const fr = pointerToFrac(e); if (!fr) return;
     if (trackRef.current.active) stopTrack();
+    if (analyzeRef.current) { analyzeRef.current = false; setAnalyzing(false); }
     e.preventDefault();
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
-    dragRef.current = { pending: true, dragging: false, downFx: fr.fx, downFy: fr.fy, downX: e.clientX, downY: e.clientY, lastRecT: -1 };
+    dragRef.current = { pending: true, dragging: false, downFx: fr.fx, downFy: fr.fy, downX: e.clientX, downY: e.clientY, downT: v.currentTime || 0, lastRecT: -1 };
     setWarn('');
   };
   const onDragMove = (e) => {
@@ -2318,17 +2347,75 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     }
     if (dr.pending) {
       dr.pending = false;
-      // SIMPLE TAP → suivi automatique mains libres depuis ce point (façon FIFA)
-      startTrack(dr.downFx, dr.downFy);
+      // SIMPLE TAP → détection IA + suivi automatique de la TÊTE à partir d'ici
+      runHeadTrack(dr.downT || 0, dr.downFx, dr.downFy);
     }
   };
 
-  // Relance le suivi automatique depuis la position actuelle du marqueur
+  // Relance le suivi automatique de la tête depuis la position actuelle
   const runAutoFromHere = () => {
     const v = vref.current; if (!v || !v.videoWidth) return;
     const p = interpTrackingPoint(pointsRef.current.slice().sort((a, b) => a.t - b.t), v.currentTime || 0);
     if (!p) { setWarn('Tape d\'abord sur le joueur pour démarrer.'); return; }
-    startTrack(p.x, p.y);
+    runHeadTrack(v.currentTime || 0, p.x, p.y);
+  };
+
+  const cancelAnalyze = () => { analyzeRef.current = false; setAnalyzing(false); };
+
+  // ── SUIVI AUTOMATIQUE DE LA TÊTE (IA) ──
+  // Détecte les personnes (COCO-SSD) image par image à partir de startT, suit
+  // celle la plus proche du point choisi, et place le marqueur sur sa tête
+  // (haut de la boîte englobante). Interpolation -> rendu fluide à la lecture.
+  const runHeadTrack = async (startT, fx, fy) => {
+    const v = vref.current; if (!v || !v.videoWidth) return;
+    if (trackRef.current.active) stopTrack();
+    setWarn(''); setAnalyzing(true); setProgress(0); analyzeRef.current = true;
+    try { v.pause(); } catch {}
+    let model;
+    try { model = await loadCocoOnce(); }
+    catch {
+      analyzeRef.current = false; setAnalyzing(false);
+      setWarn('Détection IA indisponible — suivi classique utilisé.');
+      startTrack(fx, fy);   // repli sur le suivi par image
+      return;
+    }
+    if (!analyzeRef.current) { setAnalyzing(false); return; }
+
+    const c = canvasRef.current;
+    const CW = 480, CH = Math.max(1, Math.round(CW * v.videoHeight / v.videoWidth));
+    c.width = CW; c.height = CH;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+
+    const total = v.duration || 0;
+    const step = 0.25;
+    let lastFx = fx, lastFy = fy;
+    const kept = pointsRef.current.filter(p => p.t < startT - 0.01);
+    const newPts = [{ t: startT, x: fx, y: fy }];
+
+    for (let t = startT + step; t <= total && analyzeRef.current; t += step) {
+      await seekVideoTo(v, t);
+      if (!analyzeRef.current) break;
+      let dets = [];
+      try { ctx.drawImage(v, 0, 0, CW, CH); dets = await model.detect(c, 12); } catch {}
+      const persons = (dets || []).filter(d => d.class === 'person' && d.score > 0.33);
+      if (persons.length) {
+        let bx = lastFx, by = lastFy, bestD = Infinity;
+        for (const p of persons) {
+          const hx = (p.bbox[0] + p.bbox[2] / 2) / CW;
+          const hy = (p.bbox[1] + p.bbox[3] * 0.12) / CH;  // ~tête (haut de la boîte)
+          const d = Math.hypot(hx - lastFx, hy - lastFy);
+          if (d < bestD) { bestD = d; bx = hx; by = hy; }
+        }
+        if (bestD < 0.32) { lastFx = bx; lastFy = by; }  // accepte si proche du joueur suivi
+      }
+      newPts.push({ t, x: lastFx, y: lastFy });
+      setProgress(total > startT ? (t - startT) / (total - startT) : 1);
+      pointsRef.current = [...kept, ...newPts].sort((a, b) => a.t - b.t);
+      onChange(pointsRef.current.slice());
+    }
+    analyzeRef.current = false;
+    setAnalyzing(false);
+    try { await seekVideoTo(v, startT); } catch {}
   };
 
   const nb = (points || []).length;
@@ -2350,11 +2437,11 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
           style={{ display: 'none', transform: isCircle ? 'translate(-50%, -50%)' : 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
           {isCircle ? <PlayerCircleMarker size={Math.round(48 * mScale)} color={arrowColor} /> : <PlayerArrowMarker size={Math.round(26 * mScale)} color={arrowColor} />}
         </div>
-        {(tracking || dragging) && (
+        {(tracking || dragging || analyzing) && (
           <div className="absolute top-2 left-2 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5"
             style={{ zIndex: 5, backgroundColor: dragging ? 'rgba(34,197,94,0.92)' : 'rgba(255,59,48,0.9)', color: '#fff' }}>
             <span className="dot-jump" aria-hidden="true"><span /><span /><span /></span>
-            {dragging ? 'Suis le joueur avec ton doigt…' : 'Suivi auto…'}
+            {analyzing ? `Détection de la tête… ${Math.round(progress * 100)}%` : dragging ? 'Placement manuel…' : 'Suivi auto…'}
           </div>
         )}
       </div>
@@ -2362,10 +2449,10 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
       {/* Contrôles */}
       <div className="flex items-center gap-2 mt-2">
         <button type="button"
-          onClick={() => { const v = vref.current; if (!v) return; if (tracking) { stopTrack(); } else if (v.paused) { v.play().catch(() => {}); } else { v.pause(); } }}
+          onClick={() => { const v = vref.current; if (!v) return; if (analyzing) { cancelAnalyze(); } else if (tracking) { stopTrack(); } else if (v.paused) { v.play().catch(() => {}); } else { v.pause(); } }}
           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: tracking ? C.red : C.gold, color: tracking ? '#fff' : C.bg }}>
-          {tracking ? <Pause size={16} /> : <Play size={16} fill={C.bg} stroke={C.bg} />}
+          style={{ backgroundColor: (tracking || analyzing) ? C.red : C.gold, color: (tracking || analyzing) ? '#fff' : C.bg }}>
+          {(tracking || analyzing) ? <Pause size={16} /> : <Play size={16} fill={C.bg} stroke={C.bg} />}
         </button>
         <input type="range" min={0} max={dur || 0} step={0.05} value={cur}
           onChange={(e) => { const v = vref.current; const val = Number(e.target.value); if (v) { v.currentTime = val; } setCur(val); }}
@@ -2418,9 +2505,11 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
         <p className="text-[11px] flex-1" style={{ color: C.textMute }}>
           {dragging
             ? 'Placement manuel… relâche pour valider.'
-            : tracking
-              ? 'Suivi auto en cours… ⏸ pour arrêter.'
-              : 'Tape une fois sur le joueur : le marqueur le suit tout seul. (Ou glisse le doigt pour le placer à la main.)'}
+            : analyzing
+              ? `Détection de la tête… ${Math.round(progress * 100)}% (⏸ pour arrêter)`
+              : tracking
+                ? 'Suivi en cours… ⏸ pour arrêter.'
+                : 'Tape une fois sur le joueur : l’IA détecte sa tête et le suit tout seul. (Ou glisse le doigt.)'}
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button type="button" onClick={runAutoFromHere}
