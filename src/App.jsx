@@ -909,12 +909,14 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
   if (sorted.length === 0) return null;
   const isCircle = shape === 'circle';
   const sc = sizeScale && sizeScale > 0 ? sizeScale : 1;
+  const arrowSize = Math.round(size * sc);
+  const gap = Math.round(arrowSize * 0.6) + 6;   // flèche un peu au-dessus de la tête
   return (
     <div ref={arrowRef} className="absolute pointer-events-none"
       style={{ display: 'none',
-        transform: isCircle ? 'translate(-50%, -50%)' : 'translate(-50%, calc(-100% - 6px))',
+        transform: isCircle ? 'translate(-50%, -50%)' : `translate(-50%, calc(-100% - ${gap}px))`,
         zIndex: 6 }}>
-      {isCircle ? <PlayerCircleMarker size={Math.round(48 * sc)} color={color} /> : <PlayerArrowMarker size={Math.round(size * sc)} color={color} />}
+      {isCircle ? <PlayerCircleMarker size={Math.round(48 * sc)} color={color} /> : <PlayerArrowMarker size={arrowSize} color={color} />}
     </div>
   );
 }
@@ -2434,7 +2436,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
           onPointerDown={onDragStart} onPointerMove={onDragMove}
           onPointerUp={onDragEnd} onPointerCancel={onDragEnd} />
         <div ref={arrowRef} className="absolute pointer-events-none"
-          style={{ display: 'none', transform: isCircle ? 'translate(-50%, -50%)' : 'translate(-50%, calc(-100% - 6px))', zIndex: 6 }}>
+          style={{ display: 'none', transform: isCircle ? 'translate(-50%, -50%)' : `translate(-50%, calc(-100% - ${Math.round(26 * mScale * 0.6) + 6}px))`, zIndex: 6 }}>
           {isCircle ? <PlayerCircleMarker size={Math.round(48 * mScale)} color={arrowColor} /> : <PlayerArrowMarker size={Math.round(26 * mScale)} color={arrowColor} />}
         </div>
         {(tracking || dragging || analyzing) && (
