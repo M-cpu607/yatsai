@@ -1913,7 +1913,7 @@ const SPORT_IMAGE_CLASSES = [
   'ski', 'skis', 'snowboard', 'surfboard', 'skateboard', 'inline skate',
   'punching bag', 'dumbbell', 'barbell', 'parallel bars', 'horizontal bar',
   'balance beam', 'swing', 'jersey', 'sweatshirt', 'maillot',
-  'swimming pool', 'swimming trunks', 'bathing suit', 'water bottle',
+  'swimming pool', 'swimming trunks', 'bathing suit', 'water bottle', 'snorkel', 'scuba', 'bikini',
   'bicycle', 'mountain bike', 'unicycle', 'motorcycle', 'motor scooter',
   'racing car', 'race car', 'horse', 'speedboat', 'paddle',
   'stopwatch', 'whistle', 'scoreboard',
@@ -2072,22 +2072,21 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   const sportObj = SPORTS.find(s => s.id === sport);
   if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) textScore += 1;
 
-  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~5 Mo)…' });
+  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~7 Mo)…' });
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
-  let coco;
+  let coco, mobilenet;
   try {
-    coco = await withTimeout(loadCocoOnce(), 25000);
+    [coco, mobilenet] = await withTimeout(Promise.all([loadCocoOnce(), loadMobileNetOnce()]), 30000);
   } catch (e) {
-    console.warn('COCO indisponible/lent:', e);
-    // On ne bloque jamais : IA trop lente/indispo -> on laisse publier.
+    console.warn('IA indisponible/lente:', e);
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse IA trop lente — publication autorisée.' };
   }
 
   const t0 = performance.now();
-  const BUDGET = 16000; // ms max d'analyse (anti-blocage)
-  let total = 0, sportyFrames = 0, strongFrames = 0;
-  const detectCoco = async (source) => {
-    let equip = 0, persons = 0;
+  const BUDGET = 18000; // ms max d'analyse (anti-blocage)
+  let total = 0, sportyFrames = 0, strongFrames = 0, anyPerson = false;
+  const analyze = async (source) => {
+    let equip = 0, persons = 0, sceneSport = false;
     try {
       const dets = await coco.detect(source, 10);
       for (const d of dets) {
@@ -2096,11 +2095,17 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
         else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
       }
     } catch {}
-    return { equip, persons };
+    try {
+      const preds = await mobilenet.classify(source, 8);
+      sceneSport = preds.some(p => p.probability > 0.10 &&
+        SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
+    } catch {}
+    return { equip, persons, sceneSport };
   };
   const tally = (r) => {
     total++;
-    const strong = r.equip > 0;
+    if (r.persons > 0) anyPerson = true;
+    const strong = r.equip > 0 || r.sceneSport;
     if (strong) strongFrames++;
     if (strong || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
   };
@@ -2111,7 +2116,7 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
       await withVideoFrames(videoUrl, 4, async (canvas, i, n) => {
         if (performance.now() - t0 > BUDGET) return;
         onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
-        tally(await detectCoco(canvas));
+        tally(await analyze(canvas));
       });
     } else {
       let img = thumbImage || null;
@@ -2119,37 +2124,25 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
         const yId = extractYouTubeId(youtubeUrl);
         if (yId) { for (const u of [`https://img.youtube.com/vi/${yId}/hqdefault.jpg`, `https://img.youtube.com/vi/${yId}/mqdefault.jpg`]) { try { img = await loadImage(u); break; } catch {} } }
       }
-      if (img) { onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' }); tally(await detectCoco(img)); }
+      if (img) { onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' }); tally(await analyze(img)); }
     }
   } catch (e) { console.warn('Analyse images échouée:', e); }
-
-  // Secours léger : si COCO n'a vu AUCUN objet sport (sports sans matériel :
-  // course, boxe, gym...), on classe la miniature avec MobileNet (1 seul appel).
-  if (strongFrames === 0 && thumbImage && (performance.now() - t0) < BUDGET) {
-    try {
-      onProgress?.({ step: 'verify', label: '🧠 Vérification complémentaire…' });
-      const mobilenet = await withTimeout(loadMobileNetOnce(), 12000);
-      const preds = await mobilenet.classify(thumbImage, 10);
-      const sportClass = preds.some(p => p.probability > 0.12 &&
-        SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
-      if (sportClass) { strongFrames++; if (total === 0) total = 1; sportyFrames = Math.max(sportyFrames, 1); }
-    } catch (e) { console.warn('MobileNet secours indispo:', e); }
-  }
 
   if (total === 0) {
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
-  // Décision ÉQUILIBRÉE : un signal sport fort sur ≥1 image, OU ≥40% d'images sportives.
+  // Décision ÉQUILIBRÉE : signal sport fort sur ≥1 image, OU ≥40% d'images sportives,
+  // OU des personnes présentes + un titre clairement sportif (sports peu "visuels").
   const ratio = sportyFrames / total;
-  const isSport = strongFrames >= 1 || ratio >= 0.4;
+  const isSport = strongFrames >= 1 || ratio >= 0.4 || (anyPerson && textScore >= 2);
   return {
     isSport,
-    confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.2,
+    confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.25,
     method: 'image' + (textScore > 0 ? '+texte' : ''),
     details: isSport
       ? `Sport détecté sur ${sportyFrames}/${total} image(s).`
-      : `Pas assez d'éléments sportifs (${sportyFrames}/${total} image(s)). Vérifie que c'est bien une vidéo de sport.`,
+      : `Pas assez d'éléments sportifs détectés (${sportyFrames}/${total} image(s)).`,
   };
 }
 
@@ -2756,6 +2749,37 @@ function PublishView({ userProfile, setTab }) {
     return true;
   };
 
+  // Upload + insertion en base (appelé après validation IA, ou via l'override).
+  const doPublish = async () => {
+    setLoading(true);
+    let extra = {};
+    if (mode === 'upload') {
+      const uploaded = await uploadToStorage();
+      if (!uploaded || !uploaded.video_url) { setLoading(false); return; }
+      extra = {
+        video_url: uploaded.video_url,
+        thumbnail_url: uploaded.thumbnail_url,
+        duration_seconds: videoDuration ? Math.round(videoDuration) : null,
+      };
+    } else {
+      extra = { youtube_url: youtubeUrl };
+    }
+    const ok = await insertVideoRow(extra);
+    setLoading(false);
+    if (!ok) return;
+    setSuccess(true);
+    setTimeout(() => {
+      setSuccess(false);
+      setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
+      setVideoType(null);
+      setChampionship(''); setAgeCategory(''); setVideoLevel('');
+      setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
+      clearUpload();
+      setAiResult(null);
+      setTab('feed');
+    }, 2200);
+  };
+
   const handlePublish = async (e) => {
     e.preventDefault();
     setError(''); setAiResult(null);
@@ -2797,37 +2821,7 @@ function PublishView({ userProfile, setTab }) {
     }
 
     // ─── PUBLICATION ───
-    let extra = {};
-    if (mode === 'upload') {
-      const uploaded = await uploadToStorage();
-      if (!uploaded || !uploaded.video_url) {
-        setLoading(false);
-        return;
-      }
-      extra = {
-        video_url: uploaded.video_url,
-        thumbnail_url: uploaded.thumbnail_url,
-        duration_seconds: videoDuration ? Math.round(videoDuration) : null,
-      };
-    } else {
-      extra = { youtube_url: youtubeUrl };
-    }
-
-    const ok = await insertVideoRow(extra);
-    setLoading(false);
-    if (!ok) return;
-
-    setSuccess(true);
-    setTimeout(() => {
-      setSuccess(false);
-      setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
-      setVideoType(null);
-      setChampionship(''); setAgeCategory(''); setVideoLevel('');
-      setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
-      clearUpload();
-      setAiResult(null);
-      setTab('feed');
-    }, 2200);
+    await doPublish();
   };
 
   if (success) {
@@ -3195,9 +3189,14 @@ function PublishView({ userProfile, setTab }) {
               Analyse : {aiResult.method} · Détail : {aiResult.details}
             </p>
             <p className="text-[11px] mt-2" style={{ color: C.textDim }}>
-              💡 Solutions : enrichis le <strong style={{ color: C.text }}>titre</strong> et la
-              <strong style={{ color: C.text }}> description</strong> avec des mots-clés sportifs (sport, championnat, niveau, club…), ou vérifie que ton lien YouTube est bien la bonne vidéo.
+              💡 L'IA embarquée n'est pas parfaite : les sports <strong style={{ color: C.text }}>sans matériel visible</strong> (natation, course, boxe, gym…) sont difficiles à reconnaître. Si c'est bien du sport, publie quand même.
             </p>
+            <button type="button" onClick={doPublish} disabled={loading}
+              className="mt-3 w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
+              style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
+              {loading ? <Loader2 size={14} className="animate-spin" /> : '✅'}
+              C'est bien du sport → publier quand même
+            </button>
           </div>
         )}
 
