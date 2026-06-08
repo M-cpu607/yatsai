@@ -2197,7 +2197,7 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   if (videoUrl && strongFrames === 0 && (performance.now() - t0) < BUDGET) {
     try {
       onProgress?.({ step: 'motion', label: '🤸 Détection du mouvement…' });
-      motionScore = await detectMotionScore(videoUrl);
+      motionScore = await withTimeout(detectMotionScore(videoUrl), 12000); // borné : jamais de blocage
       if (motionScore >= 0.045) { strongFrames++; if (total === 0) total = 1; sportyFrames = Math.max(sportyFrames, 1); }
     } catch (e) { console.warn('Mouvement indispo:', e); }
   }
