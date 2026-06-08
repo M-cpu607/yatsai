@@ -4568,17 +4568,28 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
 }
 
 // ═══ SEARCH (Supabase — tous profils ou athlètes uniquement) ═══════
+// Délais de publication (filtre vidéos) en millisecondes.
+const RECENCY_MS = {
+  '24h': 24 * 3600e3,
+  '1w': 7 * 24 * 3600e3,
+  '1m': 30 * 24 * 3600e3,
+  '3m': 90 * 24 * 3600e3,
+  '6m': 180 * 24 * 3600e3,
+  '1y': 365 * 24 * 3600e3,
+};
+
 function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                       dbShortlist, onAddToShortlist, onRemoveFromShortlist, headerBadge,
                       onClose, onPlayVideo }) {
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState('profiles'); // 'profiles' | 'videos'
   const DEFAULT_FILTERS = {
-    sport: null, ageMin: 14, ageMax: 35,
+    sport: null, gender: null, ageMin: 14, ageMax: 35,
     country: '', region: '', city: '', nationality: '',
     levels: [], position: '',
     championship: '',
     ageCategory: '',
+    recency: null,
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -4610,7 +4621,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     (async () => {
       const { data, error } = await supabase
         .from('videos')
-        .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, is_recruiter, city, region, country)`)
+        .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, is_recruiter, city, region, country)`)
         .order('created_at', { ascending: false })
         .limit(200);
       if (cancel) return;
@@ -4653,6 +4664,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     // Compte privé : exclu de la recherche pour les autres (le propriétaire se voit toujours)
     if (p.is_private && p.id !== currentUserId) return false;
     if (filters.sport && p.sport !== filters.sport) return false;
+    if (filters.gender && p.gender !== filters.gender) return false;
     // Filtre âge (s'applique dès qu'un profil a un âge renseigné, athlète OU recruteur)
     if (p.age != null && (filters.ageMin !== 14 || filters.ageMax !== 35)) {
       if (p.age < filters.ageMin || p.age > filters.ageMax) return false;
@@ -4684,6 +4696,11 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         if (!hay.includes(needle)) return false;
       }
       if (filters.sport && v.sport !== filters.sport) return false;
+      if (filters.gender && v.profiles?.gender !== filters.gender) return false;
+      if (filters.recency) {
+        const ms = RECENCY_MS[filters.recency];
+        if (ms && (Date.now() - new Date(v.created_at).getTime()) > ms) return false;
+      }
       if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
       if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
       if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
@@ -4698,6 +4715,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
   }, [videos, query, filters]);
 
   const activeFilters = (filters.sport ? 1 : 0)
+    + (filters.gender ? 1 : 0)
+    + (filters.recency ? 1 : 0)
     + ((filters.ageMin !== 14 || filters.ageMax !== 35) ? 1 : 0)
     + (filters.country.trim() ? 1 : 0)
     + (filters.region.trim() ? 1 : 0)
@@ -4934,28 +4953,57 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                 style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
             </div>
 
-            {/* Niveau (multi-select) — disponible pour tous, ne filtre que les profils ayant un level */}
+            {/* Genre */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏅 Niveau</label>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>Genre</label>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: null, label: 'Tous' },
+                  { id: 'M', label: '♂ H' },
+                  { id: 'F', label: '♀ F' },
+                  { id: 'O', label: '⚧ Autre' },
+                ].map(g => {
+                  const active = (filters.gender ?? null) === g.id;
+                  return (
+                    <button key={String(g.id)} type="button" onClick={() => setFilters(f => ({ ...f, gender: g.id }))}
+                      className="py-2 rounded-lg text-xs font-semibold"
+                      style={{ backgroundColor: active ? C.goldSoft : C.bg, color: active ? C.gold : C.text, border: `1px solid ${active ? C.gold : C.border}` }}>
+                      {g.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Championnat (texte libre — remplace le niveau) */}
+            <div>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
+              <input type="text" value={filters.championship}
+                onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
+                placeholder="Ex : National 2, Ligue 1, Régional 1…"
+                className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+            </div>
+
+            {/* Délai de publication des vidéos */}
+            <div>
+              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📅 Vidéos publiées depuis</label>
               <div className="flex flex-wrap gap-1.5">
                 {[
-                  { id: 'amateur',         label: '🌱 Amateur' },
-                  { id: 'young_pro',       label: '🚀 Young Pro' },
-                  { id: 'senior_amateur',  label: '⭐ Senior Am.' },
-                  { id: 'senior_semi_pro', label: '⭐⭐ Semi-Pro' },
-                  { id: 'senior_pro',      label: '⭐⭐⭐ Pro' },
-                  { id: 'no_club',         label: '🆓 Sans club' },
-                ].map(lv => {
-                  const active = filters.levels.includes(lv.id);
+                  { id: null,  label: 'Tout' },
+                  { id: '24h', label: '24 h' },
+                  { id: '1w',  label: '1 sem.' },
+                  { id: '1m',  label: '1 mois' },
+                  { id: '3m',  label: '3 mois' },
+                  { id: '6m',  label: '6 mois' },
+                  { id: '1y',  label: '1 an' },
+                ].map(r => {
+                  const active = (filters.recency ?? null) === r.id;
                   return (
-                    <button key={lv.id} type="button" onClick={() => toggleLevel(lv.id)}
+                    <button key={String(r.id)} type="button" onClick={() => setFilters(f => ({ ...f, recency: r.id }))}
                       className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                      style={{
-                        backgroundColor: active ? C.goldSoft : C.bg,
-                        color: active ? C.gold : C.text,
-                        border: `1px solid ${active ? C.gold : C.border}`,
-                      }}>
-                      {lv.label}
+                      style={{ backgroundColor: active ? C.goldSoft : C.bg, color: active ? C.gold : C.text, border: `1px solid ${active ? C.gold : C.border}` }}>
+                      {r.label}
                     </button>
                   );
                 })}
@@ -4974,18 +5022,6 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                 Tape une partie du poste pour filtrer (lecture directe dans la base).
               </p>
             </div>
-
-            {/* Championnat (onglet vidéos) */}
-            {activeTab === 'videos' && (
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
-                <input type="text" value={filters.championship}
-                  onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
-                  placeholder="Ex : National 2, Ligue 1, Régional 1…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
-            )}
 
             {/* Catégorie d'âge (onglet vidéos) */}
             {activeTab === 'videos' && (
