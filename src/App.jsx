@@ -1998,107 +1998,139 @@ async function loadImage(src) {
   });
 }
 
-async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProgress, thumbImage }) {
-  // thumbImage : HTMLImageElement déjà chargée (utilisée pour les vidéos uploadées)
-  // Quand thumbImage est fournie, on skip la partie "miniature YouTube".
-  // ─── COUCHE 1 : ANALYSE TEXTE ───
-  onProgress?.({ step: 'text', label: '🔍 Analyse du titre et de la description…' });
+// Classes d'objets sportifs détectées par COCO-SSD (détection d'objets).
+const SPORT_COCO_CLASSES = [
+  'sports ball', 'tennis racket', 'baseball bat', 'baseball glove',
+  'skateboard', 'surfboard', 'skis', 'snowboard', 'frisbee', 'kite', 'bicycle',
+];
+
+// Échantillonne `count` images réparties dans la vidéo et appelle cb(canvas,i,n)
+// pour chacune (le canvas est réutilisé, l'analyse se fait dans cb avant le seek suivant).
+function withVideoFrames(url, count, cb) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    v.muted = true; v.crossOrigin = 'anonymous'; v.playsInline = true; v.preload = 'auto';
+    v.src = url;
+    const canvas = document.createElement('canvas');
+    let done = false;
+    const finish = () => { if (done) return; done = true; try { v.removeAttribute('src'); v.load(); } catch {} resolve(); };
+    v.addEventListener('error', finish, { once: true });
+    v.addEventListener('loadeddata', async () => {
+      try {
+        const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+        const W = 320, H = Math.max(1, Math.round(W * (v.videoHeight || 180) / (v.videoWidth || 320)));
+        canvas.width = W; canvas.height = H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        for (let i = 0; i < count; i++) {
+          const t = dur > 0 ? ((i + 0.5) / count) * dur : 0;
+          await new Promise((res) => {
+            const onSeeked = () => { v.removeEventListener('seeked', onSeeked); res(); };
+            v.addEventListener('seeked', onSeeked);
+            try { v.currentTime = Math.min(t, Math.max(0, dur - 0.05)); } catch { res(); }
+          });
+          try { ctx.drawImage(v, 0, 0, W, H); await cb(canvas, i, count); } catch {}
+        }
+      } catch {}
+      finish();
+    }, { once: true });
+  });
+}
+
+// Analyse une image : personnes + équipement sportif (COCO-SSD) et classes
+// sportives (MobileNet). Renvoie un signal "fort" (objet/contexte clair) + le
+// nombre de personnes (pour repérer les scènes d'équipe).
+async function analyzeFrameForSport(coco, mobilenet, source) {
+  let equip = 0, persons = 0, sportClass = false;
+  try {
+    const dets = await coco.detect(source, 20);
+    for (const d of dets) {
+      if (d.score < 0.4) continue;
+      if (d.class === 'person') persons++;
+      else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
+    }
+  } catch {}
+  try {
+    const preds = await mobilenet.classify(source, 10);
+    sportClass = preds.some(p => p.probability > 0.12 &&
+      SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
+  } catch {}
+  return { strongSignal: equip > 0 || sportClass, persons };
+}
+
+// Vérifie qu'une vidéo est du sport : analyse PLUSIEURS images (vidéos uploadées)
+// avec COCO-SSD + MobileNet. Le texte n'est qu'un signal secondaire, jamais
+// suffisant seul. Sévérité « équilibrée ».
+async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProgress, thumbImage, videoUrl }) {
+  onProgress?.({ step: 'text', label: '🔍 Analyse du titre…' });
   const text = stripAccents(((title || '') + ' ' + (description || '')).toLowerCase());
   let textScore = 0;
-  const matchedKw = [];
   for (let i = 0; i < SPORT_TEXT_KEYWORDS.length; i++) {
-    const kw = SPORT_TEXT_KEYWORDS[i];
-    if (text.indexOf(kw) >= 0) {
-      textScore++;
-      matchedKw.push(kw);
-    }
+    if (text.indexOf(SPORT_TEXT_KEYWORDS[i]) >= 0) textScore++;
   }
-  // Bonus si le nom du sport choisi est mentionné
   const sportObj = SPORTS.find(s => s.id === sport);
-  if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) {
-    textScore += 2;
-  }
+  if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) textScore += 1;
 
-  // Texte très clair (≥4 mots-clés) → on valide direct, pas besoin du visuel
-  if (textScore >= 4) {
-    return {
-      isSport: true,
-      confidence: 0.95,
-      method: 'texte',
-      details: `${textScore} indices sportifs détectés dans le titre/description`,
-    };
-  }
-
-  // ─── COUCHE 2 : ANALYSE VISUELLE (frame de vidéo OU miniature YouTube + MobileNet) ───
-  let visualDetections = [];
-  let visualSuccess = false;
+  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (≈10s la 1ère fois)…' });
+  let mobilenet, coco;
   try {
-    onProgress?.({ step: 'model', label: '🤖 Chargement du modèle IA (≈10s la 1ère fois)…' });
-    const model = await loadMobileNetOnce();
+    [mobilenet, coco] = await Promise.all([loadMobileNetOnce(), loadCocoOnce()]);
+  } catch (e) {
+    console.warn('Modèles IA indisponibles:', e);
+    return {
+      isSport: textScore >= 4,
+      confidence: 0.4,
+      method: 'texte (IA indisponible)',
+      details: textScore >= 4
+        ? 'Indices sportifs dans le texte (analyse vidéo indisponible).'
+        : 'Analyse IA indisponible — réessaie avec une connexion.',
+    };
+  }
 
-    let img = thumbImage || null;
-    if (!img) {
-      // Mode YouTube : on tente plusieurs résolutions de miniature
-      const yId = extractYouTubeId(youtubeUrl);
-      if (!yId) {
-        return { isSport: false, confidence: 0, method: 'aucun', details: 'Aucune source vidéo valide' };
+  let total = 0, sportyFrames = 0, strongFrames = 0;
+  try {
+    if (videoUrl) {
+      onProgress?.({ step: 'frames', label: '🎞️ Analyse de plusieurs images…' });
+      await withVideoFrames(videoUrl, 5, async (canvas, i, n) => {
+        onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
+        const r = await analyzeFrameForSport(coco, mobilenet, canvas);
+        total++;
+        if (r.strongSignal) strongFrames++;
+        if (r.strongSignal || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
+      });
+    } else {
+      let img = thumbImage || null;
+      if (!img) {
+        const yId = extractYouTubeId(youtubeUrl);
+        if (yId) {
+          for (const u of [`https://img.youtube.com/vi/${yId}/hqdefault.jpg`, `https://img.youtube.com/vi/${yId}/mqdefault.jpg`]) {
+            try { img = await loadImage(u); break; } catch {}
+          }
+        }
       }
-      onProgress?.({ step: 'image', label: '🖼 Téléchargement de la miniature…' });
-      const candidates = [
-        `https://img.youtube.com/vi/${yId}/hqdefault.jpg`,
-        `https://img.youtube.com/vi/${yId}/mqdefault.jpg`,
-        `https://img.youtube.com/vi/${yId}/default.jpg`,
-      ];
-      for (let i = 0; i < candidates.length; i++) {
-        try { img = await loadImage(candidates[i]); break; } catch {}
+      if (img) {
+        onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' });
+        const r = await analyzeFrameForSport(coco, mobilenet, img);
+        total = 1;
+        if (r.strongSignal) strongFrames = 1;
+        if (r.strongSignal || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames = 1;
       }
-      if (!img) throw new Error('Impossible de charger la miniature');
     }
+  } catch (e) { console.warn('Analyse images échouée:', e); }
 
-    onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image en cours…' });
-    const predictions = await model.classify(img, 10); // top 10
-    visualSuccess = true;
-    visualDetections = predictions.filter(p => {
-      const cn = p.className.toLowerCase();
-      return SPORT_IMAGE_CLASSES.some(c => cn.indexOf(c) >= 0) && p.probability > 0.05;
-    });
-  } catch (err) {
-    console.warn('Analyse visuelle indisponible:', err);
+  if (total === 0) {
+    return { isSport: false, confidence: 0, method: 'aucun', details: 'Impossible d\'analyser la vidéo. Réessaie.' };
   }
 
-  // ─── DÉCISION FINALE ───
-  if (visualDetections.length > 0) {
-    return {
-      isSport: true,
-      confidence: visualDetections[0].probability,
-      method: 'image' + (textScore > 0 ? '+texte' : ''),
-      details: `Détecté visuellement : ${visualDetections.slice(0, 3).map(d => d.className.split(',')[0]).join(', ')}`,
-    };
-  }
-  // Si le texte avait au moins 2 indices, on accepte avec confiance modérée
-  if (textScore >= 2) {
-    return {
-      isSport: true,
-      confidence: 0.6,
-      method: 'texte',
-      details: `Indices sportifs dans le texte : ${matchedKw.slice(0, 5).join(', ')}`,
-    };
-  }
-  // Si analyse visuelle a réussi mais rien trouvé → c'est probablement pas du sport
-  if (visualSuccess) {
-    return {
-      isSport: false,
-      confidence: 0.2,
-      method: 'image',
-      details: 'Aucun élément sportif détecté dans l\'image ni le texte',
-    };
-  }
-  // Analyse visuelle a échoué (CORS, etc.) ET texte faible → on demande confirmation
+  // Décision ÉQUILIBRÉE : un signal sport fort sur ≥1 image, OU ≥40% d'images sportives.
+  const ratio = sportyFrames / total;
+  const isSport = strongFrames >= 1 || ratio >= 0.4;
   return {
-    isSport: false,
-    confidence: 0.3,
-    method: 'texte (image indisponible)',
-    details: 'Pas assez d\'indices sportifs. Précise davantage ton titre et ta description.',
+    isSport,
+    confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.2,
+    method: 'image' + (textScore > 0 ? '+texte' : ''),
+    details: isSport
+      ? `Sport détecté sur ${sportyFrames}/${total} image(s) analysée(s).`
+      : `Pas assez d'éléments sportifs (${sportyFrames}/${total} image(s)). Vérifie que c'est bien une vidéo de sport.`,
   };
 }
 
@@ -2732,6 +2764,7 @@ function PublishView({ userProfile, setTab }) {
     const result = await checkVideoIsSport({
       title, description,
       youtubeUrl: mode === 'youtube' ? youtubeUrl : null,
+      videoUrl: mode === 'upload' ? videoPreviewUrl : null,
       thumbImage: mode === 'upload' ? thumbImg : null,
       sport,
       onProgress: (s) => setAiStep(s),
