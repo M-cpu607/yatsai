@@ -2135,40 +2135,34 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   const sportObj = SPORTS.find(s => s.id === sport);
   if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) textScore += 1;
 
-  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~7 Mo)…' });
+  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~5 Mo)…' });
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
-  let coco, mobilenet;
+  let coco;
   try {
-    [coco, mobilenet] = await withTimeout(Promise.all([loadCocoOnce(), loadMobileNetOnce()]), 30000);
+    coco = await withTimeout(loadCocoOnce(), 15000);
   } catch (e) {
     console.warn('IA indisponible/lente:', e);
-    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse IA trop lente — publication autorisée.' };
+    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse IA indisponible — publication autorisée.' };
   }
 
   const t0 = performance.now();
-  const BUDGET = 18000; // ms max d'analyse (anti-blocage)
-  let total = 0, sportyFrames = 0, strongFrames = 0, anyPerson = false;
+  const BUDGET = 9000; // ms max d'analyse (rapide, anti-blocage)
+  let total = 0, sportyFrames = 0, strongFrames = 0;
   const analyze = async (source) => {
-    let equip = 0, persons = 0, sceneSport = false;
+    let equip = 0, persons = 0;
     try {
-      const dets = await coco.detect(source, 10);
+      const dets = await coco.detect(source, 8);
       for (const d of dets) {
         if (d.score < 0.4) continue;
         if (d.class === 'person') persons++;
         else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
       }
     } catch {}
-    try {
-      const preds = await mobilenet.classify(source, 8);
-      sceneSport = preds.some(p => p.probability > 0.10 &&
-        SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
-    } catch {}
-    return { equip, persons, sceneSport };
+    return { equip, persons };
   };
   const tally = (r) => {
     total++;
-    if (r.persons > 0) anyPerson = true;
-    const strong = r.equip > 0 || r.sceneSport;
+    const strong = r.equip > 0;
     if (strong) strongFrames++;
     if (strong || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
   };
@@ -2176,7 +2170,7 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   try {
     if (videoUrl) {
       onProgress?.({ step: 'frames', label: '🎞️ Analyse de la vidéo…' });
-      await withVideoFrames(videoUrl, 4, async (canvas, i, n) => {
+      await withVideoFrames(videoUrl, 3, async (canvas, i, n) => {
         if (performance.now() - t0 > BUDGET) return;
         onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
         tally(await analyze(canvas));
@@ -2191,25 +2185,14 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
     }
   } catch (e) { console.warn('Analyse images échouée:', e); }
 
-  // Si aucun objet/scène sportif détecté : on vérifie le MOUVEMENT du corps
-  // (course, boxe, gym, danse sportive…) avec MoveNet.
-  let motionScore = 0;
-  if (videoUrl && strongFrames === 0 && (performance.now() - t0) < BUDGET) {
-    try {
-      onProgress?.({ step: 'motion', label: '🤸 Détection du mouvement…' });
-      motionScore = await withTimeout(detectMotionScore(videoUrl), 12000); // borné : jamais de blocage
-      if (motionScore >= 0.045) { strongFrames++; if (total === 0) total = 1; sportyFrames = Math.max(sportyFrames, 1); }
-    } catch (e) { console.warn('Mouvement indispo:', e); }
-  }
-
   if (total === 0) {
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
-  // Décision ÉQUILIBRÉE : signal sport fort sur ≥1 image (objet/scène/mouvement),
-  // OU ≥40% d'images sportives, OU personnes présentes + titre clairement sportif.
+  // Décision : objet sport sur ≥1 image, OU au moins la moitié des images sportives
+  // (scènes d'équipe). Les sports sans objet -> bouton « publier quand même » + modération.
   const ratio = sportyFrames / total;
-  const isSport = strongFrames >= 1 || ratio >= 0.4 || (anyPerson && textScore >= 2);
+  const isSport = strongFrames >= 1 || ratio >= 0.5;
   return {
     isSport,
     confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.25,
