@@ -162,27 +162,26 @@ const VIDEOS = [
     stats: [{ v: 8, l: 'Buts' }, { v: 18, l: 'Matchs' }, { v: 12, l: 'Passes' }, { v: 84, l: 'Note moy' }] },
 ];
 
+// Liste volontairement limitée aux sports que l'IA embarquée (COCO-SSD) sait
+// reconnaître à leur matériel/équipement visible. Les sports « au geste seul »
+// (natation, athlétisme, boxe, MMA, golf…) ne sont pas proposés car l'IA ne
+// peut pas les valider de façon fiable, et il n'y a plus d'override.
 const SPORTS = [
   { id: 'foot', label: 'Football', icon: '⚽' },
   { id: 'basket', label: 'Basketball', icon: '🏀' },
-  { id: 'athle', label: 'Athlétisme', icon: '🏃' },
-  { id: 'nat', label: 'Natation', icon: '🏊' },
-  { id: 'tennis', label: 'Tennis', icon: '🎾' },
   { id: 'rugby', label: 'Rugby', icon: '🏉' },
   { id: 'hand', label: 'Handball', icon: '🤾' },
-  { id: 'box', label: 'Boxe', icon: '🥊' },
-  { id: 'mma', label: 'MMA', icon: '🥋' },
   { id: 'volley', label: 'Volleyball', icon: '🏐' },
-  { id: 'badminton', label: 'Badminton', icon: '🏸' },
-  { id: 'pingpong', label: 'Tennis de table', icon: '🏓' },
-  { id: 'karting', label: 'Karting', icon: '🏎️' },
-  { id: 'golf', label: 'Golf', icon: '⛳' },
-  { id: 'cyclo', label: 'Cyclisme', icon: '🚴' },
-  { id: 'esport', label: 'Esport', icon: '🎮' },
-  { id: 'cricket', label: 'Cricket', icon: '🏏' },
   { id: 'football-us', label: 'Football américain', icon: '🏈' },
+  { id: 'tennis', label: 'Tennis', icon: '🎾' },
   { id: 'baseball', label: 'Baseball', icon: '⚾' },
-  { id: 'hockey', label: 'Hockey sur glace', icon: '🏒' },
+  { id: 'cyclo', label: 'Cyclisme', icon: '🚴' },
+  { id: 'skate', label: 'Skateboard', icon: '🛹' },
+  { id: 'surf', label: 'Surf', icon: '🏄' },
+  { id: 'ski', label: 'Ski', icon: '⛷️' },
+  { id: 'snow', label: 'Snowboard', icon: '🏂' },
+  { id: 'ultimate', label: 'Ultimate', icon: '🥏' },
+  { id: 'kite', label: 'Kitesurf', icon: '🪁' },
 ];
 
 // ─── RÔLES UTILISATEUR ───────────────────────────────────────────
@@ -2151,11 +2150,12 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   const analyze = async (source) => {
     let equip = 0, persons = 0;
     try {
-      const dets = await coco.detect(source, 8);
+      const dets = await coco.detect(source, 10);
       for (const d of dets) {
-        if (d.score < 0.4) continue;
-        if (d.class === 'person') persons++;
-        else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
+        // Seuil bas pour le MATÉRIEL sportif (vélo, ballon, planche, raquette…) :
+        // comme il n'y a plus d'override, on évite de refuser à tort un vrai sport.
+        if (d.class === 'person') { if (d.score >= 0.45) persons++; }
+        else if (SPORT_COCO_CLASSES.includes(d.class) && d.score >= 0.33) equip++;
       }
     } catch {}
     return { equip, persons };
@@ -2170,7 +2170,7 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   try {
     if (videoUrl) {
       onProgress?.({ step: 'frames', label: '🎞️ Analyse de la vidéo…' });
-      await withVideoFrames(videoUrl, 3, async (canvas, i, n) => {
+      await withVideoFrames(videoUrl, 4, async (canvas, i, n) => {
         if (performance.now() - t0 > BUDGET) return;
         onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
         tally(await analyze(canvas));
@@ -2189,8 +2189,9 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
-  // Décision : objet sport sur ≥1 image, OU au moins la moitié des images sportives
-  // (scènes d'équipe). Les sports sans objet -> bouton « publier quand même » + modération.
+  // Décision : matériel sportif vu sur ≥1 image, OU au moins la moitié des images
+  // « sportives » (scène d'équipe). Plus d'override : le refus est définitif, donc
+  // on reste assez permissif pour ne pas refuser un vrai sport reconnaissable.
   const ratio = sportyFrames / total;
   const isSport = strongFrames >= 1 || ratio >= 0.5;
   return {
@@ -3243,20 +3244,14 @@ function PublishView({ userProfile, setTab }) {
               <strong style={{ color: C.red }}>Publication bloquée par l'IA</strong>
             </div>
             <p className="text-xs leading-relaxed mb-2">
-              Cette vidéo ne semble <strong>pas être du sport</strong>. Yatsai est réservé au contenu sportif.
+              Cette vidéo ne semble <strong>pas correspondre au sport sélectionné</strong>. Yatsai n'accepte que les vidéos où le sport est clairement visible (ballon, raquette, vélo, planche…).
             </p>
             <p className="text-[11px]" style={{ color: C.textDim }}>
               Analyse : {aiResult.method} · Détail : {aiResult.details}
             </p>
             <p className="text-[11px] mt-2" style={{ color: C.textDim }}>
-              💡 L'IA embarquée n'est pas parfaite : les sports <strong style={{ color: C.text }}>sans matériel visible</strong> (natation, course, boxe, gym…) sont difficiles à reconnaître. Si c'est bien du sport, publie quand même.
+              💡 Filme une séquence où l'on voit bien l'action sportive et le matériel, puis réessaie.
             </p>
-            <button type="button" onClick={() => doPublish(true)} disabled={loading}
-              className="mt-3 w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
-              style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
-              {loading ? <Loader2 size={14} className="animate-spin" /> : '✅'}
-              C'est bien du sport → publier quand même
-            </button>
           </div>
         )}
 
