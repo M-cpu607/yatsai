@@ -1973,6 +1973,69 @@ function loadCocoOnce() {
   return _cocoPromise;
 }
 
+// Cache du modèle de posture MoveNet (lazy) — sert à détecter le MOUVEMENT du
+// corps (sports sans matériel : course, boxe, gym…).
+let _posePromise = null;
+function loadPoseOnce() {
+  if (_posePromise) return _posePromise;
+  _posePromise = (async () => {
+    const tf = await import('@tensorflow/tfjs');
+    try { await tf.setBackend('webgl'); } catch {}
+    await tf.ready();
+    const poseDetection = await import('@tensorflow-models/pose-detection');
+    return await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+      modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+    });
+  })();
+  return _posePromise;
+}
+
+// Mesure le MOUVEMENT corporel : échantillonne ~6 images rapprochées au milieu de
+// la vidéo, suit les membres (poignets, coudes, genoux, chevilles) image par image
+// et renvoie un score de déplacement moyen normalisé. Élevé = activité physique.
+async function detectMotionScore(url) {
+  let model;
+  try { model = await loadPoseOnce(); } catch { return 0; }
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    v.muted = true; v.crossOrigin = 'anonymous'; v.playsInline = true; v.preload = 'auto';
+    v.src = url;
+    const canvas = document.createElement('canvas');
+    let done = false;
+    const finish = (s) => { if (done) return; done = true; try { v.removeAttribute('src'); v.load(); } catch {} resolve(s); };
+    v.addEventListener('error', () => finish(0), { once: true });
+    v.addEventListener('loadeddata', async () => {
+      try {
+        const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+        const W = 256, H = Math.max(1, Math.round(W * (v.videoHeight || 256) / (v.videoWidth || 256)));
+        canvas.width = W; canvas.height = H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const start = dur > 0 ? dur * 0.35 : 0;
+        const STEP = 0.2, N = 6;
+        const LIMBS = [7, 8, 9, 10, 13, 14, 15, 16]; // coudes, poignets, genoux, chevilles
+        let prev = null, totalMove = 0, moves = 0;
+        for (let i = 0; i < N; i++) {
+          await seekVideoTo(v, start + i * STEP);
+          ctx.drawImage(v, 0, 0, W, H);
+          let poses = [];
+          try { poses = await model.estimatePoses(canvas, { maxPoses: 1 }); } catch {}
+          const kp = poses[0]?.keypoints;
+          if (kp && prev) {
+            let sum = 0, cnt = 0;
+            for (const idx of LIMBS) {
+              const a = kp[idx], b = prev[idx];
+              if (a && b && a.score > 0.3 && b.score > 0.3) { sum += Math.hypot((a.x - b.x) / W, (a.y - b.y) / H); cnt++; }
+            }
+            if (cnt > 0) { totalMove += sum / cnt; moves++; }
+          }
+          if (kp) prev = kp;
+        }
+        finish(moves > 0 ? totalMove / moves : 0);
+      } catch { finish(0); }
+    }, { once: true });
+  });
+}
+
 // Place une vidéo à un instant précis et attend que la frame soit prête.
 function seekVideoTo(v, t) {
   return new Promise((resolve) => {
@@ -2128,12 +2191,23 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
     }
   } catch (e) { console.warn('Analyse images échouée:', e); }
 
+  // Si aucun objet/scène sportif détecté : on vérifie le MOUVEMENT du corps
+  // (course, boxe, gym, danse sportive…) avec MoveNet.
+  let motionScore = 0;
+  if (videoUrl && strongFrames === 0 && (performance.now() - t0) < BUDGET) {
+    try {
+      onProgress?.({ step: 'motion', label: '🤸 Détection du mouvement…' });
+      motionScore = await detectMotionScore(videoUrl);
+      if (motionScore >= 0.045) { strongFrames++; if (total === 0) total = 1; sportyFrames = Math.max(sportyFrames, 1); }
+    } catch (e) { console.warn('Mouvement indispo:', e); }
+  }
+
   if (total === 0) {
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
-  // Décision ÉQUILIBRÉE : signal sport fort sur ≥1 image, OU ≥40% d'images sportives,
-  // OU des personnes présentes + un titre clairement sportif (sports peu "visuels").
+  // Décision ÉQUILIBRÉE : signal sport fort sur ≥1 image (objet/scène/mouvement),
+  // OU ≥40% d'images sportives, OU personnes présentes + titre clairement sportif.
   const ratio = sportyFrames / total;
   const isSport = strongFrames >= 1 || ratio >= 0.4 || (anyPerson && textScore >= 2);
   return {
