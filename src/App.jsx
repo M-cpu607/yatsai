@@ -1950,9 +1950,10 @@ function loadMobileNetOnce() {
   if (_mobilenetPromise) return _mobilenetPromise;
   _mobilenetPromise = (async () => {
     const tf = await import('@tensorflow/tfjs');
+    try { await tf.setBackend('webgl'); } catch {}
     await tf.ready();
     const mobilenet = await import('@tensorflow-models/mobilenet');
-    return await mobilenet.load({ version: 2, alpha: 1.0 });
+    return await mobilenet.load({ version: 2, alpha: 0.5 });
   })();
   return _mobilenetPromise;
 }
@@ -1964,6 +1965,7 @@ function loadCocoOnce() {
   if (_cocoPromise) return _cocoPromise;
   _cocoPromise = (async () => {
     const tf = await import('@tensorflow/tfjs');
+    try { await tf.setBackend('webgl'); } catch {}
     await tf.ready();
     const cocoSsd = await import('@tensorflow-models/coco-ssd');
     return await cocoSsd.load({ base: 'lite_mobilenet_v2' });
@@ -2070,55 +2072,72 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
   const sportObj = SPORTS.find(s => s.id === sport);
   if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) textScore += 1;
 
-  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (≈10s la 1ère fois)…' });
-  let mobilenet, coco;
+  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~5 Mo)…' });
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+  let coco;
   try {
-    [mobilenet, coco] = await Promise.all([loadMobileNetOnce(), loadCocoOnce()]);
+    coco = await withTimeout(loadCocoOnce(), 25000);
   } catch (e) {
-    console.warn('Modèles IA indisponibles:', e);
-    return {
-      isSport: textScore >= 4,
-      confidence: 0.4,
-      method: 'texte (IA indisponible)',
-      details: textScore >= 4
-        ? 'Indices sportifs dans le texte (analyse vidéo indisponible).'
-        : 'Analyse IA indisponible — réessaie avec une connexion.',
-    };
+    console.warn('COCO indisponible/lent:', e);
+    // On ne bloque jamais : IA trop lente/indispo -> on laisse publier.
+    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse IA trop lente — publication autorisée.' };
   }
 
+  const t0 = performance.now();
+  const BUDGET = 16000; // ms max d'analyse (anti-blocage)
   let total = 0, sportyFrames = 0, strongFrames = 0;
+  const detectCoco = async (source) => {
+    let equip = 0, persons = 0;
+    try {
+      const dets = await coco.detect(source, 10);
+      for (const d of dets) {
+        if (d.score < 0.4) continue;
+        if (d.class === 'person') persons++;
+        else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
+      }
+    } catch {}
+    return { equip, persons };
+  };
+  const tally = (r) => {
+    total++;
+    const strong = r.equip > 0;
+    if (strong) strongFrames++;
+    if (strong || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
+  };
+
   try {
     if (videoUrl) {
-      onProgress?.({ step: 'frames', label: '🎞️ Analyse de plusieurs images…' });
-      await withVideoFrames(videoUrl, 5, async (canvas, i, n) => {
+      onProgress?.({ step: 'frames', label: '🎞️ Analyse de la vidéo…' });
+      await withVideoFrames(videoUrl, 4, async (canvas, i, n) => {
+        if (performance.now() - t0 > BUDGET) return;
         onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
-        const r = await analyzeFrameForSport(coco, mobilenet, canvas);
-        total++;
-        if (r.strongSignal) strongFrames++;
-        if (r.strongSignal || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
+        tally(await detectCoco(canvas));
       });
     } else {
       let img = thumbImage || null;
       if (!img) {
         const yId = extractYouTubeId(youtubeUrl);
-        if (yId) {
-          for (const u of [`https://img.youtube.com/vi/${yId}/hqdefault.jpg`, `https://img.youtube.com/vi/${yId}/mqdefault.jpg`]) {
-            try { img = await loadImage(u); break; } catch {}
-          }
-        }
+        if (yId) { for (const u of [`https://img.youtube.com/vi/${yId}/hqdefault.jpg`, `https://img.youtube.com/vi/${yId}/mqdefault.jpg`]) { try { img = await loadImage(u); break; } catch {} } }
       }
-      if (img) {
-        onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' });
-        const r = await analyzeFrameForSport(coco, mobilenet, img);
-        total = 1;
-        if (r.strongSignal) strongFrames = 1;
-        if (r.strongSignal || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames = 1;
-      }
+      if (img) { onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' }); tally(await detectCoco(img)); }
     }
   } catch (e) { console.warn('Analyse images échouée:', e); }
 
+  // Secours léger : si COCO n'a vu AUCUN objet sport (sports sans matériel :
+  // course, boxe, gym...), on classe la miniature avec MobileNet (1 seul appel).
+  if (strongFrames === 0 && thumbImage && (performance.now() - t0) < BUDGET) {
+    try {
+      onProgress?.({ step: 'verify', label: '🧠 Vérification complémentaire…' });
+      const mobilenet = await withTimeout(loadMobileNetOnce(), 12000);
+      const preds = await mobilenet.classify(thumbImage, 10);
+      const sportClass = preds.some(p => p.probability > 0.12 &&
+        SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
+      if (sportClass) { strongFrames++; if (total === 0) total = 1; sportyFrames = Math.max(sportyFrames, 1); }
+    } catch (e) { console.warn('MobileNet secours indispo:', e); }
+  }
+
   if (total === 0) {
-    return { isSport: false, confidence: 0, method: 'aucun', details: 'Impossible d\'analyser la vidéo. Réessaie.' };
+    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
   // Décision ÉQUILIBRÉE : un signal sport fort sur ≥1 image, OU ≥40% d'images sportives.
@@ -2129,7 +2148,7 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
     confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.2,
     method: 'image' + (textScore > 0 ? '+texte' : ''),
     details: isSport
-      ? `Sport détecté sur ${sportyFrames}/${total} image(s) analysée(s).`
+      ? `Sport détecté sur ${sportyFrames}/${total} image(s).`
       : `Pas assez d'éléments sportifs (${sportyFrames}/${total} image(s)). Vérifie que c'est bien une vidéo de sport.`,
   };
 }
