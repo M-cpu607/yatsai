@@ -2733,6 +2733,7 @@ function PublishView({ userProfile, setTab }) {
       video_url: extra.video_url ?? null,
       thumbnail_url: extra.thumbnail_url ?? null,
       duration_seconds: extra.duration_seconds ?? null,
+      needs_review: extra.needs_review || false,
       championship: championship.trim() || null,
       age_category: ageCategory.trim() || null,
       level: videoLevel || null,
@@ -2750,7 +2751,8 @@ function PublishView({ userProfile, setTab }) {
   };
 
   // Upload + insertion en base (appelé après validation IA, ou via l'override).
-  const doPublish = async () => {
+  // needsReview = true quand l'utilisateur force la publication malgré le refus IA.
+  const doPublish = async (needsReview = false) => {
     setLoading(true);
     let extra = {};
     if (mode === 'upload') {
@@ -2764,6 +2766,7 @@ function PublishView({ userProfile, setTab }) {
     } else {
       extra = { youtube_url: youtubeUrl };
     }
+    extra.needs_review = needsReview;
     const ok = await insertVideoRow(extra);
     setLoading(false);
     if (!ok) return;
@@ -3191,7 +3194,7 @@ function PublishView({ userProfile, setTab }) {
             <p className="text-[11px] mt-2" style={{ color: C.textDim }}>
               💡 L'IA embarquée n'est pas parfaite : les sports <strong style={{ color: C.text }}>sans matériel visible</strong> (natation, course, boxe, gym…) sont difficiles à reconnaître. Si c'est bien du sport, publie quand même.
             </p>
-            <button type="button" onClick={doPublish} disabled={loading}
+            <button type="button" onClick={() => doPublish(true)} disabled={loading}
               className="mt-3 w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
               style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
               {loading ? <Loader2 size={14} className="animate-spin" /> : '✅'}
@@ -8077,7 +8080,104 @@ function CertificationSection({ userProfile }) {
   );
 }
 
-function SettingsView({ userProfile, userEmail, onClose, onLogout }) {
+// ─── ÉCRAN DE MODÉRATION (admin) : vidéos forcées « à vérifier » ───
+function ModerationView({ onClose, onSelectProfile, onPlayVideo }) {
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('videos')
+      .select('*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport)')
+      .eq('needs_review', true)
+      .order('created_at', { ascending: false });
+    if (error) console.error('Modération:', error);
+    setVideos(data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const approve = async (id) => {
+    setBusyId(id);
+    const { error } = await supabase.from('videos').update({ needs_review: false }).eq('id', id);
+    setBusyId(null);
+    if (!error) setVideos(prev => prev.filter(v => v.id !== id));
+  };
+  const remove = async (id) => {
+    setBusyId(id);
+    const { error } = await supabase.from('videos').delete().eq('id', id);
+    setBusyId(null);
+    if (!error) setVideos(prev => prev.filter(v => v.id !== id));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col" style={{ backgroundColor: C.bg }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
+        <button onClick={onClose} className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: C.surface }}>
+          <X size={20} style={{ color: C.text }} />
+        </button>
+        <div className="text-sm font-bold" style={{ color: C.text }}>🛡️ Modération · à vérifier</div>
+        <button onClick={load} aria-label="Rafraîchir" className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: C.surface }}>
+          <RotateCcw size={16} style={{ color: C.text }} />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        {loading ? (
+          <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin" style={{ color: C.gold }} /></div>
+        ) : videos.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-4xl mb-2">✅</div>
+            <p className="text-sm" style={{ color: C.textDim }}>Aucune vidéo à vérifier. Tout est propre !</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-[11px]" style={{ color: C.textMute }}>
+              Ces vidéos ont été publiées via « publier quand même » (l'IA les avait refusées). Vérifie et valide ou supprime.
+            </p>
+            {videos.map(v => {
+              const thumb = getVideoThumb(v);
+              return (
+                <div key={v.id} className="rounded-xl overflow-hidden" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+                  <button onClick={() => onPlayVideo?.(v)} className="relative w-full" style={{ aspectRatio: '16/9', backgroundColor: '#000' }}>
+                    {thumb ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center"><Play size={24} style={{ color: C.gold }} /></div>}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
+                        <Play size={20} fill={C.bg} stroke={C.bg} />
+                      </div>
+                    </div>
+                  </button>
+                  <div className="p-3">
+                    <div className="text-sm font-bold" style={{ color: C.text }}>{v.title}</div>
+                    <button onClick={() => v.profiles && onSelectProfile?.(v.profiles)} className="text-[11px] mt-0.5" style={{ color: C.textDim }}>
+                      par {v.profiles?.full_name || 'Utilisateur'} · {SPORTS.find(s => s.id === v.sport)?.label || v.sport || '—'}
+                    </button>
+                    {v.description && <p className="text-[11px] mt-1 line-clamp-2" style={{ color: C.textMute }}>{v.description}</p>}
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <button onClick={() => approve(v.id)} disabled={busyId === v.id}
+                        className="py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5"
+                        style={{ backgroundColor: C.green, color: '#fff', opacity: busyId === v.id ? 0.6 : 1 }}>
+                        {busyId === v.id ? <Loader2 size={12} className="animate-spin" /> : '✅'} C'est du sport
+                      </button>
+                      <button onClick={() => remove(v.id)} disabled={busyId === v.id}
+                        className="py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5"
+                        style={{ backgroundColor: C.red, color: '#fff', opacity: busyId === v.id ? 0.6 : 1 }}>
+                        {busyId === v.id ? <Loader2 size={12} className="animate-spin" /> : '🗑️'} Supprimer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModeration }) {
   // Sections togglables
   const [section, setSection] = useState(null); // 'password' | 'delete' | null
 
@@ -8276,6 +8376,20 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout }) {
       </div>
 
       <div className="px-4 py-4 space-y-5 pb-32">
+        {/* Modération — admin uniquement */}
+        {userProfile?.is_admin && (
+          <button onClick={onOpenModeration}
+            className="w-full rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+            style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
+            <span className="text-lg">🛡️</span>
+            <div className="flex-1">
+              <div className="text-sm font-bold" style={{ color: C.text }}>Modération</div>
+              <div className="text-[11px]" style={{ color: C.textDim }}>Vidéos « à vérifier » (publiées malgré l'IA)</div>
+            </div>
+            <ChevronDown size={14} style={{ color: C.gold, transform: 'rotate(-90deg)' }} />
+          </button>
+        )}
+
         {/* Compte */}
         <div className="rounded-xl overflow-hidden" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
           <div className="px-4 pt-3 pb-2 text-xs font-semibold" style={{ color: C.gold }}>Compte</div>
@@ -12609,6 +12723,7 @@ export default function App() {
 
   // SettingsView state
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [moderationOpen, setModerationOpen] = useState(false);
 
   // Search overlay sur le feed (loupe en haut à gauche)
   const [feedSearchOpen, setFeedSearchOpen] = useState(false);
@@ -12832,6 +12947,15 @@ export default function App() {
           userEmail={session?.user?.email}
           onClose={() => setSettingsOpen(false)}
           onLogout={async () => { await handleLogout(); setSettingsOpen(false); }}
+          onOpenModeration={() => setModerationOpen(true)}
+        />
+      )}
+
+      {moderationOpen && (
+        <ModerationView
+          onClose={() => setModerationOpen(false)}
+          onSelectProfile={openProfile}
+          onPlayVideo={(v) => setSearchPlayingVideo(v)}
         />
       )}
 
