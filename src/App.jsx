@@ -8500,14 +8500,21 @@ function PermissionsModal({ onFinish }) {
   const updateOne = (key, value) => setStatus(prev => ({ ...prev, [key]: value }));
 
   const requestNotifications = async () => {
-    if (typeof Notification === 'undefined') return updateOne('notifications', 'unsupported');
     updateOne('notifications', 'requesting');
+    // App native (iOS/Android) : vraie demande de permission via le plugin push
     try {
-      const result = await Notification.requestPermission();
-      updateOne('notifications', result === 'granted' ? 'granted' : 'denied');
-    } catch {
-      updateOne('notifications', 'denied');
+      const granted = await requestNotificationsPermission();
+      if (granted) { updateOne('notifications', 'granted'); return; }
+    } catch {}
+    // Repli navigateur web
+    if (typeof Notification !== 'undefined') {
+      try {
+        const result = await Notification.requestPermission();
+        updateOne('notifications', result === 'granted' ? 'granted' : 'denied');
+        return;
+      } catch {}
     }
+    updateOne('notifications', 'denied');
   };
 
   const requestMicrophone = async () => {
