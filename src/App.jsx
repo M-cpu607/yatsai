@@ -6035,11 +6035,49 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
   );
 }
 
+// Badge de statut réutilisable (candidatures + propositions) : en attente / accepté / refusé.
+function DecisionBadge({ status }) {
+  const map = {
+    sent:     { label: '⏳ En attente', bg: C.goldSoft, fg: C.gold },
+    pending:  { label: '⏳ En attente', bg: C.goldSoft, fg: C.gold },
+    accepted: { label: '✅ Acceptée',   bg: 'rgba(34,197,94,0.15)', fg: C.green },
+    refused:  { label: '❌ Refusée',    bg: 'rgba(255,71,87,0.15)', fg: C.red },
+  };
+  const s = map[status] || map.sent;
+  return (
+    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0"
+      style={{ backgroundColor: s.bg, color: s.fg }}>{s.label}</span>
+  );
+}
+
 function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversation, onSelectProfile,
-                        isRecruiter, isAthlete, onOpenCandidature }) {
+                        isRecruiter, isAthlete, onOpenCandidature, applications = [], onDecideApplication }) {
+  const hasApps = isRecruiter || isAthlete;
+  const [tab, setTab] = useState('messages');
+  // Recruteur : candidatures REÇUES (en attente = à traiter). Athlète : ENVOYÉES.
+  const pendingCount = isRecruiter ? applications.filter(a => (a.status || 'sent') === 'sent').length : 0;
+
+  const TabBtn = ({ id, label, badge }) => (
+    <button onClick={() => setTab(id)}
+      className="flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+      style={{
+        backgroundColor: tab === id ? C.gold : C.surface,
+        color: tab === id ? C.bg : C.textDim,
+        border: `1px solid ${tab === id ? C.gold : C.border}`,
+      }}>
+      {label}
+      {badge > 0 && (
+        <span className="min-w-[16px] h-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center"
+          style={{ backgroundColor: tab === id ? C.bg : C.gold, color: tab === id ? C.gold : C.bg }}>
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+
   return (
     <div className="pt-12 pb-32 px-4 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-3">
         <h1 className="text-3xl font-extrabold" style={{ color: C.text }}>Messages</h1>
         <button onClick={onNewConversation}
           className="w-10 h-10 rounded-full flex items-center justify-center"
@@ -6047,85 +6085,159 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
           <Plus size={18} strokeWidth={2.6} />
         </button>
       </div>
-      <p className="text-sm mb-4" style={{ color: C.textDim }}>
-        {conversations.length === 0 ? 'Aucune conversation' : `${conversations.length} conversation${conversations.length > 1 ? 's' : ''}`}
-      </p>
 
-      {/* Bouton candidature : athlètes uniquement (pas les recruteurs ni les observateurs) */}
-      {isAthlete && (
-        <button onClick={onOpenCandidature}
-          className="w-full mb-4 rounded-xl px-4 py-3 flex items-center gap-3 fade-in"
-          style={{
-            background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`,
-            color: C.bg,
-          }}>
-          <div className="w-9 h-9 rounded-full flex items-center justify-center text-base"
-            style={{ backgroundColor: 'rgba(8,15,32,0.18)' }}>
-            📨
-          </div>
-          <div className="flex-1 min-w-0 text-left">
-            <div className="text-sm font-extrabold">Envoyer ma candidature</div>
-            <div className="text-[11px] opacity-80">
-              Postule auprès des recruteurs de ton sport
-            </div>
-          </div>
-          <ChevronDown size={16} strokeWidth={2.6} style={{ transform: 'rotate(-90deg)' }} />
-        </button>
+      {/* Onglets : visibles pour athlètes et recruteurs */}
+      {hasApps && (
+        <div className="flex gap-2 mb-4">
+          <TabBtn id="messages" label="💬 Messages" />
+          <TabBtn id="apps" label={isRecruiter ? '📥 Candidatures' : '📤 Candidatures'} badge={pendingCount} />
+        </div>
       )}
 
-      {conversations.length === 0 ? (
-        <div className="rounded-2xl py-16 px-6 text-center"
-          style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-          <Inbox size={36} style={{ color: C.textMute }} className="mx-auto mb-3" />
-          <h3 className="text-base font-bold mb-1" style={{ color: C.text }}>Boîte vide</h3>
-          <p className="text-xs mb-4" style={{ color: C.textDim }}>
-            Démarre une nouvelle conversation pour commencer.
-          </p>
-          <button onClick={onNewConversation}
-            className="px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-            style={{ backgroundColor: C.gold, color: C.bg }}>
-            <Plus size={14} strokeWidth={2.6} />
-            Nouvelle conversation
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {conversations.map(c => {
-            const lastFromMe = c.lastMessage.sender_id === currentUserId;
-            const preview = (lastFromMe ? 'Vous : ' : '') + (c.lastMessage.content || '');
-            return (
-              <div key={c.otherId}
-                className="flex items-center gap-3 p-3 rounded-xl fade-in"
-                style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                <button onClick={(e) => { e.stopPropagation(); onSelectProfile?.(c.otherProfile); }}
-                  className="flex-shrink-0">
-                  <Avatar profile={c.otherProfile} size={48} ringColor={C.gold} />
-                </button>
-
-                <button onClick={() => onOpenChat(c)} className="flex-1 min-w-0 text-left">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-sm truncate flex items-center gap-1.5" style={{ color: C.text }}>
-                      {c.otherProfile.full_name || 'Utilisateur'}
-                      {c.otherProfile.is_recruiter && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
-                          style={{ backgroundColor: C.goldSoft, color: C.gold }}>Recruteur</span>
-                      )}
-                    </span>
-                    <span className="text-[10px] flex-shrink-0" style={{ color: C.textDim }}>
-                      {timeAgo(c.lastMessage.created_at)}
-                    </span>
-                  </div>
-                  <div className="text-xs truncate mt-0.5" style={{ color: c.unreadCount > 0 ? C.text : C.textDim }}>
-                    {preview}
-                  </div>
-                </button>
-
-                {c.unreadCount > 0 && (
-                  <button onClick={() => onOpenChat(c)}
-                    className="min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold px-1.5 flex-shrink-0"
-                    style={{ backgroundColor: C.gold, color: C.bg }}>
-                    {c.unreadCount}
+      {/* ───────── ONGLET MESSAGES ───────── */}
+      {tab === 'messages' && (
+        conversations.length === 0 ? (
+          <div className="rounded-2xl py-16 px-6 text-center"
+            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+            <Inbox size={36} style={{ color: C.textMute }} className="mx-auto mb-3" />
+            <h3 className="text-base font-bold mb-1" style={{ color: C.text }}>Boîte vide</h3>
+            <p className="text-xs mb-4" style={{ color: C.textDim }}>
+              Démarre une nouvelle conversation pour commencer.
+            </p>
+            <button onClick={onNewConversation}
+              className="px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+              style={{ backgroundColor: C.gold, color: C.bg }}>
+              <Plus size={14} strokeWidth={2.6} />
+              Nouvelle conversation
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {conversations.map(c => {
+              const lastFromMe = c.lastMessage.sender_id === currentUserId;
+              const preview = (lastFromMe ? 'Vous : ' : '') + (c.lastMessage.content || '');
+              return (
+                <div key={c.otherId}
+                  className="flex items-center gap-3 p-3 rounded-xl fade-in"
+                  style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+                  <button onClick={(e) => { e.stopPropagation(); onSelectProfile?.(c.otherProfile); }}
+                    className="flex-shrink-0">
+                    <Avatar profile={c.otherProfile} size={48} ringColor={C.gold} />
                   </button>
+                  <button onClick={() => onOpenChat(c)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-sm truncate flex items-center gap-1.5" style={{ color: C.text }}>
+                        {c.otherProfile.full_name || 'Utilisateur'}
+                        {c.otherProfile.is_recruiter && (
+                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
+                            style={{ backgroundColor: C.goldSoft, color: C.gold }}>Recruteur</span>
+                        )}
+                      </span>
+                      <span className="text-[10px] flex-shrink-0" style={{ color: C.textDim }}>
+                        {timeAgo(c.lastMessage.created_at)}
+                      </span>
+                    </div>
+                    <div className="text-xs truncate mt-0.5" style={{ color: c.unreadCount > 0 ? C.text : C.textDim }}>
+                      {preview}
+                    </div>
+                  </button>
+                  {c.unreadCount > 0 && (
+                    <button onClick={() => onOpenChat(c)}
+                      className="min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold px-1.5 flex-shrink-0"
+                      style={{ backgroundColor: C.gold, color: C.bg }}>
+                      {c.unreadCount}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {/* ───────── ONGLET CANDIDATURES ───────── */}
+      {tab === 'apps' && (
+        <div className="flex flex-col gap-2">
+          {/* Athlète : CTA pour envoyer une nouvelle candidature */}
+          {isAthlete && (
+            <button onClick={onOpenCandidature}
+              className="w-full mb-1 rounded-xl px-4 py-3 flex items-center gap-3 fade-in"
+              style={{ background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`, color: C.bg }}>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center text-base"
+                style={{ backgroundColor: 'rgba(8,15,32,0.18)' }}>📨</div>
+              <div className="flex-1 min-w-0 text-left">
+                <div className="text-sm font-extrabold">Envoyer ma candidature</div>
+                <div className="text-[11px] opacity-80">Postule auprès des recruteurs de ton sport</div>
+              </div>
+              <ChevronDown size={16} strokeWidth={2.6} style={{ transform: 'rotate(-90deg)' }} />
+            </button>
+          )}
+
+          {applications.length === 0 ? (
+            <div className="rounded-2xl py-14 px-6 text-center"
+              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+              <Inbox size={34} style={{ color: C.textMute }} className="mx-auto mb-3" />
+              <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>
+                {isRecruiter ? 'Aucune candidature reçue' : 'Aucune candidature envoyée'}
+              </h3>
+              <p className="text-xs" style={{ color: C.textDim }}>
+                {isRecruiter
+                  ? 'Les athlètes qui postulent chez toi apparaîtront ici.'
+                  : 'Postule auprès des recruteurs avec le bouton ci-dessus.'}
+              </p>
+            </div>
+          ) : applications.map(app => {
+            const p = app.otherProfile;
+            const status = app.status || 'sent';
+            const nVid = Array.isArray(app.video_ids) ? app.video_ids.length : 0;
+            return (
+              <div key={app.id} className="rounded-xl p-3 fade-in"
+                style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0">
+                    <Avatar profile={p} size={44} ringColor={C.gold} />
+                  </button>
+                  <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold text-sm truncate" style={{ color: C.text }}>
+                        {p?.full_name || 'Utilisateur'}
+                      </span>
+                      {p?.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
+                    </div>
+                    <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+                      {isRecruiter
+                        ? `${SPORTS.find(s => s.id === (p?.sport || app.sport))?.label || app.sport || 'Sport'}${p?.position ? ' · ' + p.position : ''}${(p && !p.hide_location && p.city) ? ' · 📍 ' + p.city : ''}`
+                        : (p?.organization || 'Recruteur')}
+                    </div>
+                  </button>
+                  <DecisionBadge status={status} />
+                </div>
+
+                {app.message && (
+                  <div className="mt-2 text-xs rounded-lg px-3 py-2 whitespace-pre-wrap"
+                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }}>
+                    {app.message}
+                  </div>
+                )}
+                <div className="mt-1.5 flex items-center gap-2 text-[10px]" style={{ color: C.textDim }}>
+                  {nVid > 0 && <span>🎬 {nVid} vidéo{nVid > 1 ? 's' : ''} jointe{nVid > 1 ? 's' : ''}</span>}
+                  <span>· {timeAgo(app.created_at)}</span>
+                </div>
+
+                {/* Recruteur : Accepter / Refuser tant que c'est en attente */}
+                {isRecruiter && status === 'sent' && onDecideApplication && (
+                  <div className="mt-2.5 flex gap-2">
+                    <button onClick={() => onDecideApplication(app.id, 'accepted')}
+                      className="flex-1 py-2 rounded-xl text-xs font-bold"
+                      style={{ backgroundColor: C.green, color: C.bg }}>
+                      ✅ Accepter
+                    </button>
+                    <button onClick={() => onDecideApplication(app.id, 'refused')}
+                      className="flex-1 py-2 rounded-xl text-xs font-bold"
+                      style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
+                      ❌ Refuser
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -12338,6 +12450,58 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, [userProfile?.id]);
 
+  // ─── Candidatures (applications) : athlète → recruteur ────────────
+  // L'athlète voit « Candidatures envoyées » (avec statut), le recruteur voit
+  // « Candidatures reçues » (avec Accepter / Refuser).
+  const [applications, setApplications] = useState([]);
+  const loadApplications = async (profile) => {
+    if (!profile?.id) return;
+    const role = getUserRole(profile);
+    if (role !== 'athlete' && role !== 'recruiter') { setApplications([]); return; }
+    const meCol = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const otherCol = role === 'recruiter' ? 'athlete_id' : 'recruiter_id';
+    const { data, error } = await supabase.from('applications')
+      .select('*').eq(meCol, profile.id).order('created_at', { ascending: false });
+    if (error) { console.error('Erreur chargement candidatures:', error); return; }
+    const rows = data || [];
+    const otherIds = Array.from(new Set(rows.map(r => r[otherCol]).filter(Boolean)));
+    const profMap = new Map();
+    if (otherIds.length) {
+      const { data: profs } = await supabase.from('profiles')
+        .select('id, full_name, avatar_url, sport, level, organization, is_recruiter, role, verified, city, position, age, hide_location')
+        .in('id', otherIds);
+      for (const p of profs || []) profMap.set(p.id, p);
+    }
+    setApplications(rows.map(r => ({ ...r, otherProfile: profMap.get(r[otherCol]) || null })));
+  };
+  useEffect(() => {
+    if (userProfile?.id) loadApplications(userProfile);
+    else setApplications([]);
+  }, [userProfile?.id, userProfile?.role]);
+  // Realtime : recharge à chaque changement de candidature me concernant
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const role = getUserRole(userProfile);
+    if (role !== 'athlete' && role !== 'recruiter') return;
+    const col = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const channel = supabase
+      .channel('applications-' + userProfile.id)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'applications', filter: `${col}=eq.${userProfile.id}` },
+        () => loadApplications(userProfile))
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile?.id, userProfile?.role]);
+
+  // Recruteur : accepte / refuse une candidature reçue
+  const decideApplication = async (appId, status) => {
+    const { error } = await supabase.from('applications')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', appId);
+    if (error) { console.error('Erreur décision candidature:', error); return; }
+    setApplications(prev => prev.map(a => a.id === appId
+      ? { ...a, status, decided_at: new Date().toISOString() } : a));
+  };
+
   const sendMessage = async (receiverId, content, videoId = null) => {
     if (!userProfile?.id || !content.trim()) return null;
     const payload = {
@@ -13055,6 +13219,8 @@ export default function App() {
     isRecruiter: !!userProfile?.is_recruiter,
     isAthlete: isAthleteRole(userProfile),
     onOpenCandidature: () => setCandidatureOpen(true),
+    applications,
+    onDecideApplication: decideApplication,
   };
 
   const renderScreen = () => {
