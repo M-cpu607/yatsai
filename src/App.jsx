@@ -874,6 +874,27 @@ function smoothCentered(pts, win = 1, moveThresh = 0.05) {
   return out;
 }
 
+// Filtre "One-Euro" : lissage ADAPTATIF à la vitesse. Au repos (vitesse faible)
+// il lisse fort → supprime le tremblement. En mouvement rapide il lisse très peu
+// → quasi aucun retard. Idéal pour coller la flèche à la tête sans saccade.
+function createOneEuroFilter(minCutoff = 1.5, beta = 7, dCutoff = 1) {
+  let xPrev = null, dxPrev = 0, tPrev = 0;
+  const alpha = (cutoff, dt) => { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); };
+  return {
+    reset() { xPrev = null; dxPrev = 0; },
+    filter(x, t) {
+      if (xPrev === null || !(t > tPrev)) { xPrev = x; tPrev = t; dxPrev = 0; return x; }
+      const dt = Math.max(1e-3, t - tPrev);
+      const dx = (x - xPrev) / dt;
+      const dxHat = dxPrev + alpha(dCutoff, dt) * (dx - dxPrev);
+      const cutoff = minCutoff + beta * Math.abs(dxHat);
+      const xHat = xPrev + alpha(cutoff, dt) * (x - xPrev);
+      xPrev = xHat; dxPrev = dxHat; tPrev = t;
+      return xHat;
+    },
+  };
+}
+
 // Interpolation Catmull-Rom : courbe LISSE passant par tous les points (continuité
 // de vitesse aux jonctions → plus d'à-coups). Repli linéaire si trop peu de points.
 function interpTrackingPoint(pts, t) {
@@ -933,6 +954,7 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
   useEffect(() => {
     if (sorted.length === 0) return;
     let raf;
+    const fx = createOneEuroFilter(), fy = createOneEuroFilter();
     const loop = () => {
       const v = videoRef.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
@@ -940,13 +962,14 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        // Rendu DIRECT de la position détectée : la courbe Catmull-Rom est déjà
-        // lisse, donc PAS de lissage au rendu → aucun retard, la flèche colle à la tête.
         const target = interpTrackingPoint(sorted, v.currentTime || 0);
         if (target) {
+          // One-Euro : stable au repos (anti-tremblement), sans retard en mouvement.
+          const now = performance.now() / 1000;
+          const x = fx.filter(target.x, now), y = fy.filter(target.y, now);
           el.style.display = 'block';
-          el.style.left = `${oX + target.x * dW}px`;
-          el.style.top = `${oY + target.y * dH}px`;
+          el.style.left = `${oX + x * dW}px`;
+          el.style.top = `${oY + y * dH}px`;
         } else {
           el.style.display = 'none';
         }
@@ -2340,21 +2363,23 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
   // jamais (aucune saccade). Pendant le glissement, c'est le doigt qui pilote.
   useEffect(() => {
     let raf;
+    const fx = createOneEuroFilter(), fy = createOneEuroFilter();
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      if (dragRef.current.dragging) return; // le doigt pilote directement
+      if (dragRef.current.dragging) { fx.reset(); fy.reset(); return; } // le doigt pilote directement
       const v = vref.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
         const cw = v.clientWidth, ch = v.clientHeight;
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        // Rendu DIRECT (pas de lissage au rendu) → la flèche colle à la tête.
         const target = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
         if (target) {
+          const now = performance.now() / 1000;
+          const x = fx.filter(target.x, now), y = fy.filter(target.y, now);
           el.style.display = 'block';
-          el.style.left = `${oX + target.x * dW}px`;
-          el.style.top = `${oY + target.y * dH}px`;
+          el.style.left = `${oX + x * dW}px`;
+          el.style.top = `${oY + y * dH}px`;
         } else el.style.display = 'none';
       }
     };
