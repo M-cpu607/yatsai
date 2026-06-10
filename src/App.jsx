@@ -12886,11 +12886,14 @@ export default function App() {
 
   // Recruteur : accepte / refuse une candidature reçue
   const decideApplication = async (appId, status) => {
-    const { error } = await supabase.from('applications')
-      .update({ status, decided_at: new Date().toISOString() }).eq('id', appId);
-    if (error) { console.error('Erreur décision candidature:', error); return; }
-    setApplications(prev => prev.map(a => a.id === appId
-      ? { ...a, status, decided_at: new Date().toISOString() } : a));
+    const { data, error } = await supabase.from('applications')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', appId).select();
+    if (error || !data || data.length === 0) {
+      console.error('Erreur décision candidature:', error);
+      alert("La décision n'a pas pu être enregistrée. Réessaie dans un instant.");
+      return;
+    }
+    setApplications(prev => prev.map(a => a.id === appId ? { ...a, ...data[0] } : a));
   };
 
   // ─── Propositions (proposals) : recruteur → athlète ───────────────
@@ -12960,11 +12963,14 @@ export default function App() {
     return { ok: true };
   };
   const decideProposal = async (propId, status) => {
-    const { error } = await supabase.from('proposals')
-      .update({ status, decided_at: new Date().toISOString() }).eq('id', propId);
-    if (error) { console.error('Erreur décision proposition:', error); return; }
-    setProposals(prev => prev.map(p => p.id === propId
-      ? { ...p, status, decided_at: new Date().toISOString() } : p));
+    const { data, error } = await supabase.from('proposals')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', propId).select();
+    if (error || !data || data.length === 0) {
+      console.error('Erreur décision proposition:', error);
+      alert("La décision n'a pas pu être enregistrée. Réessaie dans un instant.");
+      return;
+    }
+    setProposals(prev => prev.map(p => p.id === propId ? { ...p, ...data[0] } : p));
   };
 
   // ─── Essais (appointments) : recruteur propose, athlète confirme ──
@@ -13020,11 +13026,14 @@ export default function App() {
     return { ok: true };
   };
   const decideAppointment = async (apptId, status) => {
-    const { error } = await supabase.from('appointments')
-      .update({ status, decided_at: new Date().toISOString() }).eq('id', apptId);
-    if (error) { console.error('Erreur décision essai:', error); return; }
-    setAppointments(prev => prev.map(a => a.id === apptId
-      ? { ...a, status, decided_at: new Date().toISOString() } : a));
+    const { data, error } = await supabase.from('appointments')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', apptId).select();
+    if (error || !data || data.length === 0) {
+      console.error('Erreur décision essai:', error);
+      alert("La décision n'a pas pu être enregistrée. Réessaie dans un instant.");
+      return;
+    }
+    setAppointments(prev => prev.map(a => a.id === apptId ? { ...a, ...data[0] } : a));
   };
 
   const sendMessage = async (receiverId, content, videoId = null) => {
