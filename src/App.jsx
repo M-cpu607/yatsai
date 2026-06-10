@@ -10,6 +10,7 @@ import {
   Eye, EyeOff, Flag, MoreVertical, AlertTriangle,
   Mic, MicOff, Bell, Video, Users, Settings, Lock,
   Folder, FolderOpen, Upload, FileCheck2,
+  Calendar, Clock,
 } from 'lucide-react';
 import { supabase } from './supabase';
 import Auth from './Auth';
@@ -6108,6 +6109,168 @@ function ProposalModal({ athlete, onClose, onSend }) {
   );
 }
 
+// Modal recruteur → athlète : proposer un essai (date, heure, lieu, note).
+function AppointmentModal({ athlete, onClose, onCreate }) {
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [location, setLocation] = useState('');
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const sport = SPORTS.find(s => s.id === athlete?.sport);
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const submit = async () => {
+    if (loading) return;
+    if (!date || !time) { setError('Choisis une date et une heure.'); return; }
+    const dt = new Date(`${date}T${time}`);
+    if (isNaN(dt.getTime())) { setError('Date ou heure invalide.'); return; }
+    setLoading(true); setError('');
+    const res = await onCreate(athlete.id, dt.toISOString(), location, note);
+    setLoading(false);
+    if (res?.error) { setError(res.error); return; }
+    setDone(true);
+    setTimeout(onClose, 1300);
+  };
+
+  const inputStyle = { backgroundColor: C.surface, color: C.text, border: '1px solid ' + C.border, outline: 'none' };
+
+  return (
+    <div className="fixed inset-0 z-[92] flex items-end" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
+      <div className="w-full rounded-t-2xl" style={{ backgroundColor: C.bg, border: '1px solid ' + C.border }}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
+          <div className="text-base font-extrabold" style={{ color: C.text }}>📅 Proposer un essai</div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: C.surface }}>
+            <X size={16} style={{ color: C.text }} />
+          </button>
+        </div>
+        <div className="px-4 py-4 space-y-3">
+          {done ? (
+            <div className="py-8 text-center">
+              <CheckCircle2 size={40} style={{ color: C.green }} className="mx-auto mb-2" />
+              <div className="text-sm font-bold" style={{ color: C.text }}>
+                Essai proposé à {athlete?.full_name || "l'athlète"} !
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <Avatar profile={athlete} size={44} ringColor={C.gold} />
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate" style={{ color: C.text }}>{athlete?.full_name || 'Athlète'}</div>
+                  <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+                    {sport ? `${sport.icon} ${sport.label}` : ''}{athlete?.position ? ` · ${athlete.position}` : ''}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="text-[11px] font-semibold block mb-1" style={{ color: C.textDim }}>Date</label>
+                  <input type="date" value={date} min={todayStr} onChange={(e) => setDate(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2.5 text-sm" style={inputStyle} />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[11px] font-semibold block mb-1" style={{ color: C.textDim }}>Heure</label>
+                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2.5 text-sm" style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold block mb-1" style={{ color: C.textDim }}>Lieu</label>
+                <input type="text" value={location} onChange={(e) => setLocation(e.target.value)}
+                  placeholder="Ex : Stade Léo-Lagrange, terrain n°2…"
+                  className="w-full rounded-xl px-3 py-2.5 text-sm" style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold block mb-1" style={{ color: C.textDim }}>Note (facultatif)</label>
+                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+                  placeholder="Crampons, arriver 15 min avant…"
+                  className="w-full rounded-xl px-3 py-2.5 text-sm resize-none" style={inputStyle} />
+              </div>
+              {error && (
+                <div className="text-xs px-3 py-2 rounded-lg"
+                  style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: '1px solid ' + C.red }}>{error}</div>
+              )}
+              <button onClick={submit} disabled={loading}
+                className="w-full py-3 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2"
+                style={{ background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`, color: C.bg, opacity: loading ? 0.6 : 1 }}>
+                {loading ? <Loader2 size={16} className="animate-spin" /> : '📅'} Envoyer l'invitation
+              </button>
+              <p className="text-[11px] text-center" style={{ color: C.textDim }}>
+                L'athlète recevra l'invitation et pourra la confirmer ou la décliner. Le rendez-vous s'ajoutera à ton emploi du temps.
+              </p>
+            </>
+          )}
+        </div>
+        <div style={{ height: 'env(safe-area-inset-bottom)' }} />
+      </div>
+    </div>
+  );
+}
+
+// Carte d'un rendez-vous d'essai (onglet Emploi du temps / Essais).
+function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile }) {
+  const p = item.otherProfile;
+  const status = item.status || 'proposed';
+  const dt = new Date(item.starts_at);
+  const dateStr = dt.toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' });
+  const timeStr = dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const isPast = dt.getTime() < Date.now();
+  const stMap = {
+    proposed:  { label: '⏳ En attente', fg: C.gold },
+    accepted:  { label: '✅ Confirmé',   fg: C.green },
+    declined:  { label: '❌ Décliné',    fg: C.red },
+    cancelled: { label: '🚫 Annulé',     fg: C.textDim },
+  };
+  const st = stMap[status] || stMap.proposed;
+  const faded = status === 'cancelled' || status === 'declined' || isPast;
+  return (
+    <div className="rounded-xl p-3 fade-in" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, opacity: faded ? 0.65 : 1 }}>
+      <div className="flex items-center gap-3">
+        <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+          <span className="text-[8px] font-bold uppercase leading-none">{dt.toLocaleDateString('fr-FR', { month: 'short' })}</span>
+          <span className="text-lg font-extrabold leading-none">{dt.getDate()}</span>
+        </div>
+        <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
+          <div className="text-sm font-bold truncate" style={{ color: C.text }}>{p?.full_name || 'Utilisateur'}</div>
+          <div className="text-[11px] capitalize" style={{ color: C.textDim }}>🗓️ {dateStr} · {timeStr}</div>
+        </button>
+        <span className="text-[10px] font-bold flex-shrink-0" style={{ color: st.fg }}>{st.label}</span>
+      </div>
+      {(item.location || item.note) && (
+        <div className="mt-2 text-[11px] space-y-0.5" style={{ color: C.textDim }}>
+          {item.location && <div>📍 {item.location}</div>}
+          {item.note && <div>📝 {item.note}</div>}
+        </div>
+      )}
+      {!isRecruiterViewer && status === 'proposed' && onDecide && (
+        <div className="mt-2.5 flex gap-2">
+          <button onClick={() => onDecide(item.id, 'accepted')}
+            className="flex-1 py-2 rounded-xl text-xs font-bold" style={{ backgroundColor: C.green, color: C.bg }}>
+            ✅ Confirmer
+          </button>
+          <button onClick={() => onDecide(item.id, 'declined')}
+            className="flex-1 py-2 rounded-xl text-xs font-bold"
+            style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
+            ❌ Décliner
+          </button>
+        </div>
+      )}
+      {isRecruiterViewer && (status === 'proposed' || status === 'accepted') && !isPast && onDecide && (
+        <button onClick={() => onDecide(item.id, 'cancelled')}
+          className="mt-2.5 w-full py-2 rounded-xl text-xs font-bold"
+          style={{ backgroundColor: 'transparent', color: C.textDim, border: `1px solid ${C.border}` }}>
+          Annuler le rendez-vous
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Badge de statut réutilisable (candidatures + propositions) : en attente / accepté / refusé.
 function DecisionBadge({ status }) {
   const map = {
@@ -6178,17 +6341,18 @@ function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile 
 
 function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversation, onSelectProfile,
                         isRecruiter, isAthlete, onOpenCandidature, applications = [], onDecideApplication,
-                        proposals = [], onDecideProposal }) {
+                        proposals = [], onDecideProposal, appointments = [], onDecideAppointment }) {
   const hasApps = isRecruiter || isAthlete;
   const [tab, setTab] = useState('messages');
   // Badges « à traiter » : recruteur = candidatures reçues en attente ;
-  // athlète = propositions reçues en attente.
+  // athlète = propositions reçues + essais proposés en attente.
   const pendingCount = isRecruiter ? applications.filter(a => (a.status || 'sent') === 'sent').length : 0;
   const propPendingCount = isAthlete ? proposals.filter(p => (p.status || 'sent') === 'sent').length : 0;
+  const apptPendingCount = isAthlete ? appointments.filter(a => (a.status || 'proposed') === 'proposed').length : 0;
 
   const TabBtn = ({ id, label, badge }) => (
     <button onClick={() => setTab(id)}
-      className="flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+      className="px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap flex-shrink-0"
       style={{
         backgroundColor: tab === id ? C.gold : C.surface,
         color: tab === id ? C.bg : C.textDim,
@@ -6215,12 +6379,13 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
         </button>
       </div>
 
-      {/* Onglets : visibles pour athlètes et recruteurs */}
+      {/* Onglets : visibles pour athlètes et recruteurs (scroll horizontal) */}
       {hasApps && (
-        <div className="flex gap-2 mb-4">
-          <TabBtn id="messages" label="💬" />
+        <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar" style={{ scrollbarWidth: 'none' }}>
+          <TabBtn id="messages" label="💬 Messages" />
           <TabBtn id="apps" label={isRecruiter ? '📥 Candidatures' : '📤 Candidatures'} badge={pendingCount} />
           <TabBtn id="props" label={isRecruiter ? '📤 Propositions' : '📥 Propositions'} badge={propPendingCount} />
+          <TabBtn id="agenda" label={isRecruiter ? '📅 Emploi du temps' : '📅 Essais'} badge={apptPendingCount} />
         </div>
       )}
 
@@ -6345,12 +6510,36 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
           ))}
         </div>
       )}
+
+      {/* ───────── ONGLET AGENDA (Emploi du temps / Essais) ───────── */}
+      {tab === 'agenda' && (
+        <div className="flex flex-col gap-2">
+          {appointments.length === 0 ? (
+            <div className="rounded-2xl py-14 px-6 text-center"
+              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+              <Calendar size={34} style={{ color: C.textMute }} className="mx-auto mb-3" />
+              <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>
+                {isRecruiter ? 'Aucun rendez-vous' : 'Aucun essai proposé'}
+              </h3>
+              <p className="text-xs" style={{ color: C.textDim }}>
+                {isRecruiter
+                  ? "Depuis une conversation avec un athlète, tape l'icône 📅 pour proposer un essai."
+                  : 'Les invitations à un essai apparaîtront ici.'}
+              </p>
+            </div>
+          ) : appointments.map(appt => (
+            <AppointmentCard key={appt.id} item={appt} isRecruiterViewer={isRecruiter}
+              onDecide={onDecideAppointment} onSelectProfile={onSelectProfile} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSendMessage, onMarkRead, onSelectProfile,
-                    onLoadPendingSigning, onRespondToSigning, onDeleteMessage, onReport }) {
+                    onLoadPendingSigning, onRespondToSigning, onDeleteMessage, onReport,
+                    viewerIsRecruiter, onProposeTrial }) {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6527,6 +6716,15 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
             <div className="text-[11px]" style={{ color: C.textDim }}>{subtitle}</div>
           </div>
         </button>
+        {/* Recruteur ↔ athlète : proposer un essai (Phase 3) */}
+        {viewerIsRecruiter && onProposeTrial
+          && (otherProfile.role ? otherProfile.role === 'athlete' : !otherProfile.is_recruiter) && (
+          <button onClick={() => onProposeTrial(otherProfile)} aria-label="Proposer un essai"
+            className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}`, color: C.gold }}>
+            <Calendar size={16} strokeWidth={2.2} />
+          </button>
+        )}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2">
@@ -12515,7 +12713,7 @@ export default function App() {
 
     const { data: profs, error: pErr } = await supabase
       .from('profiles')
-      .select('id, full_name, is_recruiter, organization, sport, avatar_url, level, verified')
+      .select('id, full_name, is_recruiter, role, organization, sport, avatar_url, level, verified')
       .in('id', otherIds);
     if (pErr) { console.error('Erreur chargement profils messages:', pErr); return; }
 
@@ -12697,6 +12895,66 @@ export default function App() {
     if (error) { console.error('Erreur décision proposition:', error); return; }
     setProposals(prev => prev.map(p => p.id === propId
       ? { ...p, status, decided_at: new Date().toISOString() } : p));
+  };
+
+  // ─── Essais (appointments) : recruteur propose, athlète confirme ──
+  // Recruteur : « Emploi du temps ». Athlète : « Essais » (Confirmer / Décliner).
+  const [appointments, setAppointments] = useState([]);
+  const loadAppointments = async (profile) => {
+    if (!profile?.id) return;
+    const role = getUserRole(profile);
+    if (role !== 'athlete' && role !== 'recruiter') { setAppointments([]); return; }
+    const meCol = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const otherCol = role === 'recruiter' ? 'athlete_id' : 'recruiter_id';
+    const { data, error } = await supabase.from('appointments')
+      .select('*').eq(meCol, profile.id).order('starts_at', { ascending: true });
+    if (error) { console.error('Erreur chargement essais:', error); return; }
+    const rows = data || [];
+    const otherIds = Array.from(new Set(rows.map(r => r[otherCol]).filter(Boolean)));
+    const profMap = new Map();
+    if (otherIds.length) {
+      const { data: profs } = await supabase.from('profiles')
+        .select('id, full_name, avatar_url, sport, level, organization, is_recruiter, role, verified, city, position')
+        .in('id', otherIds);
+      for (const p of profs || []) profMap.set(p.id, p);
+    }
+    setAppointments(rows.map(r => ({ ...r, otherProfile: profMap.get(r[otherCol]) || null })));
+  };
+  useEffect(() => {
+    if (userProfile?.id) loadAppointments(userProfile);
+    else setAppointments([]);
+  }, [userProfile?.id, userProfile?.role]);
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const role = getUserRole(userProfile);
+    if (role !== 'athlete' && role !== 'recruiter') return;
+    const col = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const channel = supabase
+      .channel('appointments-' + userProfile.id)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'appointments', filter: `${col}=eq.${userProfile.id}` },
+        () => loadAppointments(userProfile))
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile?.id, userProfile?.role]);
+
+  const [trialTarget, setTrialTarget] = useState(null); // athlète ciblé par un essai
+  const createAppointment = async (athleteId, startsAtISO, location, note) => {
+    if (!userProfile?.id || !athleteId || !startsAtISO) return { error: 'Données manquantes' };
+    const { error } = await supabase.from('appointments').insert({
+      recruiter_id: userProfile.id, athlete_id: athleteId, starts_at: startsAtISO,
+      location: (location || '').trim() || null, note: (note || '').trim() || null,
+    });
+    if (error) return { error: error.message };
+    loadAppointments(userProfile);
+    return { ok: true };
+  };
+  const decideAppointment = async (apptId, status) => {
+    const { error } = await supabase.from('appointments')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', apptId);
+    if (error) { console.error('Erreur décision essai:', error); return; }
+    setAppointments(prev => prev.map(a => a.id === apptId
+      ? { ...a, status, decided_at: new Date().toISOString() } : a));
   };
 
   const sendMessage = async (receiverId, content, videoId = null) => {
@@ -13420,6 +13678,8 @@ export default function App() {
     onDecideApplication: decideApplication,
     proposals,
     onDecideProposal: decideProposal,
+    appointments,
+    onDecideAppointment: decideAppointment,
   };
 
   const renderScreen = () => {
@@ -13540,8 +13800,18 @@ export default function App() {
             onRespondToSigning={respondToSigning}
             onDeleteMessage={deleteMessage}
             onReport={openReport}
+            viewerIsRecruiter={!!userProfile?.is_recruiter}
+            onProposeTrial={(athlete) => setTrialTarget(athlete)}
           />
         </div>
+      )}
+
+      {trialTarget && (
+        <AppointmentModal
+          athlete={trialTarget}
+          onClose={() => setTrialTarget(null)}
+          onCreate={createAppointment}
+        />
       )}
 
       {selectedProfile && (
