@@ -874,6 +874,26 @@ function smoothCentered(pts, win = 1, moveThresh = 0.05) {
   return out;
 }
 
+// Position AFFICHÉE de la flèche : anticipation adaptative + lissage One-Euro.
+// Comme les points sont déjà enregistrés, on lit la position FUTURE (t + avance) :
+// l'avance vaut ~la constante de temps du filtre (grande à basse vitesse / au
+// démarrage d'une accélération, petite à grande vitesse), avec un léger surplus
+// d'anticipation. Résultat : la flèche reste pile sur la tête, sans retard ni
+// dépassement, que tu accélères, recules ou changes de côté.
+function trackedDisplayPoint(pts, t, fx, fy, now) {
+  const p0 = interpTrackingPoint(pts, t);
+  if (!p0) return null;
+  const p1 = interpTrackingPoint(pts, t + 0.05);
+  let lead = 0;
+  if (p1) {
+    const speed = Math.hypot(p1.x - p0.x, p1.y - p0.y) / 0.05;   // unités/s
+    const cutoff = 1.0 + 12 * speed;                            // = formule du One-Euro
+    lead = Math.min(0.2, 1.5 / (2 * Math.PI * cutoff));         // ~constante de temps, plafonnée
+  }
+  const pred = interpTrackingPoint(pts, t + lead) || p0;
+  return { x: fx.filter(pred.x, now), y: fy.filter(pred.y, now) };
+}
+
 // Filtre "One-Euro" : lissage ADAPTATIF à la vitesse. Au repos (vitesse faible)
 // il lisse fort → supprime le tremblement. En mouvement rapide il lisse très peu
 // → quasi aucun retard. Idéal pour coller la flèche à la tête sans saccade.
@@ -962,14 +982,11 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const target = interpTrackingPoint(sorted, v.currentTime || 0);
-        if (target) {
-          // One-Euro : stable au repos (anti-tremblement), sans retard en mouvement.
-          const now = performance.now() / 1000;
-          const x = fx.filter(target.x, now), y = fy.filter(target.y, now);
+        const disp = trackedDisplayPoint(sorted, v.currentTime || 0, fx, fy, performance.now() / 1000);
+        if (disp) {
           el.style.display = 'block';
-          el.style.left = `${oX + x * dW}px`;
-          el.style.top = `${oY + y * dH}px`;
+          el.style.left = `${oX + disp.x * dW}px`;
+          el.style.top = `${oY + disp.y * dH}px`;
         } else {
           el.style.display = 'none';
         }
@@ -2373,13 +2390,11 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const target = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
-        if (target) {
-          const now = performance.now() / 1000;
-          const x = fx.filter(target.x, now), y = fy.filter(target.y, now);
+        const disp = trackedDisplayPoint(pointsRef.current, v.currentTime || 0, fx, fy, performance.now() / 1000);
+        if (disp) {
           el.style.display = 'block';
-          el.style.left = `${oX + x * dW}px`;
-          el.style.top = `${oY + y * dH}px`;
+          el.style.left = `${oX + disp.x * dW}px`;
+          el.style.top = `${oY + disp.y * dH}px`;
         } else el.style.display = 'none';
       }
     };
