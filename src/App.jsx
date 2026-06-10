@@ -851,6 +851,21 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 // ─── Flèche de suivi du joueur (marquée manuellement par l'athlète) ───
 // points = [{ t: secondes, x: 0..1, y: 0..1 }] en fraction du cadre vidéo.
 // On interpole linéairement la position entre deux points marqués.
+// Lissage CENTRÉ (moyenne mobile symétrique) : réduit le tremblement sans
+// introduire de retard directionnel (contrairement à un EMA), car il utilise
+// autant de points avant qu'après. La détection étant hors-ligne, on a les deux.
+function smoothCentered(pts, win = 1) {
+  if (!pts || pts.length <= 2) return pts ? pts.slice() : [];
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    let sx = 0, sy = 0, n = 0;
+    const lo = Math.max(0, i - win), hi = Math.min(pts.length - 1, i + win);
+    for (let j = lo; j <= hi; j++) { sx += pts[j].x; sy += pts[j].y; n++; }
+    out.push({ t: pts[i].t, x: sx / n, y: sy / n });
+  }
+  return out;
+}
+
 // Interpolation Catmull-Rom : courbe LISSE passant par tous les points (continuité
 // de vitesse aux jonctions → plus d'à-coups). Repli linéaire si trop peu de points.
 function interpTrackingPoint(pts, t) {
@@ -918,15 +933,20 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const target = interpTrackingPoint(sorted, v.currentTime || 0);
+        const t = v.currentTime || 0;
+        const target = interpTrackingPoint(sorted, t);
         if (target) {
-          // Filtre passe-bas : on lisse, mais on s'aligne d'un coup sur un grand
-          // saut (changement de plan, scrub) pour ne pas « glisser » à l'écran.
-          if (!disp || Math.hypot(target.x - disp.x, target.y - disp.y) > 0.12) {
-            disp = { x: target.x, y: target.y };
+          // PRÉDICTION : on vise légèrement en avance, proportionnellement à la
+          // vitesse (lookahead), pour compenser le retard du lissage et rester
+          // AU-DESSUS de la tête même en mouvement rapide.
+          const look = interpTrackingPoint(sorted, t + 0.12) || target;
+          const tx = target.x + (look.x - target.x) * 0.3;
+          const ty = target.y + (look.y - target.y) * 0.3;
+          if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
+            disp = { x: tx, y: ty };           // grand saut (changement de plan / scrub)
           } else {
-            disp.x += (target.x - disp.x) * 0.28;
-            disp.y += (target.y - disp.y) * 0.28;
+            disp.x += (tx - disp.x) * 0.45;     // lissage léger pour la douceur
+            disp.y += (ty - disp.y) * 0.45;
           }
           el.style.display = 'block';
           el.style.left = `${oX + disp.x * dW}px`;
@@ -2334,13 +2354,17 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const target = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
+        const t = v.currentTime || 0;
+        const target = interpTrackingPoint(pointsRef.current, t);
         if (target) {
-          if (!disp || Math.hypot(target.x - disp.x, target.y - disp.y) > 0.12) {
-            disp = { x: target.x, y: target.y };
+          const look = interpTrackingPoint(pointsRef.current, t + 0.12) || target;
+          const tx = target.x + (look.x - target.x) * 0.3;
+          const ty = target.y + (look.y - target.y) * 0.3;
+          if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
+            disp = { x: tx, y: ty };
           } else {
-            disp.x += (target.x - disp.x) * 0.28;
-            disp.y += (target.y - disp.y) * 0.28;
+            disp.x += (tx - disp.x) * 0.45;
+            disp.y += (ty - disp.y) * 0.45;
           }
           el.style.display = 'block';
           el.style.left = `${oX + disp.x * dW}px`;
@@ -2553,13 +2577,13 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
           const d = Math.hypot(hx - lastFx, hy - lastFy);
           if (d < bestD) { bestD = d; bx = hx; by = hy; }
         }
-        // accepte si proche du joueur suivi, en LISSANT (EMA) pour absorber le
-        // tremblement de la boîte de détection plutôt que de sauter dessus.
-        if (bestD < 0.32) { lastFx += (bx - lastFx) * 0.7; lastFy += (by - lastFy) * 0.7; }
+        // accepte si proche du joueur suivi (position BRUTE ; le lissage centré
+        // SANS retard est appliqué au commit → reste pile sur la tête).
+        if (bestD < 0.32) { lastFx = bx; lastFy = by; }
       }
       newPts.push({ t, x: lastFx, y: lastFy });
       setProgress(total > startT ? (t - startT) / (total - startT) : 1);
-      pointsRef.current = [...kept, ...newPts].sort((a, b) => a.t - b.t);
+      pointsRef.current = [...kept, ...smoothCentered(newPts, 1)].sort((a, b) => a.t - b.t);
       onChange(pointsRef.current.slice());
     }
     analyzeRef.current = false;
