@@ -880,24 +880,20 @@ function smoothCentered(pts, win = 1, moveThresh = 0.05) {
 // démarrage d'une accélération, petite à grande vitesse), avec un léger surplus
 // d'anticipation. Résultat : la flèche reste pile sur la tête, sans retard ni
 // dépassement, que tu accélères, recules ou changes de côté.
+const TRACK_LEAD = 0.09; // avance FIXE (s) : compense le retard du lissage sans saut
 function trackedDisplayPoint(pts, t, fx, fy, now) {
-  const p0 = interpTrackingPoint(pts, t);
-  if (!p0) return null;
-  const p1 = interpTrackingPoint(pts, t + 0.05);
-  let lead = 0;
-  if (p1) {
-    const speed = Math.hypot(p1.x - p0.x, p1.y - p0.y) / 0.05;   // unités/s
-    const cutoff = 1.0 + 12 * speed;                            // = formule du One-Euro
-    lead = Math.min(0.2, 1.5 / (2 * Math.PI * cutoff));         // ~constante de temps, plafonnée
-  }
-  const pred = interpTrackingPoint(pts, t + lead) || p0;
+  // Avance CONSTANTE (pas adaptative) : on lit la position future, ce qui anticipe
+  // et compense le retard du filtre, mais comme l'avance ne varie pas, la cible ne
+  // saute jamais → mouvement parfaitement lisse. Le One-Euro assure la fluidité.
+  const pred = interpTrackingPoint(pts, t + TRACK_LEAD);
+  if (!pred) return null;
   return { x: fx.filter(pred.x, now), y: fy.filter(pred.y, now) };
 }
 
 // Filtre "One-Euro" : lissage ADAPTATIF à la vitesse. Au repos (vitesse faible)
 // il lisse fort → supprime le tremblement. En mouvement rapide il lisse très peu
 // → quasi aucun retard. Idéal pour coller la flèche à la tête sans saccade.
-function createOneEuroFilter(minCutoff = 1.0, beta = 12, dCutoff = 1) {
+function createOneEuroFilter(minCutoff = 1.0, beta = 8, dCutoff = 1) {
   let xPrev = null, dxPrev = 0, tPrev = 0;
   const alpha = (cutoff, dt) => { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); };
   return {
