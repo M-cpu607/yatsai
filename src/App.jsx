@@ -6212,7 +6212,7 @@ function AppointmentModal({ athlete, onClose, onCreate }) {
 }
 
 // Carte d'un rendez-vous d'essai (onglet Emploi du temps / Essais).
-function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile }) {
+function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile, onOpenChat }) {
   const p = item.otherProfile;
   const status = item.status || 'proposed';
   const dt = new Date(item.starts_at);
@@ -6235,7 +6235,7 @@ function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile })
           <span className="text-[8px] font-bold uppercase leading-none">{dt.toLocaleDateString('fr-FR', { month: 'short' })}</span>
           <span className="text-lg font-extrabold leading-none">{dt.getDate()}</span>
         </div>
-        <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
+        <button onClick={() => p && onOpenChat?.(p)} className="flex-1 min-w-0 text-left" aria-label="Ouvrir la conversation">
           <div className="text-sm font-bold truncate" style={{ color: C.text }}>{p?.full_name || 'Utilisateur'}</div>
           <div className="text-[11px] capitalize" style={{ color: C.textDim }}>🗓️ {dateStr} · {timeStr}</div>
         </button>
@@ -6288,7 +6288,7 @@ function DecisionBadge({ status }) {
 
 // Carte d'une candidature OU d'une proposition (réutilisée dans les 2 onglets).
 // kind: 'application' (le recruteur décide) | 'proposal' (l'athlète décide).
-function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile }) {
+function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile, onOpenChat }) {
   const p = item.otherProfile;
   const status = item.status || 'sent';
   const nVid = Array.isArray(item.video_ids) ? item.video_ids.length : 0;
@@ -6296,10 +6296,10 @@ function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile 
   return (
     <div className="rounded-xl p-3 fade-in" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
       <div className="flex items-center gap-3">
-        <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0">
+        <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0" aria-label="Voir le profil">
           <Avatar profile={p} size={44} ringColor={C.gold} />
         </button>
-        <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
+        <button onClick={() => p && onOpenChat?.(p)} className="flex-1 min-w-0 text-left" aria-label="Ouvrir la conversation">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="font-bold text-sm truncate" style={{ color: C.text }}>{p?.full_name || 'Utilisateur'}</span>
             {p?.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
@@ -6483,7 +6483,8 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
             </div>
           ) : applications.map(app => (
             <RequestCard key={app.id} item={app} isRecruiterViewer={isRecruiter}
-              kind="application" onDecide={onDecideApplication} onSelectProfile={onSelectProfile} />
+              kind="application" onDecide={onDecideApplication} onSelectProfile={onSelectProfile}
+              onOpenChat={(prof) => onOpenChat({ otherProfile: prof })} />
           ))}
         </div>
       )}
@@ -6506,7 +6507,8 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
             </div>
           ) : proposals.map(prop => (
             <RequestCard key={prop.id} item={prop} isRecruiterViewer={isRecruiter}
-              kind="proposal" onDecide={onDecideProposal} onSelectProfile={onSelectProfile} />
+              kind="proposal" onDecide={onDecideProposal} onSelectProfile={onSelectProfile}
+              onOpenChat={(prof) => onOpenChat({ otherProfile: prof })} />
           ))}
         </div>
       )}
@@ -6529,7 +6531,8 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
             </div>
           ) : appointments.map(appt => (
             <AppointmentCard key={appt.id} item={appt} isRecruiterViewer={isRecruiter}
-              onDecide={onDecideAppointment} onSelectProfile={onSelectProfile} />
+              onDecide={onDecideAppointment} onSelectProfile={onSelectProfile}
+              onOpenChat={(prof) => onOpenChat({ otherProfile: prof })} />
           ))}
         </div>
       )}
@@ -6537,9 +6540,38 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
   );
 }
 
+// Bandeau d'action en haut de la conversation (accepter/refuser une candidature,
+// proposition ou un essai en attente, directement depuis le chat).
+function ActionBanner({ icon, title, subtitle, onAccept, onRefuse, acceptLabel, refuseLabel }) {
+  return (
+    <div className="rounded-xl p-3" style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
+      <div className="flex items-start gap-2">
+        <span className="text-base leading-none mt-0.5">{icon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-bold" style={{ color: C.text }}>{title}</div>
+          {subtitle && (
+            <div className="text-[11px] mt-0.5" style={{ color: C.textDim,
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              {subtitle}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-2.5 flex gap-2">
+        <button onClick={onAccept} className="flex-1 py-2 rounded-xl text-xs font-bold"
+          style={{ backgroundColor: C.green, color: C.bg }}>✅ {acceptLabel}</button>
+        <button onClick={onRefuse} className="flex-1 py-2 rounded-xl text-xs font-bold"
+          style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>❌ {refuseLabel}</button>
+      </div>
+    </div>
+  );
+}
+
 function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSendMessage, onMarkRead, onSelectProfile,
                     onLoadPendingSigning, onRespondToSigning, onDeleteMessage, onReport,
-                    viewerIsRecruiter, onProposeTrial }) {
+                    viewerIsRecruiter, onProposeTrial,
+                    applications = [], proposals = [], appointments = [],
+                    onDecideApplication, onDecideProposal, onDecideAppointment }) {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6694,6 +6726,20 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
         return sp ? `${sp.icon} ${sp.label}` : 'Athlète';
       })();
 
+  // Éléments EN ATTENTE avec cet interlocuteur → actions directes dans le chat.
+  const pendingApp = viewerIsRecruiter
+    ? applications.find(a => a.athlete_id === otherProfile.id && (a.status || 'sent') === 'sent') : null;
+  const pendingProp = !viewerIsRecruiter
+    ? proposals.find(p => p.recruiter_id === otherProfile.id && (p.status || 'sent') === 'sent') : null;
+  const pendingAppts = !viewerIsRecruiter
+    ? appointments.filter(a => a.recruiter_id === otherProfile.id && (a.status || 'proposed') === 'proposed') : [];
+  const apptLabel = (a) => {
+    const d = new Date(a.starts_at);
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' }) + ' à '
+      + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      + (a.location ? ' · 📍 ' + a.location : '');
+  };
+
   return (
     <div className="flex flex-col fade-in" style={{ height: '100dvh', backgroundColor: C.bg }}>
       <div className="px-4 pt-3 pb-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -6726,6 +6772,30 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
           </button>
         )}
       </div>
+
+      {/* Bandeaux d'action : décider d'une candidature / proposition / essai en attente */}
+      {(pendingApp || pendingProp || pendingAppts.length > 0) && (
+        <div className="px-4 pt-3 flex flex-col gap-2">
+          {pendingApp && (
+            <ActionBanner icon="📨" title="Candidature reçue" subtitle={pendingApp.message}
+              acceptLabel="Accepter" refuseLabel="Refuser"
+              onAccept={() => onDecideApplication?.(pendingApp.id, 'accepted')}
+              onRefuse={() => onDecideApplication?.(pendingApp.id, 'refused')} />
+          )}
+          {pendingProp && (
+            <ActionBanner icon="📩" title="Proposition reçue" subtitle={pendingProp.message}
+              acceptLabel="Accepter" refuseLabel="Refuser"
+              onAccept={() => onDecideProposal?.(pendingProp.id, 'accepted')}
+              onRefuse={() => onDecideProposal?.(pendingProp.id, 'refused')} />
+          )}
+          {pendingAppts.map(appt => (
+            <ActionBanner key={appt.id} icon="📅" title="Essai proposé" subtitle={apptLabel(appt)}
+              acceptLabel="Confirmer" refuseLabel="Décliner"
+              onAccept={() => onDecideAppointment?.(appt.id, 'accepted')}
+              onRefuse={() => onDecideAppointment?.(appt.id, 'declined')} />
+          ))}
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2">
         {loading ? (
@@ -13802,6 +13872,12 @@ export default function App() {
             onReport={openReport}
             viewerIsRecruiter={!!userProfile?.is_recruiter}
             onProposeTrial={(athlete) => setTrialTarget(athlete)}
+            applications={applications}
+            proposals={proposals}
+            appointments={appointments}
+            onDecideApplication={decideApplication}
+            onDecideProposal={decideProposal}
+            onDecideAppointment={decideAppointment}
           />
         </div>
       )}
