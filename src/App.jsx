@@ -880,7 +880,7 @@ function smoothCentered(pts, win = 1, moveThresh = 0.05) {
 // démarrage d'une accélération, petite à grande vitesse), avec un léger surplus
 // d'anticipation. Résultat : la flèche reste pile sur la tête, sans retard ni
 // dépassement, que tu accélères, recules ou changes de côté.
-const TRACK_LEAD = 0.09; // avance FIXE (s) : compense le retard du lissage sans saut
+const TRACK_LEAD = 0.13; // avance FIXE (s) : compense le retard du lissage sans saut
 function trackedDisplayPoint(pts, t, fx, fy, now) {
   // Avance CONSTANTE (pas adaptative) : on lit la position future, ce qui anticipe
   // et compense le retard du filtre, mais comme l'avance ne varie pas, la cible ne
