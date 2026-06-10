@@ -877,7 +877,7 @@ function smoothCentered(pts, win = 1, moveThresh = 0.05) {
 // Filtre "One-Euro" : lissage ADAPTATIF à la vitesse. Au repos (vitesse faible)
 // il lisse fort → supprime le tremblement. En mouvement rapide il lisse très peu
 // → quasi aucun retard. Idéal pour coller la flèche à la tête sans saccade.
-function createOneEuroFilter(minCutoff = 1.5, beta = 7, dCutoff = 1) {
+function createOneEuroFilter(minCutoff = 1.0, beta = 12, dCutoff = 1) {
   let xPrev = null, dxPrev = 0, tPrev = 0;
   const alpha = (cutoff, dt) => { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); };
   return {
