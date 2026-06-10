@@ -4122,11 +4122,13 @@ function parseSmartQuery(text, vocab) {
   matchDynamic(vocab.countries, 'Pays', 'country');
   matchDynamic(vocab.nationalities, 'Nationalité', 'nationality');
 
-  // Mots-clés résiduels pour text search
+  // Mots-clés résiduels pour text search. On garde les mots ≥ 3 lettres ET les
+  // codes courts de championnat/division (R2, N3, D1, K1…) souvent présents dans
+  // les titres/descriptions, qui seraient sinon perdus.
   const keywords = working
     .split(/[^a-z0-9]+/i)
     .map(w => w.trim())
-    .filter(w => w.length >= 3 && !STOP_WORDS.has(w));
+    .filter(w => (w.length >= 3 || /^[a-z]\d{1,2}$/.test(w)) && !STOP_WORDS.has(w));
 
   // Synonymes de poste / attributs → on injecte les termes canoniques dans les
   // mots-clés (cherchés ensuite dans position/bio/titres) et on les affiche.
@@ -4250,8 +4252,11 @@ function findAthletesByName(athletes, query) {
 function buildAthleteSummary(a, vids) {
   const sport = SPORTS.find(s => s.id === a.sport);
   const lvl = LEVEL_LABELS[a.level];
+  const role = a.role || (a.is_recruiter ? 'recruiter' : 'athlete');
+  const roleLabel = role === 'recruiter' ? '💼 Recruteur' : role === 'observer' ? '👁️ Observateur' : '🏃 Athlète';
   const lines = [];
-  lines.push('👤 **' + (a.full_name || 'Athlète') + '**' + (a.verified ? ' ✅' : ''));
+  lines.push('👤 **' + (a.full_name || 'Utilisateur') + '**' + (a.verified ? ' ✅' : '') + (a.is_private ? ' 🔒' : ''));
+  lines.push(roleLabel);
   const l2 = [];
   if (sport) l2.push(sport.icon + ' ' + sport.label);
   if (a.position) l2.push(a.position);
@@ -4272,7 +4277,7 @@ function buildAthleteSummary(a, vids) {
 }
 
 // Correspondance STRICTE aux critères structurés (pour le comptage « combien… »).
-function strictMatchProfile(p, filters, gender, keywords) {
+function strictMatchProfile(p, filters, gender, keywords, extraText) {
   if (filters.sport && p.sport !== filters.sport) return false;
   if (gender && p.gender !== gender) return false;
   if (filters.levels.length && filters.levels.indexOf(p.level) < 0) return false;
@@ -4283,7 +4288,8 @@ function strictMatchProfile(p, filters, gender, keywords) {
   const locOk = (field, val) => !val || stripAccents((p[field] || '').toLowerCase()).indexOf(stripAccents(val.toLowerCase())) >= 0;
   if (!locOk('city', filters.city) || !locOk('region', filters.region) || !locOk('country', filters.country)) return false;
   if (keywords && keywords.length) {
-    const hay = stripAccents([p.position, p.bio, p.full_name, p.club].filter(Boolean).join(' ').toLowerCase());
+    // Cherche les mots-clés dans le profil ET dans les titres/descriptions de ses vidéos.
+    const hay = stripAccents([p.position, p.bio, p.full_name, p.club, extraText || ''].filter(Boolean).join(' ').toLowerCase());
     if (!keywords.some(k => hay.indexOf(k) >= 0)) return false;
   }
   return true;
@@ -4493,24 +4499,32 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
     if (sensitiveAnswer) { push({ role: 'assistant', content: sensitiveAnswer }); setLoading(false); return; }
 
     try {
-      // Athlètes + vidéos (avec leur auteur) + signatures
+      // TOUS les comptes (athlètes, recruteurs, observateurs) + TOUTES les vidéos
+      // + signatures. Le chatbot connaît ainsi tout le monde et tous les titres /
+      // descriptions. (.limit élevé pour ne pas être plafonné à 1000 lignes.)
       const [profilesRes, videosRes, signedRes] = await Promise.all([
         supabase.from('profiles')
-          .select('id, full_name, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status, is_private, hide_location')
-          .eq('is_recruiter', false).neq('id', currentUserId || '').or('is_private.is.null,is_private.eq.false'),
+          .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status, is_private, hide_location')
+          .neq('id', currentUserId || '').limit(10000),
         supabase.from('videos')
-          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)'),
-        supabase.from('signed_posts').select('id, athlete_id, caption'),
+          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)')
+          .limit(10000),
+        supabase.from('signed_posts').select('id, athlete_id, caption').limit(10000),
       ]);
-      const athletes = profilesRes.data || [];
+      const allProfiles = profilesRes.data || [];
       const videos = videosRes.data || [];
       const signedPosts = signedRes.data || [];
+      const roleOf = (p) => (p && p.role) ? p.role : (p && p.is_recruiter ? 'recruiter' : 'athlete');
+      // Athlètes « découvrables » pour la recherche/suggestion de recrutement :
+      // on respecte le réglage « compte privé » choisi par chaque utilisateur.
+      const athletes = allProfiles.filter(p => roleOf(p) === 'athlete' && !p.is_private);
 
+      // Vocabulaire (villes / régions / pays / nationalités) construit sur TOUS les comptes.
       const vocab = {
-        cities: uniqueValues(athletes, 'city'),
-        regions: uniqueValues(athletes, 'region'),
-        countries: uniqueValues(athletes, 'country'),
-        nationalities: uniqueValues(athletes, 'nationality'),
+        cities: uniqueValues(allProfiles, 'city'),
+        regions: uniqueValues(allProfiles, 'region'),
+        countries: uniqueValues(allProfiles, 'country'),
+        nationalities: uniqueValues(allProfiles, 'nationality'),
       };
       const parsed = parseSmartQuery(q, vocab);
       const { filters, matched, keywords } = parsed;
@@ -4518,6 +4532,10 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
       if (gender) matched.push('Genre : ' + (gender === 'F' ? 'féminin' : 'masculin'));
 
       const lq = stripAccents(q.toLowerCase());
+      // Rôle ciblé par la question (par défaut : athlètes, cible du recrutement)
+      const roleWanted = /\b(recruteur|recruteurs|club|clubs|scout|scouts|agent|agents)\b/.test(lq) ? 'recruiter'
+        : /\b(observateur|observateurs|spectateur|spectateurs)\b/.test(lq) ? 'observer' : null;
+      const roleNoun = roleWanted === 'recruiter' ? 'recruteur' : roleWanted === 'observer' ? 'observateur' : 'athlète';
       // Intention vidéo ?
       const videoIntent = /\b(video|videos|clip|clips|extrait|extraits|sequence|sequences|replay|images|montre|highlight|highlights)\b/.test(lq);
       // Type de vidéo demandé
@@ -4535,7 +4553,7 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
       // « parle-moi de X », « qui est X », « résume le profil de X »
       const describeIntent = /(parle[- ]?moi|qui est|c'?est qui|presente|resume|fiche de|profil de|info[s]? sur)/.test(lq);
       if (describeIntent) {
-        const named = findAthletesByName(athletes, q);
+        const named = findAthletesByName(allProfiles, q);
         if (named.length > 0) {
           const a = named[0];
           const av = videos.filter(v => v.user_id === a.id);
@@ -4593,14 +4611,20 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
           setLoading(false);
           return;
         }
-        const pool = athletes.filter(p => strictMatchProfile(p, filters, gender, keywords));
+        const base = roleWanted === 'recruiter' ? allProfiles.filter(p => roleOf(p) === 'recruiter' && !p.is_private)
+                   : roleWanted === 'observer' ? allProfiles.filter(p => roleOf(p) === 'observer' && !p.is_private)
+                   : athletes;
+        const pool = base.filter(p => {
+          const extra = videos.filter(v => v.user_id === p.id).map(v => (v.title || '') + ' ' + (v.description || '')).join(' ');
+          return strictMatchProfile(p, filters, gender, keywords, extra);
+        });
         const n = pool.length;
         const crit = matched.length ? ' (' + matched.join(' · ') + ')' : '';
         const preview = pool.map(p => ({ p, n: videos.filter(v => v.user_id === p.id).length }))
           .sort((a, b) => b.n - a.n).slice(0, 3).map(x => x.p);
         push({
           role: 'assistant',
-          content: '📊 **' + n + '** athlète' + (n > 1 ? 's' : '') + crit + (n > 3 ? '. Les 3 plus actifs :' : (n > 0 ? ' :' : '.')),
+          content: '📊 **' + n + '** ' + roleNoun + (n > 1 ? 's' : '') + crit + (n > 3 ? '. Les 3 plus actifs :' : (n > 0 ? ' :' : '.')),
           results: preview,
           filters: hasStructured ? filters : undefined,
         });
@@ -4636,7 +4660,7 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
         return;
       }
 
-      const isSearch = hasStructured || athleteHint;
+      const isSearch = hasStructured || athleteHint || !!roleWanted;
 
       // ─── PAS DE RECHERCHE → AIDE (FAQ) ───
       if (!isSearch) {
@@ -4647,8 +4671,12 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
         return;
       }
 
-      // ─── BRANCHE ATHLÈTE ───
-      let pool = athletes;
+      // ─── BRANCHE RECHERCHE DE COMPTES ───
+      // Par défaut : athlètes (cible du recrutement). Si la question vise
+      // explicitement les recruteurs/observateurs, on cherche dans ce rôle.
+      let pool = roleWanted === 'recruiter' ? allProfiles.filter(p => roleOf(p) === 'recruiter' && !p.is_private)
+               : roleWanted === 'observer' ? allProfiles.filter(p => roleOf(p) === 'observer' && !p.is_private)
+               : athletes;
       if (gender) pool = pool.filter(p => p.gender === gender);
 
       const scored = [];
@@ -4663,11 +4691,11 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
 
       const head = matched.length > 0 ? '🔎 ' + matched.join(' · ') : 'Voici les meilleurs résultats';
       if (top.length === 0) {
-        push({ role: 'assistant', content: head + '\n\nAucun athlète ne correspond pour le moment. Essaie d\'élargir (retire la ville ou le niveau).' });
+        push({ role: 'assistant', content: head + `\n\nAucun ${roleNoun} ne correspond pour le moment. Essaie d'élargir (retire la ville ou le niveau).` });
       } else {
         push({
           role: 'assistant',
-          content: head + `\n\n${top.length} athlète${top.length > 1 ? 's' : ''} trouvé${top.length > 1 ? 's' : ''} :`,
+          content: head + `\n\n${top.length} ${roleNoun}${top.length > 1 ? 's' : ''} trouvé${top.length > 1 ? 's' : ''} :`,
           results: top,
           filters,
         });
