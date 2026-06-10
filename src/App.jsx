@@ -947,9 +947,9 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
           // PRÉDICTION : on vise légèrement en avance, proportionnellement à la
           // vitesse (lookahead), pour compenser le retard du lissage et rester
           // AU-DESSUS de la tête même en mouvement rapide.
-          const look = interpTrackingPoint(sorted, t + 0.12) || target;
-          const tx = target.x + (look.x - target.x) * 0.3;
-          const ty = target.y + (look.y - target.y) * 0.3;
+          const look = interpTrackingPoint(sorted, t + 0.15) || target;
+          const tx = target.x + (look.x - target.x) * 0.5;
+          const ty = target.y + (look.y - target.y) * 0.5;
           if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
             disp = { x: tx, y: ty };           // grand saut (changement de plan / scrub)
           } else {
@@ -2365,9 +2365,9 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
         const t = v.currentTime || 0;
         const target = interpTrackingPoint(pointsRef.current, t);
         if (target) {
-          const look = interpTrackingPoint(pointsRef.current, t + 0.12) || target;
-          const tx = target.x + (look.x - target.x) * 0.3;
-          const ty = target.y + (look.y - target.y) * 0.3;
+          const look = interpTrackingPoint(pointsRef.current, t + 0.15) || target;
+          const tx = target.x + (look.x - target.x) * 0.5;
+          const ty = target.y + (look.y - target.y) * 0.5;
           if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
             disp = { x: tx, y: ty };
           } else {
