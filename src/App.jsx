@@ -851,19 +851,25 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 // ─── Flèche de suivi du joueur (marquée manuellement par l'athlète) ───
 // points = [{ t: secondes, x: 0..1, y: 0..1 }] en fraction du cadre vidéo.
 // On interpole linéairement la position entre deux points marqués.
+// Interpolation Catmull-Rom : courbe LISSE passant par tous les points (continuité
+// de vitesse aux jonctions → plus d'à-coups). Repli linéaire si trop peu de points.
 function interpTrackingPoint(pts, t) {
   if (!pts || pts.length === 0) return null;
-  if (t <= pts[0].t) return { x: pts[0].x, y: pts[0].y };
+  if (pts.length === 1 || t <= pts[0].t) return { x: pts[0].x, y: pts[0].y };
   const last = pts[pts.length - 1];
   if (t >= last.t) return { x: last.x, y: last.y };
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1];
-    if (t >= a.t && t <= b.t) {
-      const f = (t - a.t) / ((b.t - a.t) || 1);
-      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
-    }
-  }
-  return { x: last.x, y: last.y };
+  let i = 0;
+  for (; i < pts.length - 1; i++) { if (t >= pts[i].t && t <= pts[i + 1].t) break; }
+  const p1 = pts[i], p2 = pts[i + 1];
+  const p0 = pts[i - 1] || p1;
+  const p3 = pts[i + 2] || p2;
+  let f = (t - p1.t) / ((p2.t - p1.t) || 1);
+  if (f < 0) f = 0; else if (f > 1) f = 1;
+  const f2 = f * f, f3 = f2 * f;
+  // Catmull-Rom uniforme
+  const cr = (a, b, c, d) =>
+    0.5 * (2 * b + (-a + c) * f + (2 * a - 5 * b + 4 * c - d) * f2 + (-a + 3 * b - 3 * c + d) * f3);
+  return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) };
 }
 
 // Triangle rouge pointant vers le bas, placé au-dessus de la tête du joueur.
@@ -904,6 +910,7 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
   useEffect(() => {
     if (sorted.length === 0) return;
     let raf;
+    let disp = null; // position affichée (lissée), suit la cible en douceur
     const loop = () => {
       const v = videoRef.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
@@ -911,11 +918,19 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const p = interpTrackingPoint(sorted, v.currentTime || 0);
-        if (p) {
+        const target = interpTrackingPoint(sorted, v.currentTime || 0);
+        if (target) {
+          // Filtre passe-bas : on lisse, mais on s'aligne d'un coup sur un grand
+          // saut (changement de plan, scrub) pour ne pas « glisser » à l'écran.
+          if (!disp || Math.hypot(target.x - disp.x, target.y - disp.y) > 0.12) {
+            disp = { x: target.x, y: target.y };
+          } else {
+            disp.x += (target.x - disp.x) * 0.28;
+            disp.y += (target.y - disp.y) * 0.28;
+          }
           el.style.display = 'block';
-          el.style.left = `${oX + p.x * dW}px`;
-          el.style.top = `${oY + p.y * dH}px`;
+          el.style.left = `${oX + disp.x * dW}px`;
+          el.style.top = `${oY + disp.y * dH}px`;
         } else {
           el.style.display = 'none';
         }
@@ -2309,20 +2324,27 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
   // jamais (aucune saccade). Pendant le glissement, c'est le doigt qui pilote.
   useEffect(() => {
     let raf;
+    let disp = null; // position affichée (lissée)
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      if (dragRef.current.dragging) return;
+      if (dragRef.current.dragging) { disp = null; return; } // le doigt pilote → on resnappera ensuite
       const v = vref.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
         const cw = v.clientWidth, ch = v.clientHeight;
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const p = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
-        if (p) {
+        const target = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
+        if (target) {
+          if (!disp || Math.hypot(target.x - disp.x, target.y - disp.y) > 0.12) {
+            disp = { x: target.x, y: target.y };
+          } else {
+            disp.x += (target.x - disp.x) * 0.28;
+            disp.y += (target.y - disp.y) * 0.28;
+          }
           el.style.display = 'block';
-          el.style.left = `${oX + p.x * dW}px`;
-          el.style.top = `${oY + p.y * dH}px`;
+          el.style.left = `${oX + disp.x * dW}px`;
+          el.style.top = `${oY + disp.y * dH}px`;
         } else el.style.display = 'none';
       }
     };
@@ -2531,7 +2553,9 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
           const d = Math.hypot(hx - lastFx, hy - lastFy);
           if (d < bestD) { bestD = d; bx = hx; by = hy; }
         }
-        if (bestD < 0.32) { lastFx = bx; lastFy = by; }  // accepte si proche du joueur suivi
+        // accepte si proche du joueur suivi, en LISSANT (EMA) pour absorber le
+        // tremblement de la boîte de détection plutôt que de sauter dessus.
+        if (bestD < 0.32) { lastFx += (bx - lastFx) * 0.7; lastFy += (by - lastFy) * 0.7; }
       }
       newPts.push({ t, x: lastFx, y: lastFy });
       setProgress(total > startT ? (t - startT) / (total - startT) : 1);
