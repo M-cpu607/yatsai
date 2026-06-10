@@ -854,10 +854,18 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
 // Lissage CENTRÉ (moyenne mobile symétrique) : réduit le tremblement sans
 // introduire de retard directionnel (contrairement à un EMA), car il utilise
 // autant de points avant qu'après. La détection étant hors-ligne, on a les deux.
-function smoothCentered(pts, win = 1) {
+function smoothCentered(pts, win = 1, moveThresh = 0.05) {
   if (!pts || pts.length <= 2) return pts ? pts.slice() : [];
   const out = [];
   for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
+    // Mouvement local ample (course, SAUT, ACCROUPISSEMENT, changement de côté)
+    // → on garde la position BRUTE pour ne pas gommer un vrai déplacement rapide.
+    // Sinon (quasi-immobile) → on lisse le tremblement de la détection.
+    if (Math.hypot(next.x - prev.x, next.y - prev.y) > moveThresh) {
+      out.push({ t: pts[i].t, x: pts[i].x, y: pts[i].y });
+      continue;
+    }
     let sx = 0, sy = 0, n = 0;
     const lo = Math.max(0, i - win), hi = Math.min(pts.length - 1, i + win);
     for (let j = lo; j <= hi; j++) { sx += pts[j].x; sy += pts[j].y; n++; }
@@ -2363,8 +2371,8 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
           if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
             disp = { x: tx, y: ty };
           } else {
-            disp.x += (tx - disp.x) * 0.45;
-            disp.y += (ty - disp.y) * 0.45;
+            disp.x += (tx - disp.x) * 0.5;
+            disp.y += (ty - disp.y) * 0.5;
           }
           el.style.display = 'block';
           el.style.left = `${oX + disp.x * dW}px`;
@@ -2558,7 +2566,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     const ctx = c.getContext('2d', { willReadFrequently: true });
 
     const total = v.duration || 0;
-    const step = 0.25;
+    const step = 0.15;   // pas plus fin → capte les mouvements verticaux rapides (saut, accroupissement)
     let lastFx = fx, lastFy = fy;
     const kept = pointsRef.current.filter(p => p.t < startT - 0.01);
     const newPts = [{ t: startT, x: fx, y: fy }];
