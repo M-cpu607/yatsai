@@ -6350,6 +6350,21 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
   const propPendingCount = isAthlete ? proposals.filter(p => (p.status || 'sent') === 'sent').length : 0;
   const apptPendingCount = isAthlete ? appointments.filter(a => (a.status || 'proposed') === 'proposed').length : 0;
 
+  // Statut de la candidature/proposition liée à un interlocuteur (affiché à droite
+  // dans la liste des conversations, comme dans les onglets dédiés). On privilégie
+  // une décision (acceptée/refusée) sur « en attente », puis le plus récent.
+  const requestStatusFor = (otherId) => {
+    const rel = [...applications, ...proposals].filter(r => r.otherProfile?.id === otherId);
+    if (rel.length === 0) return null;
+    rel.sort((a, b) => {
+      const da = (a.status && a.status !== 'sent') ? 1 : 0;
+      const db = (b.status && b.status !== 'sent') ? 1 : 0;
+      if (da !== db) return db - da;
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+    return rel[0].status || 'sent';
+  };
+
   const TabBtn = ({ id, label, badge }) => (
     <button onClick={() => setTab(id)}
       className="px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap flex-shrink-0"
@@ -6411,6 +6426,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
             {conversations.map(c => {
               const lastFromMe = c.lastMessage.sender_id === currentUserId;
               const preview = (lastFromMe ? 'Vous : ' : '') + (c.lastMessage.content || '');
+              const reqStatus = requestStatusFor(c.otherId);
               return (
                 <div key={c.otherId}
                   className="flex items-center gap-3 p-3 rounded-xl fade-in"
@@ -6436,13 +6452,16 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
                       {preview}
                     </div>
                   </button>
-                  {c.unreadCount > 0 && (
-                    <button onClick={() => onOpenChat(c)}
-                      className="min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold px-1.5 flex-shrink-0"
-                      style={{ backgroundColor: C.gold, color: C.bg }}>
-                      {c.unreadCount}
-                    </button>
-                  )}
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    {reqStatus && <DecisionBadge status={reqStatus} />}
+                    {c.unreadCount > 0 && (
+                      <button onClick={() => onOpenChat(c)}
+                        className="min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold px-1.5"
+                        style={{ backgroundColor: C.gold, color: C.bg }}>
+                        {c.unreadCount}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
