@@ -6035,6 +6035,79 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
   );
 }
 
+// Modal recruteur → athlète : rédiger et envoyer une proposition.
+function ProposalModal({ athlete, onClose, onSend }) {
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const sport = SPORTS.find(s => s.id === athlete?.sport);
+
+  const submit = async () => {
+    if (loading) return;
+    setLoading(true); setError('');
+    const res = await onSend(athlete.id, message);
+    setLoading(false);
+    if (res?.error) { setError(res.error); return; }
+    setDone(true);
+    setTimeout(onClose, 1300);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[92] flex items-end" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
+      <div className="w-full rounded-t-2xl" style={{ backgroundColor: C.bg, border: '1px solid ' + C.border }}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
+          <div className="text-base font-extrabold" style={{ color: C.text }}>📩 Faire une proposition</div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: C.surface }}>
+            <X size={16} style={{ color: C.text }} />
+          </button>
+        </div>
+        <div className="px-4 py-4 space-y-3">
+          {done ? (
+            <div className="py-8 text-center">
+              <CheckCircle2 size={40} style={{ color: C.green }} className="mx-auto mb-2" />
+              <div className="text-sm font-bold" style={{ color: C.text }}>
+                Proposition envoyée à {athlete?.full_name || "l'athlète"} !
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <Avatar profile={athlete} size={44} ringColor={C.gold} />
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate" style={{ color: C.text }}>{athlete?.full_name || 'Athlète'}</div>
+                  <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+                    {sport ? `${sport.icon} ${sport.label}` : ''}{athlete?.position ? ` · ${athlete.position}` : ''}
+                  </div>
+                </div>
+              </div>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5}
+                placeholder="Présente ton club / ton projet et ce que tu proposes à cet athlète…"
+                className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
+                style={{ backgroundColor: C.surface, color: C.text, border: '1px solid ' + C.border, outline: 'none' }} />
+              {error && (
+                <div className="text-xs px-3 py-2 rounded-lg"
+                  style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.red, border: '1px solid ' + C.red }}>{error}</div>
+              )}
+              <button onClick={submit} disabled={loading || !message.trim()}
+                className="w-full py-3 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2"
+                style={{ background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`, color: C.bg, opacity: (loading || !message.trim()) ? 0.6 : 1 }}>
+                {loading ? <Loader2 size={16} className="animate-spin" /> : '📩'} Envoyer la proposition
+              </button>
+              <p className="text-[11px] text-center" style={{ color: C.textDim }}>
+                L'athlète recevra ta proposition dans sa messagerie et pourra l'accepter ou la refuser.
+              </p>
+            </>
+          )}
+        </div>
+        <div style={{ height: 'env(safe-area-inset-bottom)' }} />
+      </div>
+    </div>
+  );
+}
+
 // Badge de statut réutilisable (candidatures + propositions) : en attente / accepté / refusé.
 function DecisionBadge({ status }) {
   const map = {
@@ -6050,12 +6123,68 @@ function DecisionBadge({ status }) {
   );
 }
 
+// Carte d'une candidature OU d'une proposition (réutilisée dans les 2 onglets).
+// kind: 'application' (le recruteur décide) | 'proposal' (l'athlète décide).
+function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile }) {
+  const p = item.otherProfile;
+  const status = item.status || 'sent';
+  const nVid = Array.isArray(item.video_ids) ? item.video_ids.length : 0;
+  const canDecide = (kind === 'application' ? isRecruiterViewer : !isRecruiterViewer) && status === 'sent' && !!onDecide;
+  return (
+    <div className="rounded-xl p-3 fade-in" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+      <div className="flex items-center gap-3">
+        <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0">
+          <Avatar profile={p} size={44} ringColor={C.gold} />
+        </button>
+        <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="font-bold text-sm truncate" style={{ color: C.text }}>{p?.full_name || 'Utilisateur'}</span>
+            {p?.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
+          </div>
+          <div className="text-[11px] truncate" style={{ color: C.textDim }}>
+            {p?.is_recruiter
+              ? (p?.organization || 'Recruteur')
+              : `${SPORTS.find(s => s.id === (p?.sport || item.sport))?.label || item.sport || 'Sport'}${p?.position ? ' · ' + p.position : ''}${(p && !p.hide_location && p.city) ? ' · 📍 ' + p.city : ''}`}
+          </div>
+        </button>
+        <DecisionBadge status={status} />
+      </div>
+      {item.message && (
+        <div className="mt-2 text-xs rounded-lg px-3 py-2 whitespace-pre-wrap"
+          style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }}>
+          {item.message}
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center gap-2 text-[10px]" style={{ color: C.textDim }}>
+        {nVid > 0 && <span>🎬 {nVid} vidéo{nVid > 1 ? 's' : ''} jointe{nVid > 1 ? 's' : ''}</span>}
+        <span>· {timeAgo(item.created_at)}</span>
+      </div>
+      {canDecide && (
+        <div className="mt-2.5 flex gap-2">
+          <button onClick={() => onDecide(item.id, 'accepted')}
+            className="flex-1 py-2 rounded-xl text-xs font-bold" style={{ backgroundColor: C.green, color: C.bg }}>
+            ✅ Accepter
+          </button>
+          <button onClick={() => onDecide(item.id, 'refused')}
+            className="flex-1 py-2 rounded-xl text-xs font-bold"
+            style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
+            ❌ Refuser
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversation, onSelectProfile,
-                        isRecruiter, isAthlete, onOpenCandidature, applications = [], onDecideApplication }) {
+                        isRecruiter, isAthlete, onOpenCandidature, applications = [], onDecideApplication,
+                        proposals = [], onDecideProposal }) {
   const hasApps = isRecruiter || isAthlete;
   const [tab, setTab] = useState('messages');
-  // Recruteur : candidatures REÇUES (en attente = à traiter). Athlète : ENVOYÉES.
+  // Badges « à traiter » : recruteur = candidatures reçues en attente ;
+  // athlète = propositions reçues en attente.
   const pendingCount = isRecruiter ? applications.filter(a => (a.status || 'sent') === 'sent').length : 0;
+  const propPendingCount = isAthlete ? proposals.filter(p => (p.status || 'sent') === 'sent').length : 0;
 
   const TabBtn = ({ id, label, badge }) => (
     <button onClick={() => setTab(id)}
@@ -6089,8 +6218,9 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
       {/* Onglets : visibles pour athlètes et recruteurs */}
       {hasApps && (
         <div className="flex gap-2 mb-4">
-          <TabBtn id="messages" label="💬 Messages" />
+          <TabBtn id="messages" label="💬" />
           <TabBtn id="apps" label={isRecruiter ? '📥 Candidatures' : '📤 Candidatures'} badge={pendingCount} />
+          <TabBtn id="props" label={isRecruiter ? '📤 Propositions' : '📥 Propositions'} badge={propPendingCount} />
         </div>
       )}
 
@@ -6186,62 +6316,33 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
                   : 'Postule auprès des recruteurs avec le bouton ci-dessus.'}
               </p>
             </div>
-          ) : applications.map(app => {
-            const p = app.otherProfile;
-            const status = app.status || 'sent';
-            const nVid = Array.isArray(app.video_ids) ? app.video_ids.length : 0;
-            return (
-              <div key={app.id} className="rounded-xl p-3 fade-in"
-                style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0">
-                    <Avatar profile={p} size={44} ringColor={C.gold} />
-                  </button>
-                  <button onClick={() => p && onSelectProfile?.(p)} className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-bold text-sm truncate" style={{ color: C.text }}>
-                        {p?.full_name || 'Utilisateur'}
-                      </span>
-                      {p?.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
-                    </div>
-                    <div className="text-[11px] truncate" style={{ color: C.textDim }}>
-                      {isRecruiter
-                        ? `${SPORTS.find(s => s.id === (p?.sport || app.sport))?.label || app.sport || 'Sport'}${p?.position ? ' · ' + p.position : ''}${(p && !p.hide_location && p.city) ? ' · 📍 ' + p.city : ''}`
-                        : (p?.organization || 'Recruteur')}
-                    </div>
-                  </button>
-                  <DecisionBadge status={status} />
-                </div>
+          ) : applications.map(app => (
+            <RequestCard key={app.id} item={app} isRecruiterViewer={isRecruiter}
+              kind="application" onDecide={onDecideApplication} onSelectProfile={onSelectProfile} />
+          ))}
+        </div>
+      )}
 
-                {app.message && (
-                  <div className="mt-2 text-xs rounded-lg px-3 py-2 whitespace-pre-wrap"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }}>
-                    {app.message}
-                  </div>
-                )}
-                <div className="mt-1.5 flex items-center gap-2 text-[10px]" style={{ color: C.textDim }}>
-                  {nVid > 0 && <span>🎬 {nVid} vidéo{nVid > 1 ? 's' : ''} jointe{nVid > 1 ? 's' : ''}</span>}
-                  <span>· {timeAgo(app.created_at)}</span>
-                </div>
-
-                {/* Recruteur : Accepter / Refuser tant que c'est en attente */}
-                {isRecruiter && status === 'sent' && onDecideApplication && (
-                  <div className="mt-2.5 flex gap-2">
-                    <button onClick={() => onDecideApplication(app.id, 'accepted')}
-                      className="flex-1 py-2 rounded-xl text-xs font-bold"
-                      style={{ backgroundColor: C.green, color: C.bg }}>
-                      ✅ Accepter
-                    </button>
-                    <button onClick={() => onDecideApplication(app.id, 'refused')}
-                      className="flex-1 py-2 rounded-xl text-xs font-bold"
-                      style={{ backgroundColor: 'transparent', color: C.red, border: `1px solid ${C.red}` }}>
-                      ❌ Refuser
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+      {/* ───────── ONGLET PROPOSITIONS ───────── */}
+      {tab === 'props' && (
+        <div className="flex flex-col gap-2">
+          {proposals.length === 0 ? (
+            <div className="rounded-2xl py-14 px-6 text-center"
+              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+              <Inbox size={34} style={{ color: C.textMute }} className="mx-auto mb-3" />
+              <h3 className="text-sm font-bold mb-1" style={{ color: C.text }}>
+                {isRecruiter ? 'Aucune proposition envoyée' : 'Aucune proposition reçue'}
+              </h3>
+              <p className="text-xs" style={{ color: C.textDim }}>
+                {isRecruiter
+                  ? "Va sur le profil d'un athlète et tape « Faire une proposition »."
+                  : 'Les propositions des recruteurs apparaîtront ici.'}
+              </p>
+            </div>
+          ) : proposals.map(prop => (
+            <RequestCard key={prop.id} item={prop} isRecruiterViewer={isRecruiter}
+              kind="proposal" onDecide={onDecideProposal} onSelectProfile={onSelectProfile} />
+          ))}
         </div>
       )}
     </div>
@@ -9571,7 +9672,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
                            isFollowing, onFollow, onUnfollow, onLoadFollowCounts, onShowFollowList,
                            onClose, onContact, onAddToShortlist, onRemoveFromShortlist, onPlayVideo,
                            onReport, onLoadSignedPosts, onSelectProfile, onLoadSignedCount,
-                           onShowSignedAthletes, onDeleteVideo }) {
+                           onShowSignedAthletes, onDeleteVideo, onPropose, proposalStatus }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
@@ -9673,6 +9774,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
     signe: 'Signé',
   };
   const canShortlist = isViewerRecruiter && !profile.is_recruiter && !isOwn;
+  const canPropose = isViewerRecruiter && !profile.is_recruiter && !isObserverRole(profile) && !isOwn;
 
   return (
     <div className="fixed inset-0 z-[90] overflow-y-auto slide-in-right"
@@ -9918,6 +10020,27 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
             onDelete={() => Promise.resolve({})}
             onAdd={null}
             onSelectAthlete={onSelectProfile} />
+        </div>
+      )}
+
+      {/* Recruteur regardant un athlète : faire une proposition (Phase 2) */}
+      {canPropose && (
+        <div className="px-4 mb-4">
+          {proposalStatus ? (
+            <div className="w-full py-2.5 rounded-xl text-xs font-bold text-center"
+              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`,
+                color: proposalStatus === 'accepted' ? C.green : proposalStatus === 'refused' ? C.red : C.gold }}>
+              {proposalStatus === 'accepted' ? '✅ Proposition acceptée'
+                : proposalStatus === 'refused' ? '❌ Proposition refusée'
+                : '⏳ Proposition envoyée — en attente de réponse'}
+            </div>
+          ) : (
+            <button onClick={() => onPropose?.(profile)}
+              className="w-full py-3 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2"
+              style={{ background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`, color: C.bg }}>
+              📩 Faire une proposition
+            </button>
+          )}
         </div>
       )}
 
@@ -12502,6 +12625,80 @@ export default function App() {
       ? { ...a, status, decided_at: new Date().toISOString() } : a));
   };
 
+  // ─── Propositions (proposals) : recruteur → athlète ───────────────
+  // Le recruteur voit « Propositions envoyées » (statut), l'athlète voit
+  // « Propositions reçues » (Accepter / Refuser).
+  const [proposals, setProposals] = useState([]);
+  const loadProposals = async (profile) => {
+    if (!profile?.id) return;
+    const role = getUserRole(profile);
+    if (role !== 'athlete' && role !== 'recruiter') { setProposals([]); return; }
+    const meCol = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const otherCol = role === 'recruiter' ? 'athlete_id' : 'recruiter_id';
+    const { data, error } = await supabase.from('proposals')
+      .select('*').eq(meCol, profile.id).order('created_at', { ascending: false });
+    if (error) { console.error('Erreur chargement propositions:', error); return; }
+    const rows = data || [];
+    const otherIds = Array.from(new Set(rows.map(r => r[otherCol]).filter(Boolean)));
+    const profMap = new Map();
+    if (otherIds.length) {
+      const { data: profs } = await supabase.from('profiles')
+        .select('id, full_name, avatar_url, sport, level, organization, is_recruiter, role, verified, city, position, age, hide_location')
+        .in('id', otherIds);
+      for (const p of profs || []) profMap.set(p.id, p);
+    }
+    setProposals(rows.map(r => ({ ...r, otherProfile: profMap.get(r[otherCol]) || null })));
+  };
+  useEffect(() => {
+    if (userProfile?.id) loadProposals(userProfile);
+    else setProposals([]);
+  }, [userProfile?.id, userProfile?.role]);
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const role = getUserRole(userProfile);
+    if (role !== 'athlete' && role !== 'recruiter') return;
+    const col = role === 'recruiter' ? 'recruiter_id' : 'athlete_id';
+    const channel = supabase
+      .channel('proposals-' + userProfile.id)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'proposals', filter: `${col}=eq.${userProfile.id}` },
+        () => loadProposals(userProfile))
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userProfile?.id, userProfile?.role]);
+
+  // Recruteur : statut de MA proposition par athlète (pour le profil visité)
+  const proposalStatusByAthlete = useMemo(() => {
+    const m = new Map();
+    if (getUserRole(userProfile) === 'recruiter') {
+      for (const p of proposals) m.set(p.athlete_id, p.status || 'sent');
+    }
+    return m;
+  }, [proposals, userProfile?.role]);
+
+  // Recruteur : cible de la proposition en cours (ouvre le modal)
+  const [proposeTarget, setProposeTarget] = useState(null);
+  const sendProposal = async (athleteId, message) => {
+    if (!userProfile?.id || !athleteId) return { error: 'Données manquantes' };
+    const { error } = await supabase.from('proposals').insert({
+      recruiter_id: userProfile.id, athlete_id: athleteId,
+      message: (message || '').trim() || null, sport: userProfile.sport || null,
+    });
+    if (error) {
+      if (error.code === '23505') return { error: 'Tu as déjà fait une proposition à cet athlète.' };
+      return { error: error.message };
+    }
+    loadProposals(userProfile);
+    return { ok: true };
+  };
+  const decideProposal = async (propId, status) => {
+    const { error } = await supabase.from('proposals')
+      .update({ status, decided_at: new Date().toISOString() }).eq('id', propId);
+    if (error) { console.error('Erreur décision proposition:', error); return; }
+    setProposals(prev => prev.map(p => p.id === propId
+      ? { ...p, status, decided_at: new Date().toISOString() } : p));
+  };
+
   const sendMessage = async (receiverId, content, videoId = null) => {
     if (!userProfile?.id || !content.trim()) return null;
     const payload = {
@@ -13221,6 +13418,8 @@ export default function App() {
     onOpenCandidature: () => setCandidatureOpen(true),
     applications,
     onDecideApplication: decideApplication,
+    proposals,
+    onDecideProposal: decideProposal,
   };
 
   const renderScreen = () => {
@@ -13371,6 +13570,16 @@ export default function App() {
           onLoadSignedCount={loadSignedCount}
           onShowSignedAthletes={showSignedAthletes}
           onDeleteVideo={deleteVideo}
+          onPropose={(p) => setProposeTarget(p)}
+          proposalStatus={proposalStatusByAthlete.get(selectedProfile.id)}
+        />
+      )}
+
+      {proposeTarget && (
+        <ProposalModal
+          athlete={proposeTarget}
+          onClose={() => setProposeTarget(null)}
+          onSend={sendProposal}
         />
       )}
 
