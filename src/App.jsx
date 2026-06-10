@@ -450,28 +450,48 @@ const CURRENT_RECRUITER = {
 };
 
 // ─── CHATBOT NLP (filtres simples) ─────────────────────────────────
+// Mots-clés → sport. NB : l'ordre compte (on s'arrête au 1er sport qui matche),
+// donc les sports « composés » passent avant ceux dont le mot est inclus dedans
+// (ex. Kitesurf avant Surf pour que « kitesurf » ne soit pas pris pour « surf »).
+// Limité aux 15 sports détectables (voir SPORTS).
 const SPORT_KEYWORDS = {
   Football: ['foot', 'football', 'soccer'],
-  Basketball: ['basket', 'basketball', 'nba'],
-  'Athlétisme': ['athle', 'athletisme', 'sprint', 'course'],
-  Natation: ['natation', 'nageur', 'piscine'],
-  Tennis: ['tennis'],
-  Rugby: ['rugby'],
+  Basketball: ['basket', 'basketball', 'nba', 'bball'],
+  Rugby: ['rugby', 'rugbyman', 'ovalie'],
   Handball: ['hand', 'handball'],
-  Boxe: ['boxe', 'boxeur'],
-  MMA: ['mma', 'arts martiaux'],
-  Volleyball: ['volley', 'volleyball'],
-  Badminton: ['badminton'],
-  'Tennis de table': ['ping pong', 'tennis de table', 'pingpong'],
-  Karting: ['karting', 'kart'],
-  Golf: ['golf'],
-  Cyclisme: ['cyclo', 'cyclisme', 'velo', 'vélo'],
-  Esport: ['esport', 'esports', 'gaming', 'jeux video'],
-  Cricket: ['cricket'],
-  'Football américain': ['football americain', 'football américain', 'nfl'],
-  Baseball: ['baseball'],
-  'Hockey sur glace': ['hockey', 'hockey sur glace', 'nhl'],
+  Volleyball: ['volley', 'volleyball', 'beach volley'],
+  'Football américain': ['football americain', 'foot us', 'foot americain', 'nfl'],
+  Tennis: ['tennis'],
+  Baseball: ['baseball', 'mlb'],
+  Cyclisme: ['cyclo', 'cyclisme', 'cycliste', 'velo', 'bmx', 'vtt'],
+  Kitesurf: ['kitesurf', 'kite surf', 'kite', 'kiteboard'],
+  Surf: ['surf', 'surfeur', 'surfeuse', 'surfing'],
+  Skateboard: ['skate', 'skateboard', 'skateur', 'skateboarding'],
+  Snowboard: ['snowboard', 'snowboardeur', 'snow'],
+  Ski: ['ski', 'skieur', 'skieuse', 'ski alpin', 'slalom'],
+  Ultimate: ['ultimate', 'frisbee'],
 };
+
+// Synonymes de POSTE (argot recruteur) \u2192 termes canoniques cherch\u00e9s dans le
+// profil (position / bio / titres de vid\u00e9os). Permet \u00e0 \u00ab buteur \u00bb de retrouver
+// un \u00ab Avant-centre \u00bb, \u00ab goal \u00bb un \u00ab Gardien \u00bb, etc.
+const POSITION_SYNONYMS = [
+  { label: 'Attaquant', syn: ['attaquant', 'buteur', 'finisseur', 'avant centre', 'avant-centre', 'numero 9', 'goleador', 'pointu', 'sniper', 'renard'], canon: ['attaquant', 'avant-centre', 'avant', 'pointu'] },
+  { label: 'Gardien', syn: ['gardien', 'gardienne', 'goal', 'portier', 'goalkeeper', 'keeper', 'dernier rempart'], canon: ['gardien'] },
+  { label: 'Ailier', syn: ['ailier', 'ailiere', 'winger', 'extreme'], canon: ['ailier'] },
+  { label: 'Milieu', syn: ['milieu', 'midfield', 'box to box', 'sentinelle', 'recuperateur', 'relayeur', 'demi-centre', 'demi centre'], canon: ['milieu', 'demi-centre'] },
+  { label: 'D\u00e9fenseur', syn: ['defenseur', 'defenseuse', 'arriere', 'stoppeur', 'lateral', 'libero', 'central'], canon: ['defenseur', 'arriere', 'lateral', 'central', 'libero'] },
+  { label: 'Meneur', syn: ['meneur', 'playmaker', 'numero 10', 'distributeur', 'passeur', 'demi de melee', 'quarterback'], canon: ['meneur', 'passeur', 'demi de melee', 'quarterback'] },
+  { label: 'Pivot', syn: ['pivot', 'interieur'], canon: ['pivot'] },
+];
+// Synonymes d'ATTRIBUT (pied fort, profil physique) \u2192 cherch\u00e9s dans la bio.
+const ATTR_SYNONYMS = [
+  { label: 'Gaucher', syn: ['gaucher', 'pied gauche', 'left footed'], canon: ['gaucher', 'gauche'] },
+  { label: 'Droitier', syn: ['droitier', 'pied droit', 'right footed'], canon: ['droitier'] },
+  { label: 'Rapide', syn: ['rapide', 'vitesse', 'explosif', 'fusee'], canon: ['rapide', 'vitesse', 'explosif'] },
+  { label: 'Puissant', syn: ['puissant', 'puissance', 'costaud'], canon: ['puissant', 'puissance', 'physique'] },
+];
+
 function stripAccents(s) { return s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
 function parseQuery(text) {
   const q = stripAccents(text.toLowerCase());
@@ -4108,7 +4128,25 @@ function parseSmartQuery(text, vocab) {
     .map(w => w.trim())
     .filter(w => w.length >= 3 && !STOP_WORDS.has(w));
 
-  return { filters, matched, keywords };
+  // Synonymes de poste / attributs → on injecte les termes canoniques dans les
+  // mots-clés (cherchés ensuite dans position/bio/titres) et on les affiche.
+  const kwSet = new Set(keywords);
+  for (const grp of POSITION_SYNONYMS) {
+    if (grp.syn.some(t => q.indexOf(t) >= 0)) {
+      grp.canon.forEach(c => kwSet.add(c));
+      const tag = 'Poste : ' + grp.label;
+      if (!matched.includes(tag)) matched.push(tag);
+    }
+  }
+  for (const grp of ATTR_SYNONYMS) {
+    if (grp.syn.some(t => q.indexOf(t) >= 0)) {
+      grp.canon.forEach(c => kwSet.add(c));
+      const tag = 'Profil : ' + grp.label;
+      if (!matched.includes(tag)) matched.push(tag);
+    }
+  }
+
+  return { filters, matched, keywords: Array.from(kwSet) };
 }
 
 function scoreProfile(profile, profileVideos, profileSignedPosts, filters, keywords) {
@@ -4140,6 +4178,11 @@ function scoreProfile(profile, profileVideos, profileSignedPosts, filters, keywo
   for (let i = 0; i < keywords.length; i++) {
     if (haystack.indexOf(keywords[i]) >= 0) score += 2;
   }
+  // Bonus de pertinence : un athlète qui a publié des vidéos (donc « scoutable »)
+  // et dont le profil est complet remonte dans les résultats.
+  score += Math.min(profileVideos.length, 3);
+  if (profile.avatar_url) score += 0.5;
+  if (profile.bio) score += 0.5;
   return score;
 }
 
@@ -4177,6 +4220,73 @@ function scoreVideo(video, author, filters, keywords) {
     if (ch.includes(keywords[i]) || ac.includes(keywords[i])) score += 3;
   }
   return score;
+}
+
+// ─── Capacités chatbot : recherche par nom, résumé, comptage ──────────
+// Trouve des athlètes dont le NOM contient les mots de la requête (ex.
+// « parle-moi de Kylian » → l'athlète nommé Kylian). Ignore les mots de liaison.
+const NAME_STOP = new Set([
+  'parle', 'moi', 'de', 'du', 'des', 'sur', 'le', 'la', 'les', 'qui', 'est',
+  'que', 'resume', 'profil', 'fiche', 'info', 'infos', 'presente', 'presentation',
+  'montre', 'athlete', 'joueur', 'joueuse', 'sportif', 'sportive', 'parlemoi',
+]);
+function findAthletesByName(athletes, query) {
+  const tokens = stripAccents((query || '').toLowerCase())
+    .split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !NAME_STOP.has(w));
+  if (tokens.length === 0) return [];
+  const scored = [];
+  for (const a of athletes) {
+    const name = stripAccents((a.full_name || '').toLowerCase());
+    if (!name) continue;
+    let s = 0;
+    for (const t of tokens) if (name.indexOf(t) >= 0) s += t.length;
+    if (s > 0) scored.push({ a, s });
+  }
+  scored.sort((x, y) => y.s - x.s);
+  return scored.map(x => x.a);
+}
+
+// Fiche-résumé texte d'un athlète (affichée + sa carte cliquable).
+function buildAthleteSummary(a, vids) {
+  const sport = SPORTS.find(s => s.id === a.sport);
+  const lvl = LEVEL_LABELS[a.level];
+  const lines = [];
+  lines.push('👤 **' + (a.full_name || 'Athlète') + '**' + (a.verified ? ' ✅' : ''));
+  const l2 = [];
+  if (sport) l2.push(sport.icon + ' ' + sport.label);
+  if (a.position) l2.push(a.position);
+  if (lvl) l2.push(lvl.icon + ' ' + lvl.label);
+  if (l2.length) lines.push(l2.join(' · '));
+  const l3 = [];
+  if (a.age != null) l3.push('🎂 ' + a.age + ' ans');
+  if (a.gender) l3.push(a.gender === 'F' ? '♀ Féminin' : '♂ Masculin');
+  if (!a.hide_location) {
+    const loc = [a.city, a.region, a.country].filter(Boolean).join(', ');
+    if (loc) l3.push('📍 ' + loc);
+  }
+  if (l3.length) lines.push(l3.join(' · '));
+  if (a.club) lines.push('🏟️ ' + a.club);
+  lines.push('🎬 ' + vids.length + ' vidéo' + (vids.length > 1 ? 's' : '') + ' publiée' + (vids.length > 1 ? 's' : ''));
+  if (a.bio) lines.push('\n« ' + a.bio.trim() + ' »');
+  return lines.join('\n');
+}
+
+// Correspondance STRICTE aux critères structurés (pour le comptage « combien… »).
+function strictMatchProfile(p, filters, gender, keywords) {
+  if (filters.sport && p.sport !== filters.sport) return false;
+  if (gender && p.gender !== gender) return false;
+  if (filters.levels.length && filters.levels.indexOf(p.level) < 0) return false;
+  // On ne filtre l'âge QUE si une tranche a été explicitement demandée
+  // (sinon la plage par défaut 14-35 exclurait à tort des athlètes plus âgés).
+  const ageSpecified = !(filters.ageMin === 14 && filters.ageMax === 35);
+  if (ageSpecified && p.age != null && (p.age < filters.ageMin || p.age > filters.ageMax)) return false;
+  const locOk = (field, val) => !val || stripAccents((p[field] || '').toLowerCase()).indexOf(stripAccents(val.toLowerCase())) >= 0;
+  if (!locOk('city', filters.city) || !locOk('region', filters.region) || !locOk('country', filters.country)) return false;
+  if (keywords && keywords.length) {
+    const hay = stripAccents([p.position, p.bio, p.full_name, p.club].filter(Boolean).join(' ').toLowerCase());
+    if (!keywords.some(k => hay.indexOf(k) >= 0)) return false;
+  }
+  return true;
 }
 
 // ─── Base de connaissances Yatsai (le chatbot peut expliquer l'app) ──
@@ -4354,11 +4464,11 @@ function detectGender(q) {
 // extrait les critères, et renvoie de VRAIS athlètes cliquables + de l'aide.
 function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilters,
                           dbShortlist, onAddToShortlist, onPlayVideo }) {
-  const intro = "👋 Je suis ton assistant de recrutement Yatsai.\n\nJe peux :\n🔎 Trouver des **athlètes** (« attaquant U18 à Lyon »)\n🎬 Trouver des **vidéos** (« vidéos de match foot National »)\n❓ Répondre sur l'**app** (« comment marche la shortlist ? »)";
+  const intro = "👋 Je suis ton assistant de recrutement Yatsai.\n\nJe peux :\n🔎 Trouver des **athlètes** (« buteur gaucher U18 à Lyon »)\n🎬 Trouver des **vidéos** (« vidéos de match foot »)\n💡 **Suggérer** des talents pour ta shortlist\n📊 **Compter** (« combien de gardiens à Paris ? »)\n📇 **Résumer** un athlète (« parle-moi de [nom] »)\n❓ Répondre sur l'**app** (« comment marche la shortlist ? »)";
   const SUGGESTIONS = [
-    'Attaquant U18 à Lyon',
-    'Vidéos de match foot',
-    'Gardien senior pro',
+    'Buteur gaucher U18 à Lyon',
+    'Suggère-moi des talents',
+    'Combien de gardiens à Paris ?',
     'Comment marche la shortlist ?',
   ];
 
@@ -4420,6 +4530,83 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
         || !!filters.country || filters.levels.length > 0
         || filters.ageMin !== 14 || filters.ageMax !== 35 || !!gender;
       const athleteHint = /\b(athlete|joueur|joueuse|attaquant|buteur|defenseur|defenseuse|gardien|gardienne|milieu|ailier|meneur|pivot|arriere|avant|lateral|ailiere|passeur|libero|talent|profil)\b/.test(lq);
+
+      // ─── CAPACITÉ : RÉSUMER UN ATHLÈTE PAR SON NOM ───
+      // « parle-moi de X », « qui est X », « résume le profil de X »
+      const describeIntent = /(parle[- ]?moi|qui est|c'?est qui|presente|resume|fiche de|profil de|info[s]? sur)/.test(lq);
+      if (describeIntent) {
+        const named = findAthletesByName(athletes, q);
+        if (named.length > 0) {
+          const a = named[0];
+          const av = videos.filter(v => v.user_id === a.id);
+          const others = named.slice(1, 4);
+          let content = buildAthleteSummary(a, av);
+          if (others.length) content += '\n\n_Autres profils à ce nom : ' + others.map(o => o.full_name).filter(Boolean).join(', ') + '_';
+          push({ role: 'assistant', content, results: [a].concat(others) });
+          setLoading(false);
+          return;
+        }
+        // Aucun nom reconnu → on laisse filer (c'est peut-être une question FAQ).
+      }
+
+      // ─── CAPACITÉ : SUGGÉRER DES PROSPECTS POUR LA SHORTLIST ───
+      // « qui ajouter à ma shortlist ? », « suggère-moi des talents »
+      const suggestIntent = /\b(qui (ajouter|recruter|suivre|signer)|suggere|suggestion|suggestions|recommande|recommandation|conseille|prospects?|pepite|pepites|talents? a suivre|qui suivre)\b/.test(lq);
+      if (suggestIntent) {
+        let pool = athletes.filter(p => !dbShortlist?.has?.(p.id));
+        if (gender) pool = pool.filter(p => p.gender === gender);
+        const scored = pool.map(p => {
+          const pv = videos.filter(v => v.user_id === p.id);
+          const ps = signedPosts.filter(s => s.athlete_id === p.id);
+          let s = scoreProfile(p, pv, ps, filters, keywords);
+          s += Math.min(pv.length, 3) * 2; // du contenu = signal fort de « scoutabilité »
+          return { p, s, n: pv.length };
+        }).filter(x => x.s > 0).sort((a, b) => (b.s - a.s) || (b.n - a.n));
+        const top = scored.slice(0, 6).map(x => x.p);
+        const crit = matched.length ? ' (' + matched.join(' · ') + ')' : '';
+        if (top.length === 0) {
+          push({ role: 'assistant', content: '💡 Aucun nouveau prospect à suggérer' + crit + ' : soit ils sont déjà dans ta shortlist, soit aucun athlète ne correspond pour le moment.' });
+        } else {
+          push({
+            role: 'assistant',
+            content: '💡 Suggestions à ajouter à ta shortlist' + crit + ' — athlètes actifs, pas encore dans ta liste :',
+            results: top,
+            filters: hasStructured ? filters : undefined,
+          });
+        }
+        setLoading(false);
+        return;
+      }
+
+      // ─── CAPACITÉ : COMPTER ───
+      // « combien d'attaquants U18 à Lyon ? », « combien de vidéos foot ? »
+      const countIntent = /\b(combien|nombre de|y a-?t-?il|y a t il)\b/.test(lq);
+      if (countIntent) {
+        if (videoIntent) {
+          const n = videos.filter(v => {
+            if (filters.sport && v.sport !== filters.sport) return false;
+            if (gender && (v.profiles?.gender) !== gender) return false;
+            if (videoType && v.video_type !== videoType) return false;
+            return true;
+          }).length;
+          push({ role: 'assistant', content: '📊 **' + n + '** vidéo' + (n > 1 ? 's' : '') + (matched.length ? ' (' + matched.join(' · ') + ')' : '') + ' sur Yatsai.' });
+          setLoading(false);
+          return;
+        }
+        const pool = athletes.filter(p => strictMatchProfile(p, filters, gender, keywords));
+        const n = pool.length;
+        const crit = matched.length ? ' (' + matched.join(' · ') + ')' : '';
+        const preview = pool.map(p => ({ p, n: videos.filter(v => v.user_id === p.id).length }))
+          .sort((a, b) => b.n - a.n).slice(0, 3).map(x => x.p);
+        push({
+          role: 'assistant',
+          content: '📊 **' + n + '** athlète' + (n > 1 ? 's' : '') + crit + (n > 3 ? '. Les 3 plus actifs :' : (n > 0 ? ' :' : '.')),
+          results: preview,
+          filters: hasStructured ? filters : undefined,
+        });
+        setLoading(false);
+        return;
+      }
 
       // ─── BRANCHE VIDÉO ───
       if (videoIntent) {
