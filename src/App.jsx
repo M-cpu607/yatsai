@@ -933,7 +933,6 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
   useEffect(() => {
     if (sorted.length === 0) return;
     let raf;
-    let disp = null; // position affichée (lissée), suit la cible en douceur
     const loop = () => {
       const v = videoRef.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
@@ -941,24 +940,13 @@ function VideoTrackingArrow({ videoRef, points, size = 26, color = '#FF3B30', sh
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const t = v.currentTime || 0;
-        const target = interpTrackingPoint(sorted, t);
+        // Rendu DIRECT de la position détectée : la courbe Catmull-Rom est déjà
+        // lisse, donc PAS de lissage au rendu → aucun retard, la flèche colle à la tête.
+        const target = interpTrackingPoint(sorted, v.currentTime || 0);
         if (target) {
-          // PRÉDICTION : on vise légèrement en avance, proportionnellement à la
-          // vitesse (lookahead), pour compenser le retard du lissage et rester
-          // AU-DESSUS de la tête même en mouvement rapide.
-          const look = interpTrackingPoint(sorted, t + 0.15) || target;
-          const tx = target.x + (look.x - target.x) * 0.5;
-          const ty = target.y + (look.y - target.y) * 0.5;
-          if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
-            disp = { x: tx, y: ty };           // grand saut (changement de plan / scrub)
-          } else {
-            disp.x += (tx - disp.x) * 0.45;     // lissage léger pour la douceur
-            disp.y += (ty - disp.y) * 0.45;
-          }
           el.style.display = 'block';
-          el.style.left = `${oX + disp.x * dW}px`;
-          el.style.top = `${oY + disp.y * dH}px`;
+          el.style.left = `${oX + target.x * dW}px`;
+          el.style.top = `${oY + target.y * dH}px`;
         } else {
           el.style.display = 'none';
         }
@@ -2352,31 +2340,21 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
   // jamais (aucune saccade). Pendant le glissement, c'est le doigt qui pilote.
   useEffect(() => {
     let raf;
-    let disp = null; // position affichée (lissée)
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      if (dragRef.current.dragging) { disp = null; return; } // le doigt pilote → on resnappera ensuite
+      if (dragRef.current.dragging) return; // le doigt pilote directement
       const v = vref.current, el = arrowRef.current;
       if (v && el && v.videoWidth && v.videoHeight) {
         const cw = v.clientWidth, ch = v.clientHeight;
         const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
         const dW = v.videoWidth * scale, dH = v.videoHeight * scale;
         const oX = (cw - dW) / 2, oY = (ch - dH) / 2;
-        const t = v.currentTime || 0;
-        const target = interpTrackingPoint(pointsRef.current, t);
+        // Rendu DIRECT (pas de lissage au rendu) → la flèche colle à la tête.
+        const target = interpTrackingPoint(pointsRef.current, v.currentTime || 0);
         if (target) {
-          const look = interpTrackingPoint(pointsRef.current, t + 0.15) || target;
-          const tx = target.x + (look.x - target.x) * 0.5;
-          const ty = target.y + (look.y - target.y) * 0.5;
-          if (!disp || Math.hypot(tx - disp.x, ty - disp.y) > 0.2) {
-            disp = { x: tx, y: ty };
-          } else {
-            disp.x += (tx - disp.x) * 0.5;
-            disp.y += (ty - disp.y) * 0.5;
-          }
           el.style.display = 'block';
-          el.style.left = `${oX + disp.x * dW}px`;
-          el.style.top = `${oY + disp.y * dH}px`;
+          el.style.left = `${oX + target.x * dW}px`;
+          el.style.top = `${oY + target.y * dH}px`;
         } else el.style.display = 'none';
       }
     };
@@ -2566,7 +2544,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
     const ctx = c.getContext('2d', { willReadFrequently: true });
 
     const total = v.duration || 0;
-    const step = 0.15;   // pas plus fin → capte les mouvements verticaux rapides (saut, accroupissement)
+    const step = 0.1;    // pas fin → capte les mouvements rapides (saut, accroupissement, changement de côté)
     let lastFx = fx, lastFy = fy;
     const kept = pointsRef.current.filter(p => p.t < startT - 0.01);
     const newPts = [{ t: startT, x: fx, y: fy }];
