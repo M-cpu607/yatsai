@@ -1122,8 +1122,16 @@ function FitToggleIcon({ size = 18, color = '#fff' }) {
 
 function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOpenComments, onOpenShare,
                              isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
-                             onReport, isSaved, onToggleSave }) {
+                             onReport, onView, isSaved, onToggleSave }) {
   const [infoHidden, setInfoHidden] = useState(false);
+  const [viewCount, setViewCount] = useState(data.views || 0);
+  const viewedRef = useRef(false); // garantit 1 vue comptée par affichage de carte
+  const markViewed = () => {
+    if (viewedRef.current) return;
+    viewedRef.current = true;
+    onView?.(data.id);
+    setViewCount(c => c + 1);
+  };
   const thumbnailUrl = getVideoThumb(data);
 
   const videoRef = useRef(null);
@@ -1146,6 +1154,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
       if (!v) return;
       if (e.isIntersecting && e.intersectionRatio >= 0.6) {
         v.play().then(() => setIsPaused(false)).catch(() => {});
+        markViewed();
       } else {
         v.pause();
         try { v.currentTime = 0; } catch {}
@@ -1233,7 +1242,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             style={{ border: 0 }} />
         ) : (
           // Miniature YouTube : tap = lecture intégrée dans la carte
-          <button onClick={() => setYtOpen(true)} className="absolute inset-0 w-full h-full">
+          <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
             {thumbnailUrl ? (
               <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
                 className="absolute inset-0 w-full h-full object-cover" />
@@ -1381,6 +1390,11 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             <h2 className="text-lg font-extrabold mb-1" style={{ color: C.text }}>
               {data.title}
             </h2>
+
+            {/* Nombre de vues */}
+            <div className="text-xs mb-1 flex items-center gap-1.5" style={{ color: C.textDim }}>
+              <Eye size={13} strokeWidth={2.2} /> {formatCount(viewCount)} vue{viewCount > 1 ? 's' : ''}
+            </div>
 
             {/* Ligne meta : âge · catégorie d'âge · niveau spécifique vidéo */}
             {(() => {
@@ -1853,7 +1867,7 @@ const FEED_PERIOD_FILTERS = [
   { id: 365, label: '1 an' },
 ];
 
-function FeedView({ videos, periodFilter, onChangePeriodFilter,
+function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                     typeFilter, onChangeTypeFilter,
                     engagement, currentUserId, isRecruiter, canBookmark, dbShortlist,
                     onLike, onAddComment, onDeleteComment, onShare,
@@ -1933,6 +1947,7 @@ function FeedView({ videos, periodFilter, onChangePeriodFilter,
                 isOwnVideo={v.user_id === currentUserId}
                 onSelectProfile={onSelectProfile}
                 onReport={onReport}
+                onView={onView}
                 isSaved={savedVideoIds?.has(v.id)}
                 onToggleSave={onToggleSaveVideo} />
             );
@@ -11539,6 +11554,11 @@ function OwnVideoThumb({ video, onPlay, onDelete, onEditTracking }) {
             <Play size={16} fill={C.bg} stroke={C.bg} />
           </div>
         </div>
+        {/* Nombre de vues, en bas à gauche de la vignette */}
+        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md flex items-center gap-1 text-[10px] font-bold"
+          style={{ backgroundColor: 'rgba(8,15,32,0.7)', color: '#fff', backdropFilter: 'blur(4px)' }}>
+          <Eye size={11} strokeWidth={2.4} /> {formatCount(video.views || 0)}
+        </div>
       </button>
 
       {/* Bouton ... en haut à droite */}
@@ -13806,8 +13826,19 @@ export default function App() {
     addToDbShortlist(video.user_id);
   };
 
+  // Comptage des vues : une seule fois par vidéo et par session (anti-gonflage).
+  const viewedVideosRef = useRef(new Set());
+  const registerVideoView = (videoId) => {
+    if (!videoId || viewedVideosRef.current.has(videoId)) return;
+    viewedVideosRef.current.add(videoId);
+    supabase.rpc('increment_video_views', { p_id: videoId }).then(({ error }) => {
+      if (error) console.warn('increment_video_views:', error.message);
+    });
+  };
+
   const feedProps = {
     videos: feedVideos,
+    onView: registerVideoView,
     periodFilter: feedPeriodFilter,
     onChangePeriodFilter: setFeedPeriodFilter,
     typeFilter: feedTypeFilter,
