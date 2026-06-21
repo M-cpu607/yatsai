@@ -2994,25 +2994,9 @@ function PublishView({ userProfile, setTab }) {
     }
 
     setLoading(true);
-
-    // ─── ANALYSE IA AVANT PUBLICATION ───
-    const result = await checkVideoIsSport({
-      title, description,
-      youtubeUrl: mode === 'youtube' ? youtubeUrl : null,
-      videoUrl: mode === 'upload' ? videoPreviewUrl : null,
-      thumbImage: mode === 'upload' ? thumbImg : null,
-      sport,
-      onProgress: (s) => setAiStep(s),
-    });
-    setAiStep(null);
-    setAiResult(result);
-
-    if (!result.isSport) {
-      setLoading(false);
-      return;
-    }
-
-    // ─── PUBLICATION ───
+    // Publication DIRECTE : plus de pré-filtre IA (trop de faux refus pour trop
+    // peu de bénéfice à ce stade). La modération se fait via les signalements
+    // communautaires + revue admin.
     await doPublish();
   };
 
@@ -3357,63 +3341,16 @@ function PublishView({ userProfile, setTab }) {
           </div>
         )}
 
-        {/* État IA — pendant l'analyse */}
-        {aiStep && (
-          <div className="px-4 py-3 rounded-xl text-xs flex items-center gap-2"
-            style={{ backgroundColor: C.goldSoft, color: C.text, border: `1px solid ${C.borderGold}` }}>
-            <Loader2 size={14} className="animate-spin" style={{ color: C.gold }} />
-            <span>{aiStep.label}</span>
-          </div>
-        )}
-
-        {/* Résultat IA — refus de publication */}
-        {aiResult && !aiResult.isSport && (
-          <div className="px-4 py-3 rounded-xl"
-            style={{ backgroundColor: 'rgba(255,71,87,0.12)', color: C.text, border: `1px solid ${C.red}` }}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-base">🚫</span>
-              <strong style={{ color: C.red }}>Publication bloquée par l'IA</strong>
-            </div>
-            <p className="text-xs leading-relaxed mb-2">
-              Cette vidéo ne semble <strong>pas correspondre au sport sélectionné</strong>. Yatsai n'accepte que les vidéos où le sport est clairement visible (ballon, raquette, vélo, planche…).
-            </p>
-            <p className="text-[11px]" style={{ color: C.textDim }}>
-              Analyse : {aiResult.method} · Détail : {aiResult.details}
-            </p>
-            <p className="text-[11px] mt-2" style={{ color: C.textDim }}>
-              💡 Filme une séquence où l'on voit bien l'action sportive et le matériel, puis réessaie.
-            </p>
-          </div>
-        )}
-
-        {/* Résultat IA — confirmation positive */}
-        {aiResult && aiResult.isSport && !success && (
-          <div className="px-4 py-3 rounded-xl"
-            style={{ backgroundColor: 'rgba(34,197,94,0.12)', color: C.text, border: `1px solid ${C.green}` }}>
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={16} style={{ color: C.green }} />
-              <span className="text-xs">
-                <strong style={{ color: C.green }}>Votre vidéo est bien une vidéo de sport ✓</strong>
-              </span>
-            </div>
-            <p className="text-[11px] mt-1" style={{ color: C.textDim }}>
-              {aiResult.details} (confiance {Math.round(aiResult.confidence * 100)}% · {aiResult.method})
-            </p>
-          </div>
-        )}
-
         {/* Bouton Publier */}
         <button type="submit" disabled={loading}
           className="w-full py-4 rounded-xl text-sm font-extrabold mt-6 flex items-center justify-center gap-2"
           style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
           {loading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
           {loading
-            ? (aiStep
-                ? 'Vérification IA…'
-                : (mode === 'upload' && uploadProgress > 0 && uploadProgress < 100
-                    ? `Upload ${uploadProgress}%…`
-                    : 'Publication…'))
-            : (aiResult?.isSport ? 'Publier ma vidéo' : '🤖 Vérifier et publier')}
+            ? (mode === 'upload' && uploadProgress > 0 && uploadProgress < 100
+                ? `Upload ${uploadProgress}%…`
+                : 'Publication…')
+            : 'Publier ma vidéo'}
         </button>
       </form>
     </div>
