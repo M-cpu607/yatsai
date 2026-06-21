@@ -2227,6 +2227,11 @@ async function analyzeFrameForSport(coco, mobilenet, source) {
 // Vérifie qu'une vidéo est du sport : analyse PLUSIEURS images (vidéos uploadées)
 // avec COCO-SSD + MobileNet. Le texte n'est qu'un signal secondaire, jamais
 // suffisant seul. Sévérité « équilibrée ».
+// Seuil de mouvement (déplacement moyen des membres entre 2 images) au-dessus
+// duquel on considère qu'il y a une vraie activité physique = sport. Plus bas =
+// plus permissif (accepte davantage de vidéos).
+const MOTION_THRESHOLD = 0.04;
+
 async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProgress, thumbImage, videoUrl }) {
   onProgress?.({ step: 'text', label: '🔍 Analyse du titre…' });
   const text = stripAccents(((title || '') + ' ' + (description || '')).toLowerCase());
@@ -2292,18 +2297,38 @@ async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProg
     return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
   }
 
-  // Décision : matériel sportif vu sur ≥1 image, OU au moins la moitié des images
-  // « sportives » (scène d'équipe). Plus d'override : le refus est définitif, donc
-  // on reste assez permissif pour ne pas refuser un vrai sport reconnaissable.
+  // 1) Décision par IMAGE (COCO) : matériel sportif vu sur ≥1 image, OU au moins
+  // la moitié des images « sportives » (scène d'équipe).
   const ratio = sportyFrames / total;
-  const isSport = strongFrames >= 1 || ratio >= 0.5;
+  let isSport = strongFrames >= 1 || ratio >= 0.5;
+  let method = 'image' + (textScore > 0 ? '+texte' : '');
+  let motionScore = 0;
+
+  // 2) FILET DE SÉCURITÉ — MOUVEMENT : si COCO n'a rien vu, on regarde si le CORPS
+  // bouge vraiment (course, gym, combat, danse… = activité physique sans matériel).
+  // Ne tourne QUE sur les vidéos qui seraient refusées → aucun impact sur la vitesse
+  // des vidéos déjà validées. C'est ce qui évite de refuser à tort un vrai sport.
+  if (!isSport && videoUrl) {
+    try {
+      onProgress?.({ step: 'motion', label: '🤸 Analyse du mouvement…' });
+      motionScore = await withTimeout(detectMotionScore(videoUrl), 12000);
+      if (motionScore >= MOTION_THRESHOLD) { isSport = true; method = 'mouvement'; }
+    } catch (e) { console.warn('Mouvement indispo:', e); }
+  }
+
   return {
     isSport,
-    confidence: isSport ? Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio) : 0.25,
-    method: 'image' + (textScore > 0 ? '+texte' : ''),
+    confidence: isSport
+      ? (method === 'mouvement'
+          ? Math.min(0.9, 0.45 + motionScore * 4)
+          : Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio))
+      : 0.25,
+    method,
     details: isSport
-      ? `Sport détecté sur ${sportyFrames}/${total} image(s).`
-      : `Pas assez d'éléments sportifs détectés (${sportyFrames}/${total} image(s)).`,
+      ? (method === 'mouvement'
+          ? `Activité physique détectée (mouvement du corps).`
+          : `Sport détecté sur ${sportyFrames}/${total} image(s).`)
+      : `Aucun matériel ni mouvement sportif détecté (${sportyFrames}/${total} image(s)).`,
   };
 }
 
