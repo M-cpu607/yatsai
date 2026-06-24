@@ -2000,66 +2000,6 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
   );
 }
 
-// ═══ DÉTECTEUR IA "VIDÉO DE SPORT" (100% local) ═══════════════════
-// Combine 2 méthodes :
-//   1. Heuristique TEXTE : mots-clés sportifs dans titre + description + nom du sport
-//   2. Vision IA : MobileNet (TensorFlow.js) classifie la miniature YouTube
-//      → cherche des objets sportifs (ballon, raquette, jersey, terrain…)
-// Si CORS bloque l'image, fallback sur le score texte uniquement.
-
-// 100+ classes ImageNet considérées comme "sportives"
-const SPORT_IMAGE_CLASSES = [
-  'soccer ball', 'football', 'rugby ball', 'volleyball', 'basketball', 'tennis ball',
-  'tennis racket', 'racket', 'racquet', 'baseball', 'baseball bat', 'baseball glove',
-  'golf ball', 'golf club', 'football helmet', 'ping-pong ball', 'pool table',
-  'ski', 'skis', 'snowboard', 'surfboard', 'skateboard', 'inline skate',
-  'punching bag', 'dumbbell', 'barbell', 'parallel bars', 'horizontal bar',
-  'balance beam', 'swing', 'jersey', 'sweatshirt', 'maillot',
-  'swimming pool', 'swimming trunks', 'bathing suit', 'water bottle', 'snorkel', 'scuba', 'bikini',
-  'bicycle', 'mountain bike', 'unicycle', 'motorcycle', 'motor scooter',
-  'racing car', 'race car', 'horse', 'speedboat', 'paddle',
-  'stopwatch', 'whistle', 'scoreboard',
-];
-
-const SPORT_TEXT_KEYWORDS = [
-  // Sports
-  'foot', 'football', 'soccer', 'basket', 'basketball', 'tennis', 'rugby',
-  'hand', 'handball', 'volley', 'volleyball', 'natation', 'piscine', 'nage',
-  'athle', 'athletisme', 'course', 'sprint', 'marathon', 'sauter', 'lancer',
-  'boxe', 'boxer', 'mma', 'judo', 'karate', 'lutte', 'taekwondo', 'krav maga',
-  'velo', 'cyclisme', 'cycling', 'bicycle', 'golf', 'skate', 'skating',
-  'ski', 'snow', 'snowboard', 'surf', 'surfing',
-  'crossfit', 'fitness', 'musculation', 'gym', 'gymnastique',
-  // Actions / situations
-  'match', 'tournoi', 'championnat', 'finale', 'demi finale', 'quart',
-  'but', 'goal', 'panier', 'ace', 'essai', 'point', 'penalty', 'corner',
-  'entrainement', 'entraînement', 'training', 'workout', 'compet', 'compétition',
-  'stade', 'terrain', 'court', 'salle', 'piste',
-  'saison', 'club', 'equipe', 'équipe', 'team',
-  // Rôles
-  'joueur', 'joueuse', 'athlete', 'athlète', 'sportif', 'sportive',
-  'coach', 'entraineur', 'capitaine', 'gardien', 'attaquant', 'defenseur',
-  'milieu', 'ailier', 'pivot', 'arbitre',
-  // Niveaux / catégories
-  'amateur', 'pro', 'professionnel', 'espoir', 'u15', 'u17', 'u18', 'u19', 'u21',
-  'r1', 'r2', 'r3', 'national', 'regional', 'départemental', 'departemental',
-  'ligue', 'division', 'serie a', 'serie b', 'premier league', 'liga',
-];
-
-// Cache du modèle MobileNet (lazy load)
-let _mobilenetPromise = null;
-function loadMobileNetOnce() {
-  if (_mobilenetPromise) return _mobilenetPromise;
-  _mobilenetPromise = (async () => {
-    const tf = await import('@tensorflow/tfjs');
-    try { await tf.setBackend('webgl'); } catch {}
-    await tf.ready();
-    const mobilenet = await import('@tensorflow-models/mobilenet');
-    return await mobilenet.load({ version: 2, alpha: 0.5 });
-  })();
-  return _mobilenetPromise;
-}
-
 // Cache du modèle de détection de personnes COCO-SSD (lazy load) — sert au suivi
 // automatique de la tête du joueur.
 let _cocoPromise = null;
@@ -2075,69 +2015,6 @@ function loadCocoOnce() {
   return _cocoPromise;
 }
 
-// Cache du modèle de posture MoveNet (lazy) — sert à détecter le MOUVEMENT du
-// corps (sports sans matériel : course, boxe, gym…).
-let _posePromise = null;
-function loadPoseOnce() {
-  if (_posePromise) return _posePromise;
-  _posePromise = (async () => {
-    const tf = await import('@tensorflow/tfjs');
-    try { await tf.setBackend('webgl'); } catch {}
-    await tf.ready();
-    const poseDetection = await import('@tensorflow-models/pose-detection');
-    return await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
-      modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
-    });
-  })();
-  return _posePromise;
-}
-
-// Mesure le MOUVEMENT corporel : échantillonne ~6 images rapprochées au milieu de
-// la vidéo, suit les membres (poignets, coudes, genoux, chevilles) image par image
-// et renvoie un score de déplacement moyen normalisé. Élevé = activité physique.
-async function detectMotionScore(url) {
-  let model;
-  try { model = await loadPoseOnce(); } catch { return 0; }
-  return new Promise((resolve) => {
-    const v = document.createElement('video');
-    v.muted = true; v.crossOrigin = 'anonymous'; v.playsInline = true; v.preload = 'auto';
-    v.src = url;
-    const canvas = document.createElement('canvas');
-    let done = false;
-    const finish = (s) => { if (done) return; done = true; try { v.removeAttribute('src'); v.load(); } catch {} resolve(s); };
-    v.addEventListener('error', () => finish(0), { once: true });
-    v.addEventListener('loadeddata', async () => {
-      try {
-        const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
-        const W = 256, H = Math.max(1, Math.round(W * (v.videoHeight || 256) / (v.videoWidth || 256)));
-        canvas.width = W; canvas.height = H;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        const start = dur > 0 ? dur * 0.35 : 0;
-        const STEP = 0.2, N = 6;
-        const LIMBS = [7, 8, 9, 10, 13, 14, 15, 16]; // coudes, poignets, genoux, chevilles
-        let prev = null, totalMove = 0, moves = 0;
-        for (let i = 0; i < N; i++) {
-          await seekVideoTo(v, start + i * STEP);
-          ctx.drawImage(v, 0, 0, W, H);
-          let poses = [];
-          try { poses = await model.estimatePoses(canvas, { maxPoses: 1 }); } catch {}
-          const kp = poses[0]?.keypoints;
-          if (kp && prev) {
-            let sum = 0, cnt = 0;
-            for (const idx of LIMBS) {
-              const a = kp[idx], b = prev[idx];
-              if (a && b && a.score > 0.3 && b.score > 0.3) { sum += Math.hypot((a.x - b.x) / W, (a.y - b.y) / H); cnt++; }
-            }
-            if (cnt > 0) { totalMove += sum / cnt; moves++; }
-          }
-          if (kp) prev = kp;
-        }
-        finish(moves > 0 ? totalMove / moves : 0);
-      } catch { finish(0); }
-    }, { once: true });
-  });
-}
-
 // Place une vidéo à un instant précis et attend que la frame soit prête.
 function seekVideoTo(v, t) {
   return new Promise((resolve) => {
@@ -2149,188 +2026,6 @@ function seekVideoTo(v, t) {
   });
 }
 
-function extractYouTubeId(url) {
-  if (!url) return null;
-  const m = url.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-  return m ? m[1] : null;
-}
-
-async function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
-}
-
-// Classes d'objets sportifs détectées par COCO-SSD (détection d'objets).
-const SPORT_COCO_CLASSES = [
-  'sports ball', 'tennis racket', 'baseball bat', 'baseball glove',
-  'skateboard', 'surfboard', 'skis', 'snowboard', 'frisbee', 'kite', 'bicycle',
-];
-
-// Échantillonne `count` images réparties dans la vidéo et appelle cb(canvas,i,n)
-// pour chacune (le canvas est réutilisé, l'analyse se fait dans cb avant le seek suivant).
-function withVideoFrames(url, count, cb) {
-  return new Promise((resolve) => {
-    const v = document.createElement('video');
-    v.muted = true; v.crossOrigin = 'anonymous'; v.playsInline = true; v.preload = 'auto';
-    v.src = url;
-    const canvas = document.createElement('canvas');
-    let done = false;
-    const finish = () => { if (done) return; done = true; try { v.removeAttribute('src'); v.load(); } catch {} resolve(); };
-    v.addEventListener('error', finish, { once: true });
-    v.addEventListener('loadeddata', async () => {
-      try {
-        const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
-        const W = 320, H = Math.max(1, Math.round(W * (v.videoHeight || 180) / (v.videoWidth || 320)));
-        canvas.width = W; canvas.height = H;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        for (let i = 0; i < count; i++) {
-          const t = dur > 0 ? ((i + 0.5) / count) * dur : 0;
-          await new Promise((res) => {
-            const onSeeked = () => { v.removeEventListener('seeked', onSeeked); res(); };
-            v.addEventListener('seeked', onSeeked);
-            try { v.currentTime = Math.min(t, Math.max(0, dur - 0.05)); } catch { res(); }
-          });
-          try { ctx.drawImage(v, 0, 0, W, H); await cb(canvas, i, count); } catch {}
-        }
-      } catch {}
-      finish();
-    }, { once: true });
-  });
-}
-
-// Analyse une image : personnes + équipement sportif (COCO-SSD) et classes
-// sportives (MobileNet). Renvoie un signal "fort" (objet/contexte clair) + le
-// nombre de personnes (pour repérer les scènes d'équipe).
-async function analyzeFrameForSport(coco, mobilenet, source) {
-  let equip = 0, persons = 0, sportClass = false;
-  try {
-    const dets = await coco.detect(source, 20);
-    for (const d of dets) {
-      if (d.score < 0.4) continue;
-      if (d.class === 'person') persons++;
-      else if (SPORT_COCO_CLASSES.includes(d.class)) equip++;
-    }
-  } catch {}
-  try {
-    const preds = await mobilenet.classify(source, 10);
-    sportClass = preds.some(p => p.probability > 0.12 &&
-      SPORT_IMAGE_CLASSES.some(c => p.className.toLowerCase().indexOf(c) >= 0));
-  } catch {}
-  return { strongSignal: equip > 0 || sportClass, persons };
-}
-
-// Vérifie qu'une vidéo est du sport : analyse PLUSIEURS images (vidéos uploadées)
-// avec COCO-SSD + MobileNet. Le texte n'est qu'un signal secondaire, jamais
-// suffisant seul. Sévérité « équilibrée ».
-// Seuil de mouvement (déplacement moyen des membres entre 2 images) au-dessus
-// duquel on considère qu'il y a une vraie activité physique = sport. Plus bas =
-// plus permissif (accepte davantage de vidéos).
-const MOTION_THRESHOLD = 0.04;
-
-async function checkVideoIsSport({ title, description, youtubeUrl, sport, onProgress, thumbImage, videoUrl }) {
-  onProgress?.({ step: 'text', label: '🔍 Analyse du titre…' });
-  const text = stripAccents(((title || '') + ' ' + (description || '')).toLowerCase());
-  let textScore = 0;
-  for (let i = 0; i < SPORT_TEXT_KEYWORDS.length; i++) {
-    if (text.indexOf(SPORT_TEXT_KEYWORDS[i]) >= 0) textScore++;
-  }
-  const sportObj = SPORTS.find(s => s.id === sport);
-  if (sportObj && text.indexOf(stripAccents(sportObj.label.toLowerCase())) >= 0) textScore += 1;
-
-  onProgress?.({ step: 'model', label: '🤖 Chargement de l\'IA (1ère fois : ~5 Mo)…' });
-  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
-  let coco;
-  try {
-    coco = await withTimeout(loadCocoOnce(), 15000);
-  } catch (e) {
-    console.warn('IA indisponible/lente:', e);
-    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse IA indisponible — publication autorisée.' };
-  }
-
-  const t0 = performance.now();
-  const BUDGET = 9000; // ms max d'analyse (rapide, anti-blocage)
-  let total = 0, sportyFrames = 0, strongFrames = 0;
-  const analyze = async (source) => {
-    let equip = 0, persons = 0;
-    try {
-      const dets = await coco.detect(source, 10);
-      for (const d of dets) {
-        // Seuil bas pour le MATÉRIEL sportif (vélo, ballon, planche, raquette…) :
-        // comme il n'y a plus d'override, on évite de refuser à tort un vrai sport.
-        if (d.class === 'person') { if (d.score >= 0.45) persons++; }
-        else if (SPORT_COCO_CLASSES.includes(d.class) && d.score >= 0.33) equip++;
-      }
-    } catch {}
-    return { equip, persons };
-  };
-  const tally = (r) => {
-    total++;
-    const strong = r.equip > 0;
-    if (strong) strongFrames++;
-    if (strong || r.persons >= 3 || (r.persons >= 2 && textScore >= 2)) sportyFrames++;
-  };
-
-  try {
-    if (videoUrl) {
-      onProgress?.({ step: 'frames', label: '🎞️ Analyse de la vidéo…' });
-      await withVideoFrames(videoUrl, 4, async (canvas, i, n) => {
-        if (performance.now() - t0 > BUDGET) return;
-        onProgress?.({ step: 'classify', label: `🧠 Image ${i + 1}/${n}…` });
-        tally(await analyze(canvas));
-      });
-    } else {
-      let img = thumbImage || null;
-      if (!img) {
-        const yId = extractYouTubeId(youtubeUrl);
-        if (yId) { for (const u of [`https://img.youtube.com/vi/${yId}/hqdefault.jpg`, `https://img.youtube.com/vi/${yId}/mqdefault.jpg`]) { try { img = await loadImage(u); break; } catch {} } }
-      }
-      if (img) { onProgress?.({ step: 'classify', label: '🧠 Analyse de l\'image…' }); tally(await analyze(img)); }
-    }
-  } catch (e) { console.warn('Analyse images échouée:', e); }
-
-  if (total === 0) {
-    return { isSport: true, confidence: 0.4, method: 'délai', details: 'Analyse interrompue — publication autorisée.' };
-  }
-
-  // 1) Décision par IMAGE (COCO) : matériel sportif vu sur ≥1 image, OU au moins
-  // la moitié des images « sportives » (scène d'équipe).
-  const ratio = sportyFrames / total;
-  let isSport = strongFrames >= 1 || ratio >= 0.5;
-  let method = 'image' + (textScore > 0 ? '+texte' : '');
-  let motionScore = 0;
-
-  // 2) FILET DE SÉCURITÉ — MOUVEMENT : si COCO n'a rien vu, on regarde si le CORPS
-  // bouge vraiment (course, gym, combat, danse… = activité physique sans matériel).
-  // Ne tourne QUE sur les vidéos qui seraient refusées → aucun impact sur la vitesse
-  // des vidéos déjà validées. C'est ce qui évite de refuser à tort un vrai sport.
-  if (!isSport && videoUrl) {
-    try {
-      onProgress?.({ step: 'motion', label: '🤸 Analyse du mouvement…' });
-      motionScore = await withTimeout(detectMotionScore(videoUrl), 12000);
-      if (motionScore >= MOTION_THRESHOLD) { isSport = true; method = 'mouvement'; }
-    } catch (e) { console.warn('Mouvement indispo:', e); }
-  }
-
-  return {
-    isSport,
-    confidence: isSport
-      ? (method === 'mouvement'
-          ? Math.min(0.9, 0.45 + motionScore * 4)
-          : Math.min(0.95, 0.5 + 0.1 * strongFrames + 0.3 * ratio))
-      : 0.25,
-    method,
-    details: isSport
-      ? (method === 'mouvement'
-          ? `Activité physique détectée (mouvement du corps).`
-          : `Sport détecté sur ${sportyFrames}/${total} image(s).`)
-      : `Aucun matériel ni mouvement sportif détecté (${sportyFrames}/${total} image(s)).`,
-  };
-}
 
 // ═══ PUBLISH (avec tracker conservé) ══════════════════════════════
 // ─── PUBLISH (Upload direct OU lien YouTube) ──────────────────────
@@ -2803,8 +2498,6 @@ function PublishView({ userProfile, setTab }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   // Analyse IA
-  const [aiStep, setAiStep] = useState(null);
-  const [aiResult, setAiResult] = useState(null);
 
   // Nettoyage URL.createObjectURL au démontage
   useEffect(() => () => {
@@ -2821,7 +2514,6 @@ function PublishView({ userProfile, setTab }) {
 
   const onPickFile = async (file) => {
     setError('');
-    setAiResult(null);
     if (!file) return;
     if (!file.type.startsWith('video/')) {
       setError('Le fichier sélectionné n\'est pas une vidéo.');
@@ -2867,7 +2559,6 @@ function PublishView({ userProfile, setTab }) {
     setTrackingColor('#FF3B30');
     setTrackingShape('arrow');
     setTrackingSize(1);
-    setAiResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (captureInputRef.current) captureInputRef.current.value = '';
   };
@@ -2967,14 +2658,13 @@ function PublishView({ userProfile, setTab }) {
       setChampionship(''); setAgeCategory(''); setVideoLevel('');
       setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
       clearUpload();
-      setAiResult(null);
       setTab('feed');
     }, 2200);
   };
 
   const handlePublish = async (e) => {
     e.preventDefault();
-    setError(''); setAiResult(null);
+    setError('');
 
     if (!title.trim()) {
       setError('Donne un titre à ta vidéo.');
@@ -3035,7 +2725,7 @@ function PublishView({ userProfile, setTab }) {
             { id: 'youtube', label: '▶ Lien YouTube', icon: null },
           ].map(opt => (
             <button key={opt.id} type="button"
-              onClick={() => { setMode(opt.id); setError(''); setAiResult(null); }}
+              onClick={() => { setMode(opt.id); setError(''); }}
               className="py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
               style={{
                 backgroundColor: mode === opt.id ? C.gold : 'transparent',
