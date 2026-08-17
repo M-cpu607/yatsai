@@ -324,12 +324,15 @@ function SupabaseVideoCard({ data, onPlay }) {
   };
 
   const youtubeId = getYouTubeId(data.youtube_url);
-  const thumbnailUrl = youtubeId 
-    ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
-    : null;
+  // La miniature stockée prime sur celle déduite de YouTube.
+  const thumbnailUrl = data.thumbnail_url
+    || (youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : null);
 
   const sport = SPORTS.find(s => s.id === data.sport);
-  const authorName = data.profiles?.full_name || 'Athlète';
+  // get_feed renvoie l'auteur à plat (author_name) plutôt qu'imbriqué
+  // dans un objet `profiles` : un seul aller-retour au lieu d'une
+  // jointure re-sérialisée par PostgREST.
+  const authorName = data.author_name || data.profiles?.full_name || 'Athlète';
 
   return (
     <div className="relative h-screen snap-start flex flex-col"
@@ -440,8 +443,19 @@ function YouTubePlayer({ video, onClose }) {
   );
 }
 
-function FeedView({ videos }) {
+function FeedView({ videos, onLoadMore }) {
   const [playingVideo, setPlayingVideo] = useState(null);
+
+  // Défilement infini : on précharge la page suivante quand il reste
+  // moins de 3 écrans à faire défiler, pour que l'utilisateur ne voie
+  // jamais le chargement.
+  const handleScroll = (e) => {
+    if (!onLoadMore) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight * 3) {
+      onLoadMore();
+    }
+  };
 
   // Empty state : aucune vidéo publiée
   if (!videos || videos.length === 0) {
@@ -463,7 +477,8 @@ function FeedView({ videos }) {
   return (
     <>
       <div className="overflow-y-auto snap-y snap-mandatory scrollbar-none"
-        style={{ height: '100dvh', backgroundColor: '#000' }}>
+        style={{ height: '100dvh', backgroundColor: '#000' }}
+        onScroll={handleScroll}>
         {videos.map(v => (
           <SupabaseVideoCard key={v.id} data={v} onPlay={setPlayingVideo} />
         ))}
@@ -1817,25 +1832,55 @@ export default function App() {
   const [userProfile, setUserProfile] = useState(null);
   const [videos, setVideos] = useState([]);
 
-  const loadVideos = async () => {
-    const { data, error } = await supabase
-      .from('videos')
-      .select(`
-        *,
-       profiles!videos_user_id_fkey ( id, full_name, username, is_recruiter )
-      `)
-      .order('created_at', { ascending: false });
-      console.log('🎬 Vidéos chargées:', { data, error });
-    
+  const [feedCursor, setFeedCursor] = useState(null);
+  const [feedDone, setFeedDone] = useState(false);
+  const feedLoading = useRef(false);
+
+  const PAGE_SIZE = 20;
+
+  // Le feed est paginé par curseur : on ne demande jamais plus de
+  // PAGE_SIZE lignes, et la page suivante repart du dernier élément
+  // vu au lieu d'un OFFSET. Le coût d'une page reste constant même
+  // très loin dans le feed.
+  const loadFeed = async ({ reset = false } = {}) => {
+    if (feedLoading.current) return;
+    if (!reset && feedDone) return;
+    feedLoading.current = true;
+
+    const cursor = reset ? null : feedCursor;
+    const { data, error } = await supabase.rpc('get_feed', {
+      p_limit: PAGE_SIZE,
+      p_cursor_created_at: cursor?.created_at ?? null,
+      p_cursor_id: cursor?.id ?? null,
+      p_sport: null,
+    });
+
+    feedLoading.current = false;
+
     if (error) {
-      console.error('Erreur chargement vidéos:', error);
+      console.error('Erreur chargement du feed:', error);
       return;
     }
-    setVideos(data || []);
+
+    const page = data ?? [];
+    setVideos(prev => (reset ? page : [...prev, ...page]));
+
+    // Moins d'une page complète => on a atteint le fond du feed.
+    if (page.length < PAGE_SIZE) {
+      setFeedDone(true);
+    } else {
+      const last = page[page.length - 1];
+      setFeedCursor({ created_at: last.created_at, id: last.id });
+    }
   };
 
+  // Chargement de la première page au montage uniquement. `loadFeed`
+  // est recréée à chaque rendu : l'ajouter aux dépendances relancerait
+  // la requête en boucle. La ré-entrance est déjà bloquée par
+  // feedLoading, et les pages suivantes viennent du défilement.
   useEffect(() => {
-    loadVideos();
+    loadFeed({ reset: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadProfile = async (userId) => {
@@ -1916,7 +1961,7 @@ export default function App() {
   const renderScreen = () => {
     if (mode === 'recruiter') {
       switch (tab) {
-        case 'feed':      return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+        case 'feed':      return <FeedView videos={videos} onLoadMore={loadFeed} onSelectAthlete={setSelectedAthlete} />;
         case 'discover':  return <DiscoveryView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} />;
         case 'shortlist': return <ShortlistView videos={filtered.videos} shortlistIds={shortlistIds} toggleShortlist={toggleShortlist} notes={notes} onSelectAthlete={setSelectedAthlete} onOpenChat={openChatWithAthlete} onAddNote={addNote} onUpdateNote={updateNote} onDeleteNote={deleteNote} />;
         case 'messages':  return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
@@ -1925,7 +1970,7 @@ export default function App() {
       }
     }
     switch (tab) {
-      case 'feed':     return <FeedView videos={videos} onSelectAthlete={setSelectedAthlete} />;
+      case 'feed':     return <FeedView videos={videos} onLoadMore={loadFeed} onSelectAthlete={setSelectedAthlete} />;
       case 'search':   return <SearchView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} />;
       case 'publish':   return <PublishView userProfile={userProfile} setTab={setTab} />;
       case 'messages': return <MessagesView videos={filtered.videos} onSelectAthlete={setSelectedAthlete} onOpenChat={setActiveChat} />;
