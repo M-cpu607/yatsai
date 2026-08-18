@@ -47,6 +47,17 @@ d'écrire sur la vidéo d'autrui).
 `reconcile_counters()` recalcule tout depuis la source de vérité en cas de
 dérive — à brancher sur `pg_cron` en production.
 
+### Intégrité référentielle des sports
+
+`videos.sport` et `profiles.sport` étaient du texte libre. C'est ce qui a
+permis au front de faire circuler un sport tantôt en slug (`'foot'`,
+stocké en base) tantôt en libellé (`'Football'`, données de démonstration)
+— au point que filtrer par sport masquait **toutes** les vraies vidéos.
+
+Une table de référence `sports` (20 entrées, le slug fait autorité) et
+deux clés étrangères rendent désormais la dérive impossible côté base,
+indépendamment de ce que fait le client.
+
 ### 15 clés étrangères non indexées
 
 Dont `videos.user_id`, utilisée par le feed *et* par chaque page de profil.
@@ -170,23 +181,45 @@ nécessaire, pas suffisant. Ce qui reste à faire, par ordre d'impact :
    centaines d'écritures/seconde par vidéo ; au-delà, il faut sharder le
    compteur.
 
-## 5. Points en suspens
+## 5. Versionner les migrations
+
+Les changements de schéma vivent aujourd'hui uniquement dans l'historique
+Supabase (60 migrations, dont 8 issues de ce travail). Ils ne sont pas dans
+le dépôt. Pour les y ramener, avec la CLI Supabase :
+
+```bash
+npx supabase link --project-ref uvsxteuhqqfgbmdgabfo
+npx supabase db pull          # écrit supabase/migrations/*.sql
+git add supabase/ && git commit -m "Versionne les migrations de schéma"
+```
+
+Passer par `db pull` plutôt que par des fichiers écrits à la main garantit
+que le contenu correspond exactement à ce qui est réellement appliqué —
+y compris les 52 migrations antérieures à ce travail.
+
+## 6. Points en suspens
 
 - **Le chemin REST n'a pas pu être testé** depuis l'environnement de
-  développement : la politique réseau y bloque `*.supabase.co`. Les
-  fonctions sont validées en SQL et les droits `anon` vérifiés, mais le
-  premier appel HTTP réel reste à confirmer depuis le navigateur.
+  développement : la politique d'egress y bloque `*.supabase.co` (403 sur
+  le tunnel CONNECT). Contournement explicitement déconseillé par la
+  documentation du proxy.
+  L'autorisation a en revanche été validée en endossant les rôles
+  `anon` et `authenticated` avec de vraies revendications JWT — ce qui
+  couvre les droits, la RLS et `auth.uid()`. Seul le transport HTTP reste
+  à confirmer depuis le navigateur.
 - **`profiles` porte à la fois `age` et `birthdate`.** `age` devient faux
   au premier anniversaire (d'où la colonne `age_last_reminded_at` et son
   système de rappel). Les RPC calculent désormais l'âge depuis
   `birthdate` ; `age` ne sert plus que de repli et devrait être retiré une
   fois les profils complétés.
-- **`videos.sport` stocke un slug** (`'foot'`) alors que plusieurs filtres
-  du front comparent à un libellé (`'Football'`) : ces filtres ne peuvent
-  pas correspondre. Une table de référence `sports` (20 entrées) a été
-  ajoutée ; le front reste à aligner dessus.
 - **20 index signalés « inutilisés »** par le linter Supabase. Ce verdict
   s'appuie sur des statistiques d'usage encore vides — ils ont été
   conservés volontairement.
 - **Protection des mots de passe compromis désactivée** (vérification
-  HaveIBeenPwned). À activer dans les paramètres Auth.
+  HaveIBeenPwned). C'est un réglage de la console Auth, pas du schéma :
+  Authentication → Policies → « Leaked password protection ».
+- **Le test de rejet de la clé étrangère `sports` n'a pas pu être
+  exécuté** (instabilité du connecteur Supabase). La contrainte est en
+  place et validée contre les données existantes — un `ADD CONSTRAINT`
+  échoue si une ligne la viole — mais l'essai d'écriture d'une valeur
+  invalide reste à faire.
