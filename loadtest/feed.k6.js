@@ -65,7 +65,7 @@ export default function () {
   if (r.status !== 200) { sleep(2); return; }
 
   pagesVues.add(1);
-  let lignes = [];
+  let lignes;
   try { lignes = JSON.parse(r.body); } catch { return; }
 
   // L'utilisateur regarde les vidéos avant de faire défiler.

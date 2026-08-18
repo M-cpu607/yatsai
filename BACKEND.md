@@ -181,7 +181,15 @@ nécessaire, pas suffisant. Ce qui reste à faire, par ordre d'impact :
    centaines d'écritures/seconde par vidéo ; au-delà, il faut sharder le
    compteur.
 
-## 5. Versionner les migrations
+## 5. Outils fournis
+
+| Dossier | Rôle |
+|---|---|
+| `e2e/` | Test de fumée navigateur contre un faux Supabase local — vérifie que l'app tourne sans consommer de quota ni toucher à la base |
+| `loadtest/` | Test de charge du feed, pour mesurer la capacité réelle plutôt que l'estimer |
+| `docs/` | Simulation comparant les stratégies de classement du feed, et la décision qui en découle |
+
+## 6. Versionner les migrations
 
 Les changements de schéma vivent aujourd'hui uniquement dans l'historique
 Supabase (60 migrations, dont 8 issues de ce travail). Ils ne sont pas dans
@@ -197,16 +205,24 @@ Passer par `db pull` plutôt que par des fichiers écrits à la main garantit
 que le contenu correspond exactement à ce qui est réellement appliqué —
 y compris les 52 migrations antérieures à ce travail.
 
-## 6. Points en suspens
+## 7. Points en suspens
 
-- **Le chemin REST n'a pas pu être testé** depuis l'environnement de
-  développement : la politique d'egress y bloque `*.supabase.co` (403 sur
-  le tunnel CONNECT). Contournement explicitement déconseillé par la
-  documentation du proxy.
-  L'autorisation a en revanche été validée en endossant les rôles
-  `anon` et `authenticated` avec de vraies revendications JWT — ce qui
-  couvre les droits, la RLS et `auth.uid()`. Seul le transport HTTP reste
-  à confirmer depuis le navigateur.
+- **Le transport HTTP vers le vrai Supabase n'a pas pu être testé** depuis
+  l'environnement de développement : la politique d'egress y bloque
+  `*.supabase.co` (403 sur le tunnel CONNECT), contournement explicitement
+  déconseillé par la documentation du proxy.
+
+  Tout le reste a été vérifié, de deux côtés :
+  - **Côté base** : autorisation validée en endossant les rôles `anon` et
+    `authenticated` avec de vraies revendications JWT — droits, RLS et
+    `auth.uid()` à travers le RPC (7/7).
+  - **Côté application** : test de fumée navigateur contre un faux
+    backend local (`e2e/`), de la connexion au défilement infini (8/8).
+    Il valide la forme de réponse de `get_feed`, l'affichage de
+    `author_name` et la pagination par curseur de bout en bout.
+
+  Ne reste donc que le transport lui-même : DNS, TLS et routage PostgREST.
+  À confirmer d'un `npm run dev` depuis votre navigateur.
 - **`profiles` porte à la fois `age` et `birthdate`.** `age` devient faux
   au premier anniversaire (d'où la colonne `age_last_reminded_at` et son
   système de rappel). Les RPC calculent désormais l'âge depuis
