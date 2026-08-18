@@ -127,6 +127,19 @@ const SPORTS = [
   { id: 'hockey', label: 'Hockey sur glace', icon: '🏒' },
 ];
 
+// Un sport circule sous deux formes dans l'app : le slug ('foot'),
+// qui est ce que stocke la base et ce qu'écrit le formulaire de
+// publication, et le libellé ('Football'), utilisé par les données de
+// démonstration et les mots-clés du chatbot. Les filtres comparaient
+// un libellé à une valeur qui pouvait être un slug : ils ne
+// pouvaient jamais correspondre sur les vraies vidéos.
+// On ramène tout au slug, qui fait autorité.
+const SPORT_BY_ID = Object.fromEntries(SPORTS.map(s => [s.id, s]));
+const SPORT_BY_LABEL = Object.fromEntries(SPORTS.map(s => [s.label, s]));
+const sportId = (v) => (SPORT_BY_ID[v] ? v : SPORT_BY_LABEL[v]?.id ?? null);
+const sportLabel = (v) => SPORT_BY_ID[v]?.label ?? SPORT_BY_LABEL[v]?.label ?? v ?? '';
+const sportIcon = (v) => SPORT_BY_ID[v]?.icon ?? SPORT_BY_LABEL[v]?.icon ?? '🏆';
+
 const CURRENT_RECRUITER = {
   firstName: 'Marc', lastName: 'Dubois',
   email: 'marc.dubois@psg.fr',
@@ -164,7 +177,7 @@ function parseQuery(text) {
   const q = stripAccents(text.toLowerCase());
   const filters = {}; const matched = [];
   for (const [sport, kws] of Object.entries(SPORT_KEYWORDS)) {
-    if (kws.some(k => q.includes(k))) { filters.sport = sport; matched.push(`Sport : ${sport}`); break; }
+    if (kws.some(k => q.includes(k))) { filters.sport = sportId(sport); matched.push(`Sport : ${sport}`); break; }
   }
   const u = q.match(/\bu(\d{1,2})\b/);
   if (u) {
@@ -260,7 +273,7 @@ function VideoCard({ data, muted, onToggleMute, onSelectAthlete }) {
           style={{ backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(10px)', border: `1px solid ${C.borderGold}` }}>
           <Sparkles size={11} style={{ color: C.gold }} />
           <span className="font-mono text-[9px] tracking-wider" style={{ color: C.gold }}>
-            SPORT DÉTECTÉ · {data.sport.toUpperCase()} · {data.detection?.confidence ?? 95}%
+            SPORT DÉTECTÉ · {sportLabel(data.sport).toUpperCase()} · {data.detection?.confidence ?? 95}%
           </span>
         </div>
         <button onClick={onToggleMute}
@@ -328,7 +341,7 @@ function SupabaseVideoCard({ data, onPlay }) {
   const thumbnailUrl = data.thumbnail_url
     || (youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : null);
 
-  const sport = SPORTS.find(s => s.id === data.sport);
+  const sport = SPORT_BY_ID[data.sport] ?? SPORT_BY_LABEL[data.sport];
   // get_feed renvoie l'auteur à plat (author_name) plutôt qu'imbriqué
   // dans un objet `profiles` : un seul aller-retour au lieu d'une
   // jointure re-sérialisée par PostgREST.
@@ -714,7 +727,7 @@ function SearchView({ videos, onSelectAthlete }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filtered = useMemo(() => videos.filter(v => {
-    if (filters.sport && v.sport !== filters.sport) return false;
+    if (filters.sport && sportId(v.sport) !== filters.sport) return false;
     if (filters.gender && v.gender !== filters.gender) return false;
     if (v.age < filters.ageMin || v.age > filters.ageMax) return false;
     if (v.rating < filters.minRating) return false;
@@ -795,9 +808,9 @@ function SearchView({ videos, onSelectAthlete }) {
               <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>Sport</label>
               <div className="flex flex-wrap gap-2">
                 {SPORTS.map(s => {
-                  const active = filters.sport === s.label;
+                  const active = filters.sport === s.id;
                   return (
-                    <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.label }))}
+                    <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.id }))}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium"
                       style={{
                         backgroundColor: active ? C.goldSoft : C.bg,
@@ -895,7 +908,7 @@ function DiscoveryView({ videos, onSelectAthlete, shortlistIds, toggleShortlist 
 
   const filtered = useMemo(() => {
     let r = videos.filter(v => {
-      if (filters.sport && v.sport !== filters.sport) return false;
+      if (filters.sport && sportId(v.sport) !== filters.sport) return false;
       if (filters.gender && v.gender !== filters.gender) return false;
       if (v.age < filters.ageMin || v.age > filters.ageMax) return false;
       if (v.rating < filters.minRating) return false;
@@ -1002,9 +1015,9 @@ function DiscoveryView({ videos, onSelectAthlete, shortlistIds, toggleShortlist 
               <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>Sport</label>
               <div className="flex flex-wrap gap-2">
                 {SPORTS.map(s => {
-                  const active = filters.sport === s.label;
+                  const active = filters.sport === s.id;
                   return (
-                    <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.label }))}
+                    <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.id }))}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium"
                       style={{
                         backgroundColor: active ? C.goldSoft : C.bg,
@@ -1225,7 +1238,7 @@ function findOrCreateConversation(athlete) {
   return {
     id: `c-${athlete.id}`,
     name: athlete.name,
-    subtitle: `${athlete.icon} ${athlete.sport}`,
+    subtitle: `${athlete.icon ?? sportIcon(athlete.sport)} ${sportLabel(athlete.sport)}`,
     isAthlete: true, time: 'maintenant', unread: 0,
     messages: [],
   };
@@ -1402,7 +1415,7 @@ function ShortlistRow({ athlete, notes, onSelectAthlete, onOpenChat, onRemove, o
         <button onClick={() => onSelectAthlete?.(athlete)} className="flex-1 min-w-0 text-left">
           <div className="font-semibold text-sm truncate" style={{ color: C.text }}>{athlete.name}</div>
           <div className="text-xs" style={{ color: C.textDim }}>
-            {athlete.icon} {athlete.sport} · {athlete.club}
+            {athlete.icon ?? sportIcon(athlete.sport)} {sportLabel(athlete.sport)} · {athlete.club}
           </div>
         </button>
 
