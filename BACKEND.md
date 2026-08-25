@@ -154,40 +154,91 @@ supabase.rpc('increment_video_views_batch', { p_video_ids: [...] })
 
 ---
 
-## 4. Objectif 10 000 utilisateurs simultanés — état réel
+## 4. Capacité réelle — mesurée, pas estimée
 
 **L'organisation est sur le plan `free`.** L'instance est un nano à
 `max_connections = 60`.
 
 L'objectif était formulé comme « 10 000 utilisateurs faisant une requête
-chaque seconde », soit 10 000 req/s. Pris au pied de la lettre, le plan
-gratuit en encaisse de l'ordre de 1 à 2 %. Mais cette formulation
-surestime massivement la charge réelle : un utilisateur qui fait défiler
-charge 20 vidéos d'un coup puis ne redemande rien pendant une trentaine
-de secondes, soit **0,033 req/s** et non 1. Le §5 refait ce calcul
-proprement — 10 000 utilisateurs *simultanés* représentent environ
-**300 req/s**, ce qui est un tout autre problème.
+chaque seconde », soit 10 000 req/s. Cette formulation surestime largement
+la charge réelle : un utilisateur qui fait défiler charge 20 vidéos d'un
+coup puis ne redemande rien pendant une trentaine de secondes, soit
+**0,033 req/s** et non 1. 10 000 utilisateurs *simultanés* représentent
+donc environ **300 req/s** (calcul détaillé au §5).
 
-Le schéma est *prêt* pour cette charge — c'est un préalable nécessaire,
-pas suffisant. Ce qui reste à faire, par ordre d'impact :
+### Mesures
 
-1. **Éviter que ce trafic atteigne Postgres.** Le feed est
-   ~90 % du trafic et quasi identique pour tout le monde. Il est lisible
-   sans session (policy `using (true)`), donc cacheable en amont — une
-   requête peut servir des milliers d'utilisateurs.
-2. **Passer au plan Pro** puis dimensionner le compute. Le pooler
-   (Supavisor) devient indispensable au-delà de quelques centaines de
-   connexions.
+Relevé avec `loadtest/quick.mjs` depuis un poste en France, contre le
+projet réel sur le plan gratuit.
+
+| Concurrence | req/s | p50 | p95 | p99 | Erreurs |
+|---|---|---|---|---|---|
+| 1 | 12 | 75 ms | 151 ms | 237 ms | 0 % |
+| 5 | 63 | 73 ms | 141 ms | 180 ms | 0 % |
+| 10 | 139 | 70 ms | 82 ms | 137 ms | 0 % |
+| 25 | 329 | 70 ms | 98 ms | 239 ms | 0 % |
+| 50 | 656 | 72 ms | 94 ms | 153 ms | 0 % |
+| 100 | **911** | 102 ms | 154 ms | 275 ms | **0 %** |
+
+**Le p50 reste plat à ~70 ms de 1 à 50 connexions simultanées.** Le serveur
+ne force pas : cette latence est le trajet réseau jusqu'à `eu-north-1`, pas
+du travail de base. Le débit monte quasi linéairement, sans une seule
+erreur. À 100 connexions le p50 passe à 102 ms — premier signe de
+saturation, mais **le test s'est arrêté faute de paliers configurés, pas
+parce que quelque chose a cédé. Le plafond n'a pas été atteint.**
+
+> **Correction.** Une version antérieure de ce document estimait que le
+> plan gratuit encaissait « de l'ordre de 1 à 2 % de 10 000 req/s », soit
+> 100 à 200 req/s. La mesure donne **911 req/s sans erreur**, soit environ
+> cinq fois plus. L'estimation était fausse ; ce sont les chiffres
+> ci-dessus qui font foi.
+
+À 0,033 req/s par personne, 911 req/s correspond à environ **27 000
+utilisateurs actifs simultanés**.
+
+### Réserves sur ces mesures
+
+- La base ne contenait **qu'une vidéo** : chaque page pesait 0,6 Ko au lieu
+  des 13,8 Ko d'un vrai feed. Ce test mesure donc le réseau et le surcoût
+  PostgREST, pas le coût de la requête. Ce dernier a été mesuré séparément
+  (0,25 ms sur 200 000 vidéos, §2) et n'est pas le facteur limitant.
+- À 100 connexions, Node devient lui-même un facteur : les 911 req/s sont
+  probablement **sous-estimés**. Au-delà, utiliser `loadtest/feed.k6.js`.
+- Le plancher de ~70 ms dépend de la distance au datacenter.
+
+### La vraie contrainte est la bande passante
+
+Puisque le CPU tient, c'est l'egress qui devient le facteur limitant. Sur
+la base de ~5 pages par session et 13,8 Ko la page :
+
+| Actifs / jour | Egress / mois | Situation |
+|---|---|---|
+| 10 000 | ~21 Go | confortable |
+| 100 000 | ~207 Go | atteint les 250 Go inclus au plan Pro |
+| 1 000 000 | ~2 To | ~160 $/mois d'egress supplémentaire |
+
+Ce qui déplace la première priorité : **alléger la charge utile avant
+d'ajouter du compute**. `get_feed` renvoie aujourd'hui `description` et
+plusieurs champs que la carte du feed n'affiche pas ; les retirer réduit
+directement la facture.
+
+### Ordre des actions
+
+1. **Alléger la réponse de `get_feed`.** Levier direct sur le poste de
+   coût qui saturera en premier.
+2. **Rester sur le plan gratuit** tant que le p95 ne dérive pas. La marge
+   est réelle et mesurée.
 3. **Realtime uniquement sur la messagerie.** Le plan gratuit plafonne à
    200 connexions simultanées. Ne jamais abonner le feed en temps réel.
-4. **Attention à l'amplification d'écriture.** Chaque like déclenche
-   aujourd'hui : 1 insert `likes` + 1 update `videos.likes_count` +
-   1 insert `notifications`. À fort volume, les notifications devraient
-   partir en file (`pgmq` est disponible) plutôt qu'en trigger synchrone.
+4. **Amplification d'écriture.** Chaque like déclenche 1 insert `likes` +
+   1 update `videos.likes_count` + 1 insert `notifications`. À fort volume,
+   les notifications devraient partir en file (`pgmq` est disponible)
+   plutôt qu'en trigger synchrone.
 5. **Contention sur les lignes chaudes.** Les compteurs par trigger
    sérialisent les écritures sur une même ligne. Correct jusqu'à quelques
-   centaines d'écritures/seconde par vidéo ; au-delà, il faut sharder le
-   compteur.
+   centaines d'écritures/seconde par vidéo ; au-delà, sharder le compteur.
+6. **Cacher le feed en amont**, seulement si le trafic le justifie. Il est
+   lisible sans session (policy `using (true)`), donc cacheable.
 
 ## 5. Grandir au-delà — les paliers suivants
 
@@ -216,6 +267,10 @@ simultanés × 0,033 req/s            (une page de 20 vidéos toutes les ~30 s)
 
 **10 millions d'inscrits, c'est de l'ordre de 1 000 req/s soutenues**, et
 peut-être 5 000 en pic réel. Pas des millions.
+
+À rapprocher du §4 : l'instance gratuite a tenu **911 req/s sans erreur**,
+sans avoir atteint son plafond. Côté calcul, elle est donc déjà dans cet
+ordre de grandeur. C'est l'**egress** qui bloquerait bien avant le CPU.
 
 Pour situer : « des millions de requêtes par seconde » sur une API, aucune
 application grand public ou presque ne le fait. Y arriver supposerait de
@@ -297,16 +352,34 @@ y compris les 52 migrations antérieures à ce travail.
 
 - **Chaîne complète confirmée en conditions réelles.** Le transport HTTP
   n'avait pas pu être testé depuis l'environnement de développement (la
-  politique d'egress y bloque `*.supabase.co`) ; il a été validé depuis le
-  navigateur, sur le vrai projet. `get_feed` répond et le feed s'affiche.
-
-  La vérification est donc complète sur les trois couches :
+  politique d'egress y bloque `*.supabase.co`). Il l'a été depuis un poste
+  réel : la requête de contrôle du test de charge appelle `get_feed` en
+  HTTPS sur le vrai projet et reçoit une réponse valide, puis 911 req/s
+  sans erreur. Les trois couches sont donc vérifiées :
   - **Base** : autorisation validée en endossant les rôles `anon` et
     `authenticated` avec de vraies revendications JWT — droits, RLS et
     `auth.uid()` à travers le RPC (7/7).
   - **Application** : test de fumée navigateur contre un faux backend
     local (`e2e/`), de la connexion au défilement infini (8/8).
-  - **Transport** : confirmé manuellement contre le projet réel.
+  - **Transport** : `get_feed` appelé en HTTPS sur le projet réel (§4).
+
+- **Le dépôt porte deux historiques sans ancêtre commun.** La branche de
+  ce travail (`claude/build-application-YkNgl`, racine `32eb53e`) et
+  `main` (racine `6005845`, ~50 commits) n'ont **aucune base commune** :
+  `git merge-base` ne renvoie rien.
+
+  Conséquences :
+  - Le travail sur la **base de données est intact et valide** — les
+    migrations ont été appliquées directement sur le projet Supabase, qui
+    est indépendant de Git.
+  - Les **outils** (`loadtest/`, `e2e/`, `docs/`, ce fichier) sont des
+    fichiers autonomes, récupérables avec
+    `git checkout origin/claude/build-application-YkNgl -- <dossier>`.
+  - En revanche les modifications de **`src/App.jsx` de cette branche sont
+    à écarter** : elles ont été faites sur une version du fichier qui n'est
+    pas celle de `main`. Le branchement sur `get_feed` et la normalisation
+    des sports (§1) restent **à refaire sur le vrai `App.jsx`**.
+  - La PR ouverte n'est pas fusionnable telle quelle.
 
 - **`profiles` porte à la fois `age` et `birthdate`.** `age` devient faux
   au premier anniversaire (d'où la colonne `age_last_reminded_at` et son
