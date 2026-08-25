@@ -295,22 +295,19 @@ y compris les 52 migrations antérieures à ce travail.
 
 ## 8. Points en suspens
 
-- **Le transport HTTP vers le vrai Supabase n'a pas pu être testé** depuis
-  l'environnement de développement : la politique d'egress y bloque
-  `*.supabase.co` (403 sur le tunnel CONNECT), contournement explicitement
-  déconseillé par la documentation du proxy.
+- **Chaîne complète confirmée en conditions réelles.** Le transport HTTP
+  n'avait pas pu être testé depuis l'environnement de développement (la
+  politique d'egress y bloque `*.supabase.co`) ; il a été validé depuis le
+  navigateur, sur le vrai projet. `get_feed` répond et le feed s'affiche.
 
-  Tout le reste a été vérifié, de deux côtés :
-  - **Côté base** : autorisation validée en endossant les rôles `anon` et
+  La vérification est donc complète sur les trois couches :
+  - **Base** : autorisation validée en endossant les rôles `anon` et
     `authenticated` avec de vraies revendications JWT — droits, RLS et
     `auth.uid()` à travers le RPC (7/7).
-  - **Côté application** : test de fumée navigateur contre un faux
-    backend local (`e2e/`), de la connexion au défilement infini (8/8).
-    Il valide la forme de réponse de `get_feed`, l'affichage de
-    `author_name` et la pagination par curseur de bout en bout.
+  - **Application** : test de fumée navigateur contre un faux backend
+    local (`e2e/`), de la connexion au défilement infini (8/8).
+  - **Transport** : confirmé manuellement contre le projet réel.
 
-  Ne reste donc que le transport lui-même : DNS, TLS et routage PostgREST.
-  À confirmer d'un `npm run dev` depuis votre navigateur.
 - **`profiles` porte à la fois `age` et `birthdate`.** `age` devient faux
   au premier anniversaire (d'où la colonne `age_last_reminded_at` et son
   système de rappel). Les RPC calculent désormais l'âge depuis
