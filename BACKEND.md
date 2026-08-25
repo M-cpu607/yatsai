@@ -157,13 +157,21 @@ supabase.rpc('increment_video_views_batch', { p_video_ids: [...] })
 ## 4. Objectif 10 000 utilisateurs simultanés — état réel
 
 **L'organisation est sur le plan `free`.** L'instance est un nano à
-`max_connections = 60`. 10 000 utilisateurs à 1 requête/seconde = 10 000
-requêtes/seconde ; le plan gratuit en encaisse de l'ordre de 1 à 2 %.
+`max_connections = 60`.
 
-Le schéma est maintenant *prêt* pour cette charge — c'est un préalable
-nécessaire, pas suffisant. Ce qui reste à faire, par ordre d'impact :
+L'objectif était formulé comme « 10 000 utilisateurs faisant une requête
+chaque seconde », soit 10 000 req/s. Pris au pied de la lettre, le plan
+gratuit en encaisse de l'ordre de 1 à 2 %. Mais cette formulation
+surestime massivement la charge réelle : un utilisateur qui fait défiler
+charge 20 vidéos d'un coup puis ne redemande rien pendant une trentaine
+de secondes, soit **0,033 req/s** et non 1. Le §5 refait ce calcul
+proprement — 10 000 utilisateurs *simultanés* représentent environ
+**300 req/s**, ce qui est un tout autre problème.
 
-1. **Ne pas faire arriver ces 10 000 req/s jusqu'à Postgres.** Le feed est
+Le schéma est *prêt* pour cette charge — c'est un préalable nécessaire,
+pas suffisant. Ce qui reste à faire, par ordre d'impact :
+
+1. **Éviter que ce trafic atteigne Postgres.** Le feed est
    ~90 % du trafic et quasi identique pour tout le monde. Il est lisible
    sans session (policy `using (true)`), donc cacheable en amont — une
    requête peut servir des milliers d'utilisateurs.
@@ -181,7 +189,87 @@ nécessaire, pas suffisant. Ce qui reste à faire, par ordre d'impact :
    centaines d'écritures/seconde par vidéo ; au-delà, il faut sharder le
    compteur.
 
-## 5. Outils fournis
+## 5. Grandir au-delà — les paliers suivants
+
+### D'abord, l'arithmétique
+
+Trois nombres qu'on confond systématiquement. Les distinguer change la
+nature du problème :
+
+```
+inscrits
+  × taux d'actifs quotidiens        (~15 %, ratio courant)
+  × part du trafic à l'heure de pic (~15 % de la journée)
+  × durée de session / 60 min       (~8 min)
+  = utilisateurs simultanés au pic
+
+simultanés × 0,033 req/s            (une page de 20 vidéos toutes les ~30 s)
+  = requêtes par seconde
+```
+
+| Inscrits | Actifs / jour | Simultanés au pic | Req/s soutenues |
+|---|---|---|---|
+| 10 000 | 1 500 | ~30 | ~1 |
+| 100 000 | 15 000 | ~300 | ~10 |
+| 1 000 000 | 150 000 | ~3 000 | ~100 |
+| 10 000 000 | 1 500 000 | ~30 000 | **~1 000** |
+
+**10 millions d'inscrits, c'est de l'ordre de 1 000 req/s soutenues**, et
+peut-être 5 000 en pic réel. Pas des millions.
+
+Pour situer : « des millions de requêtes par seconde » sur une API, aucune
+application grand public ou presque ne le fait. Y arriver supposerait de
+l'ordre du milliard d'utilisateurs, ou un usage radicalement différent de
+celui-ci. Ces chiffres sont un modèle, pas une mesure — refaites-les avec
+vos propres ratios dès que vous les connaîtrez.
+
+### Ce qui casse, dans l'ordre
+
+Chaque palier casse autre chose. On ne saute pas les étapes : l'architecture
+est réécrite en chemin, et c'est normal.
+
+| Palier | Ce qui casse | Ce qu'on fait |
+|---|---|---|
+| **~10 req/s** | rien | Plan Pro, pooler activé. C'est la prochaine étape. |
+| **~100 req/s** | Postgres seul en lecture | Réplicas de lecture, cache devant le feed. Le Realtime devient un poste de coût : le limiter à la messagerie. |
+| **~1 000 req/s** | le feed calculé à la demande | Feed **pré-calculé** et poussé dans un cache. Compteurs par trigger passés en file (`pgmq`). C'est aussi le moment où le Postgres managé cesse d'être rentable face à de l'infrastructure gérée soi-même. |
+| **au-delà** | l'organisation, pas la technique | Partitionnement, multi-région, équipes dédiées. Cela ne se prépare pas à l'avance : on recrute les gens qui le feront. |
+
+### La meilleure décision d'architecture est déjà prise
+
+**Les vidéos sont sur YouTube.**
+
+Stocker et diffuser de la vidéo est la partie la plus chère et la plus
+difficile d'une application comme celle-ci — et la seule dont le coût
+explose vraiment avec le nombre d'utilisateurs. En la déléguant, cette
+partie passe à l'échelle gratuitement, sans rien faire. La base ne
+transporte que du texte et des identifiants.
+
+C'est pour cette raison que 10 millions d'inscrits coûteraient ici bien
+moins cher qu'à une plateforme qui héberge ses médias. Ne pas revenir
+là-dessus sans une raison très solide.
+
+### Les signaux qui déclenchent le palier suivant
+
+Plutôt que de deviner, surveiller :
+
+- **Latence p95 qui monte à trafic constant** → la base sature, ajouter du compute.
+- **Connexions en attente** → activer le pooler.
+- **Les écritures ralentissent les lectures** → sortir les notifications du chemin synchrone.
+- **La même requête revient des milliers de fois par seconde** → c'est là qu'un cache devient rentable, et pas avant.
+
+### Ne rien construire de tout cela maintenant
+
+La quasi-totalité des applications meurent à 100 utilisateurs, pas à
+10 millions. Bâtir aujourd'hui pour 10 millions ajoute de la complexité,
+des pannes et des coûts, précisément pendant la phase où il faut aller vite.
+
+Ce qui a été fait suffit largement pour les 10 000 premiers utilisateurs.
+Et surtout : **rien de ce qui a été fait ne devra être défait pour aller
+plus loin.** Compteurs dénormalisés, pagination par curseur, RLS propre —
+c'est le socle commun de tous les paliers suivants.
+
+## 6. Outils fournis
 
 | Dossier | Rôle |
 |---|---|
@@ -189,7 +277,7 @@ nécessaire, pas suffisant. Ce qui reste à faire, par ordre d'impact :
 | `loadtest/` | Test de charge du feed, pour mesurer la capacité réelle plutôt que l'estimer |
 | `docs/` | Simulation comparant les stratégies de classement du feed, et la décision qui en découle |
 
-## 6. Versionner les migrations
+## 7. Versionner les migrations
 
 Les changements de schéma vivent aujourd'hui uniquement dans l'historique
 Supabase (60 migrations, dont 8 issues de ce travail). Ils ne sont pas dans
@@ -205,7 +293,7 @@ Passer par `db pull` plutôt que par des fichiers écrits à la main garantit
 que le contenu correspond exactement à ce qui est réellement appliqué —
 y compris les 52 migrations antérieures à ce travail.
 
-## 7. Points en suspens
+## 8. Points en suspens
 
 - **Le transport HTTP vers le vrai Supabase n'a pas pu être testé** depuis
   l'environnement de développement : la politique d'egress y bloque
