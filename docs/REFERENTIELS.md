@@ -109,6 +109,75 @@ sans sport ne veut rien dire, et c'est exactement ce que la nouvelle clé
 Cette ligne n'a pas été reprise automatiquement : son sport est
 indevinable. À corriger à la main, ou à laisser — c'est un compte d'essai.
 
+## Niveau de l'adversaire et numéro de maillot
+
+### `competition_levels` — ordonné, et c'est essentiel
+
+Dix niveaux, de `loisir` à `international`. Trois buts contre une équipe
+de district ne valent pas trois buts en National : sans cette information,
+un recruteur ne peut pas juger une performance.
+
+La colonne **`rank`** est la raison d'être de cette table. Une simple liste
+de libellés ne permettrait que « exactement district ». Avec un rang
+ordonné, on écrit le filtre que le recruteur veut réellement :
+
+```sql
+-- « régional ou mieux » : 7 niveaux sur 10
+where cl.rank >= (select rank from competition_levels where id = 'regional')
+```
+
+| Rang | Niveau |
+|---|---|
+| 1 | Loisir / non compétitif |
+| 2 | District |
+| 3 | Départemental |
+| 4 | **Régional** |
+| 5 | Inter-régional |
+| 6 à 8 | National, 3e à 1er échelon |
+| 9 | Professionnel |
+| 10 | International |
+
+**Comparer sur `rank`, jamais sur `id`.** Les identifiants n'ont pas
+d'ordre alphabétique utile.
+
+### `jersey_number` — seulement là où ça existe
+
+Neuf des vingt sports n'utilisent pas de numéro de maillot : un nageur,
+un golfeur ou un boxeur n'en porte pas.
+
+La colonne `sports.has_jersey_number` marque les **onze** qui en ont :
+football, basket, rugby, handball, volley, cricket, football américain,
+baseball, hockey, karting, esport. Elle pilote l'affichage du champ dans
+le formulaire.
+
+Deux garde-fous côté base, indépendants du client :
+
+- une contrainte borne la valeur entre 0 et 99 ;
+- un trigger refuse tout numéro sur un sport qui n'en utilise pas.
+
+### Vérifications
+
+Cinq contrôles joués sur la base réelle, en transaction annulée :
+
+| Test | Résultat |
+|---|---|
+| Numéro 10 sur une vidéo de tennis | refusé par le trigger |
+| Numéro 9 sur une vidéo de football | accepté |
+| Numéro 150 (hors bornes) | refusé par la contrainte |
+| Niveau `ligue_des_champions` (inexistant) | refusé par la FK |
+| Filtre « régional ou mieux » | 7 niveaux — correct |
+
+Sur ce dernier point, le test annonçait d'abord 6 niveaux attendus et a
+signalé un écart. Vérification faite, **la base avait raison** : les rangs
+4 à 10 font bien 7 niveaux. C'était une erreur de calcul dans le test, pas
+dans les données.
+
+### `skills` — repoussé
+
+Volontairement non implémenté pour l'instant. À reprendre quand les
+premières données réelles montreront les qualités que les recruteurs
+cherchent effectivement.
+
 ## Reste à faire côté application
 
 Les tables sont prêtes, le front n'est pas branché :
@@ -116,7 +185,9 @@ Les tables sont prêtes, le front n'est pas branché :
 1. Remplacer les champs de saisie `position`, `age_category` par des listes
    déroulantes alimentées par ces tables. La liste des postes se filtre sur
    le sport déjà choisi.
-2. Ajouter le choix de la saison et la date du match à la publication.
+2. Ajouter à la publication : saison, date du match, niveau de
+   l'adversaire, et numéro de maillot — ce dernier affiché seulement si
+   `sports.has_jersey_number` est vrai pour le sport choisi.
 3. Brancher ces dimensions dans les filtres de recherche du recruteur.
 4. Étendre `search_athletes` aux titres et descriptions de vidéos, pour la
    recherche libre.
