@@ -239,14 +239,18 @@ export default function Auth({ initialMode = 'login' }) {
             full_name: fullName.trim(),
             is_recruiter: isRecruiter,
             role, // 'athlete' | 'recruiter' | 'observer'
-            country: country.trim() || null,
-            region: region.trim() || null,
-            city: city.trim() || null,
+            // Les colonnes `country`, `region`, `city` et `age` sont GÉNÉRÉES
+            // par la base : elle y publie une version masquée quand la
+            // personne active « masquer ma localisation » ou « masquer mon
+            // âge ». C'est donc dans les colonnes sources qu'on écrit.
+            country_private: country.trim() || null,
+            region_private: region.trim() || null,
+            city_private: city.trim() || null,
           }
           if (isAthlete) {
             profileUpdate.gender = gender
             profileUpdate.birthdate = birthdate || null
-            profileUpdate.age = computedAge // cache, mais source de vérité = birthdate
+            profileUpdate.age_private = computedAge // cache, mais source de vérité = birthdate
             profileUpdate.nationality = nationality.trim() || null
             profileUpdate.sport = sport || null
             profileUpdate.position_id = positionId || null
@@ -263,7 +267,7 @@ export default function Auth({ initialMode = 'login' }) {
           } else if (isRecruiter) {
             profileUpdate.gender = gender
             profileUpdate.birthdate = birthdate || null
-            profileUpdate.age = computedAge
+            profileUpdate.age_private = computedAge
             profileUpdate.nationality = nationality.trim() || null
             profileUpdate.sport = sport || null
             profileUpdate.organization = organization.trim() || null

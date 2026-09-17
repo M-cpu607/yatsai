@@ -217,6 +217,29 @@ function ChampSelect({ label, value, onChange, options, placeholder = 'Indiffér
   );
 }
 
+// ─── COLONNES DE PROFIL LISIBLES PAR LES AUTRES ──────────────────
+// La base n'accorde plus la lecture de `profiles` colonne par colonne :
+// date de naissance, téléphone, pièce justificative de niveau et état
+// interne ne sortent plus. Conséquence directe : un `select('*')` sur
+// `profiles` est désormais REFUSÉ, il faut énumérer.
+//
+// Pour lire son PROPRE profil en entier — colonnes privées comprises —
+// on passe par la fonction `get_my_profile()`, qui ne peut renvoyer que
+// la ligne de l'appelant.
+//
+// Cette liste doit rester alignée sur les droits accordés par la
+// migration `profils_rls_prive_et_droits_par_colonne`.
+const COLONNES_PROFIL_PUBLIC = [
+  'id', 'username', 'full_name', 'age', 'sport', 'position', 'position_id',
+  'club', 'bio', 'avatar_url', 'banner_url', 'is_recruiter', 'organization',
+  'verified', 'created_at', 'city', 'region', 'country', 'gender',
+  'nationality', 'level', 'has_club', 'recruiting_gender', 'recruiting_levels',
+  'recruiting_age_min', 'recruiting_age_max', 'is_private', 'hide_age',
+  'hide_location', 'messaging_pref', 'social_links', 'level_proof_status',
+  'role', 'season_start_month', 'followers_count', 'following_count',
+  'videos_count',
+].join(', ');
+
 // ─── RÔLES UTILISATEUR ───────────────────────────────────────────
 // 3 rôles : athlete (publie des vidéos), recruiter (recrute, peut signer)
 // et observer (parents, coachs, fans : peut juste enregistrer des vidéos).
@@ -4806,7 +4829,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     let cancel = false;
     setLoading(true);
     (async () => {
-      let q = supabase.from('profiles').select('*');
+      let q = supabase.from('profiles').select(COLONNES_PROFIL_PUBLIC);
       if (currentUserId) q = q.neq('id', currentUserId);
       if (athletesOnly) q = q.eq('is_recruiter', false);
       const { data, error } = await q.order('created_at', { ascending: false });
@@ -8973,7 +8996,7 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModerat
     setExportBusy(true);
     try {
       const [profile, videos, messages, applications, follows, shortlist] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userProfile.id).single(),
+        supabase.rpc('get_my_profile'),
         supabase.from('videos').select('*').eq('user_id', userProfile.id),
         // Messages : seulement ceux dont je suis l'auteur (mes données)
         supabase.from('messages').select('id, receiver_id, content, created_at').eq('sender_id', userProfile.id),
@@ -10826,8 +10849,10 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
     setError(''); setSaving(true);
     const updates = {
       // full_name et birthdate sont volontairement omis (non modifiables).
-      // L'âge est recalculé en cache à partir de birthdate.
-      age: computedAge,
+      // L'âge est recalculé en cache à partir de birthdate. Il part dans
+      // `age_private` : la colonne `age` est générée par la base, qui la
+      // masque quand « masquer mon âge » est actif.
+      age_private: computedAge,
       // sport non modifiable (défini à l'inscription)
       // Le poste est un identifiant de référentiel ; le libellé texte est
       // rempli par le trigger profiles_sync_position_label. On n'envoie
@@ -10838,9 +10863,12 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       club: isRecruiter ? null : (club.trim() || null),
       organization: isRecruiter ? (organization.trim() || null) : null,
       bio: bio.trim() || null,
-      country: country.trim() || null,
-      region: region.trim() || null,
-      city: city.trim() || null,
+      // Même principe que l'âge : la localisation saisie va dans les
+      // colonnes sources, et la base publie une version masquée quand
+      // « masquer ma localisation » est actif.
+      country_private: country.trim() || null,
+      region_private: region.trim() || null,
+      city_private: city.trim() || null,
       phone: phone.trim() || null,
       username: username.trim() || null,
       season_start_month: seasonStartMonth,
@@ -12503,11 +12531,10 @@ export default function App() {
   }, []);
 
   const loadProfile = async (userId) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
+    // `get_my_profile()` plutôt qu'un select : elle seule donne accès aux
+    // colonnes privées (date de naissance, téléphone), dont le formulaire
+    // de profil a besoin. Elle ne peut renvoyer que la ligne de l'appelant.
+    const { data, error } = await supabase.rpc('get_my_profile');
     if (error) {
       console.error('Erreur chargement profil:', error);
       return;
@@ -12516,7 +12543,7 @@ export default function App() {
     if (data?.birthdate) {
       const liveAge = computeAge(data.birthdate);
       if (liveAge !== null && liveAge !== data.age) {
-        supabase.from('profiles').update({ age: liveAge }).eq('id', userId)
+        supabase.from('profiles').update({ age_private: liveAge }).eq('id', userId)
           .then(({ error: upErr }) => {
             if (upErr) console.warn('Auto-sync âge échec:', upErr.message);
           });
@@ -12724,10 +12751,15 @@ export default function App() {
   // ─── PROFIL : mise à jour ────────────────────────────────────
   const updateProfile = async (updates) => {
     if (!userProfile?.id) return { error: 'Non connecté' };
-    const { data, error } = await supabase.from('profiles')
-      .update(updates).eq('id', userProfile.id)
-      .select().single();
+    // `.select()` sans argument demanderait toutes les colonnes, ce que la
+    // base refuse désormais. On relit par `get_my_profile()`, qui rend en
+    // prime les colonnes privées et les colonnes générées (ville et âge
+    // masqués) recalculées après l'écriture.
+    const { error } = await supabase.from('profiles')
+      .update(updates).eq('id', userProfile.id);
     if (error) { console.error('Erreur update profil:', error); return { error: error.message }; }
+    const { data, error: relecture } = await supabase.rpc('get_my_profile');
+    if (relecture) { console.error('Erreur relecture profil:', relecture); return { error: relecture.message }; }
     setUserProfile(data);
     return { data };
   };
@@ -13630,7 +13662,7 @@ export default function App() {
     // …puis on complète avec le profil COMPLET (bannière, bio, localisation, etc.)
     // quel que soit l'endroit d'où on l'ouvre (feed, partage, messagerie…).
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', profile.id).single();
+      const { data } = await supabase.from('profiles').select(COLONNES_PROFIL_PUBLIC).eq('id', profile.id).single();
       if (data) setSelectedProfile(prev => (prev && prev.id === data.id ? data : prev));
     } catch {}
   };
