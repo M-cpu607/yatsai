@@ -12461,6 +12461,13 @@ export default function App() {
 // ─── AUTHENTIFICATION SUPABASE ─────────────────────────────────
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  // Vrai quand la personne arrive par un lien « mot de passe oublié ».
+  // L'état initial lit l'adresse : `onAuthStateChange` finit par émettre
+  // PASSWORD_RECOVERY, mais `getSession()` peut répondre avant lui, et
+  // l'application s'afficherait alors une fraction de seconde.
+  const [recuperationMdp, setRecuperationMdp] = useState(
+    () => typeof window !== 'undefined' && /(^|[#&?])type=recovery(&|$)/.test(window.location.hash + window.location.search)
+  );
   // Écran de lancement Yatsai : durée minimale ~3 s (même si la session
   // se charge plus vite), pour une intro de marque propre.
   const [splashMinElapsed, setSplashMinElapsed] = useState(false);
@@ -12547,7 +12554,9 @@ export default function App() {
           .then(({ error: upErr }) => {
             if (upErr) console.warn('Auto-sync âge échec:', upErr.message);
           });
-        data.age = liveAge; // miroir immédiat en mémoire
+        // Miroir immédiat en mémoire, en respectant « masquer mon âge » :
+        // c'est ce que renverra la colonne générée au prochain chargement.
+        data.age = data.hide_age ? null : liveAge;
       }
     }
     setUserProfile(data);
@@ -12560,7 +12569,12 @@ export default function App() {
       if (session) loadProfile(session.user.id);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Un lien « mot de passe oublié » ouvre une session de récupération
+      // comme n'importe quelle connexion. Sans cette interception, la
+      // personne se retrouverait simplement connectée, et l'écran qui lui
+      // permet de choisir un nouveau mot de passe ne s'afficherait jamais.
+      if (event === 'PASSWORD_RECOVERY') setRecuperationMdp(true);
       setSession(session);
       if (session) loadProfile(session.user.id);
       else setUserProfile(null);
@@ -13871,6 +13885,14 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // Arrivée par un lien de réinitialisation : cet écran passe avant tout
+  // le reste, y compris avant l'application elle-même — la session est
+  // ouverte, mais tant que le mot de passe n'est pas choisi il n'y a rien
+  // d'autre à faire.
+  if (recuperationMdp) {
+    return <Auth initialMode="reset" onPasswordReset={() => setRecuperationMdp(false)} />;
   }
 
   // Pas connecté → Landing page puis écran d'authentification

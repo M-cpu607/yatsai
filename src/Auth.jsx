@@ -67,6 +67,169 @@ function Section({ title, hint, children }) {
   )
 }
 
+// ─── MOT DE PASSE OUBLIÉ ─────────────────────────────────────────
+// Deux écrans, volontairement séparés du grand formulaire : ils ne
+// partagent aucun de ses états (rôle, sport, étapes) et les y mêler
+// aurait rendu les deux illisibles.
+
+function CadreAuth({ sousTitre, children }) {
+  return (
+    <div className="min-h-screen flex flex-col items-center px-4 py-8"
+      style={{ backgroundColor: C.bg }}>
+      <div className="mb-6 mt-4">
+        <div className="text-4xl font-extrabold text-center" style={{ color: C.text }}>
+          Yat<span style={{ color: C.gold }}>sai</span>
+        </div>
+        <p className="text-sm text-center mt-2" style={{ color: C.textDim }}>{sousTitre}</p>
+      </div>
+      <div className="w-full max-w-sm flex flex-col gap-3">{children}</div>
+    </div>
+  )
+}
+
+function Alerte({ type, children }) {
+  const rouge = type === 'err'
+  return (
+    <div className="text-xs px-3 py-2 rounded-lg"
+      style={{
+        backgroundColor: rouge ? 'rgba(255,71,87,0.1)' : 'rgba(255,184,0,0.1)',
+        color: rouge ? C.red : C.gold,
+        border: `1px solid ${rouge ? C.red : C.borderGold}`,
+      }}>
+      {children}
+    </div>
+  )
+}
+
+// Écran 1 : demander le lien de réinitialisation.
+function MotDePasseOublie({ emailInitial, onRetour }) {
+  const [email, setEmail] = useState(emailInitial || '')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [envoye, setEnvoye] = useState(false)
+
+  const envoyer = async (e) => {
+    e.preventDefault()
+    setError(null); setLoading(true)
+    // `redirectTo` doit figurer dans la liste des URL autorisées du projet
+    // Supabase (Authentication → URL Configuration), sinon le lien reçu
+    // ramène vers l'URL du site par défaut.
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}${window.location.pathname}`,
+    })
+    setLoading(false)
+    if (err) { setError(err.message); return }
+    setEnvoye(true)
+  }
+
+  if (envoye) {
+    return (
+      <CadreAuth sousTitre="Vérifie ta boîte mail">
+        <Alerte type="ok">
+          Si un compte existe pour <strong>{email.trim()}</strong>, un lien de
+          réinitialisation vient d'être envoyé. Il est valable une heure.
+        </Alerte>
+        <p className="text-xs" style={{ color: C.textMute }}>
+          Rien reçu au bout de quelques minutes ? Regarde dans les courriers
+          indésirables, et vérifie l'adresse saisie.
+        </p>
+        <button type="button" onClick={onRetour}
+          className="w-full py-3 rounded-xl font-semibold text-sm mt-2"
+          style={{ backgroundColor: 'transparent', color: C.text, border: `1px solid ${C.border}` }}>
+          ← Retour à la connexion
+        </button>
+      </CadreAuth>
+    )
+  }
+
+  return (
+    <CadreAuth sousTitre="Mot de passe oublié">
+      <form onSubmit={envoyer} className="flex flex-col gap-3">
+        <p className="text-xs" style={{ color: C.textDim }}>
+          Saisis l'adresse de ton compte. Tu recevras un lien pour choisir un
+          nouveau mot de passe.
+        </p>
+        <div className="relative">
+          <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2"
+            style={{ color: C.textDim }} />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            placeholder="ton@email.com" required autoFocus
+            className="w-full pl-10 pr-3 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+        {error && <Alerte type="err">{error}</Alerte>}
+        <button type="submit" disabled={loading || !email.trim()}
+          className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+          style={{ backgroundColor: C.gold, color: C.bg, opacity: loading || !email.trim() ? 0.5 : 1 }}>
+          {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+          Envoyer le lien
+        </button>
+        <button type="button" onClick={onRetour} className="text-xs mt-1" style={{ color: C.textDim }}>
+          ← Retour à la connexion
+        </button>
+      </form>
+    </CadreAuth>
+  )
+}
+
+// Écran 2 : choisir le nouveau mot de passe, après avoir suivi le lien.
+// Supabase a déjà ouvert une session de récupération à ce stade ; c'est
+// elle qui autorise `updateUser`.
+function NouveauMotDePasse({ onTermine }) {
+  const [motDePasse, setMotDePasse] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  const tropCourt = motDePasse.length > 0 && motDePasse.length < 6
+  const different = confirmation.length > 0 && motDePasse !== confirmation
+  const pret = motDePasse.length >= 6 && motDePasse === confirmation
+
+  const enregistrer = async (e) => {
+    e.preventDefault()
+    setError(null); setLoading(true)
+    const { error: err } = await supabase.auth.updateUser({ password: motDePasse })
+    setLoading(false)
+    if (err) { setError(err.message); return }
+    // Le lien de récupération laisse ses jetons dans l'adresse : les effacer
+    // évite que le simple fait de recharger la page relance cet écran.
+    try {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    } catch { /* navigateur sans history API : sans conséquence */ }
+    onTermine?.()
+  }
+
+  return (
+    <CadreAuth sousTitre="Choisis un nouveau mot de passe">
+      <form onSubmit={enregistrer} className="flex flex-col gap-3">
+        <div className="relative">
+          <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: C.textDim }} />
+          <input type="password" value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)}
+            placeholder="Nouveau mot de passe (6 caractères min)" required minLength={6} autoFocus
+            className="w-full pl-10 pr-3 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+        <div className="relative">
+          <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: C.textDim }} />
+          <input type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
+            placeholder="Confirme le mot de passe" required
+            className="w-full pl-10 pr-3 py-3 rounded-xl text-sm outline-none"
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        </div>
+        {tropCourt && <Alerte type="err">Six caractères au minimum.</Alerte>}
+        {different && <Alerte type="err">Les deux saisies ne correspondent pas.</Alerte>}
+        {error && <Alerte type="err">{error}</Alerte>}
+        <button type="submit" disabled={loading || !pret}
+          className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+          style={{ backgroundColor: C.gold, color: C.bg, opacity: loading || !pret ? 0.5 : 1 }}>
+          {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+          Enregistrer et entrer
+        </button>
+      </form>
+    </CadreAuth>
+  )
+}
+
 const LEVELS = [
   { id: 'amateur',         label: 'Amateur',         desc: 'Joueur de loisir',                 icon: '🌱' },
   { id: 'young_pro',       label: 'Young Pro',       desc: 'Centre de formation / espoir pro', icon: '🚀' },
@@ -75,9 +238,10 @@ const LEVELS = [
   { id: 'senior_pro',      label: 'Senior Pro',      desc: 'Contrat professionnel',            icon: '⭐⭐⭐' },
 ]
 
-export default function Auth({ initialMode = 'login' }) {
+export default function Auth({ initialMode = 'login', onPasswordReset }) {
   const refs = useReferentiels()
-  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
+  const [mode, setMode] = useState(
+    ['signup', 'forgot', 'reset'].includes(initialMode) ? initialMode : 'login')
   const [role, setRole] = useState('athlete')
   // Champs communs
   const [email, setEmail] = useState('')
@@ -320,6 +484,14 @@ export default function Auth({ initialMode = 'login' }) {
     }
   }
 
+  // Les deux écrans de mot de passe n'ont rien à voir avec le formulaire
+  // d'inscription : on sort avant de le construire.
+  if (mode === 'reset') {
+    return <NouveauMotDePasse onTermine={onPasswordReset} />
+  }
+  if (mode === 'forgot') {
+    return <MotDePasseOublie emailInitial={email} onRetour={() => { setMode('login'); setError(null) }} />
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-8"
@@ -931,6 +1103,13 @@ export default function Auth({ initialMode = 'login' }) {
                      opacity: loading || !canSubmit ? 0.5 : 1 }}>
             {loading ? <Loader2 size={16} className="animate-spin" /> : null}
             Se connecter
+          </button>
+        )}
+
+        {mode === 'login' && (
+          <button type="button" onClick={() => { setMode('forgot'); setError(null); setMessage(null) }}
+            className="text-xs mt-2" style={{ color: C.gold }}>
+            Mot de passe oublié ?
           </button>
         )}
 
