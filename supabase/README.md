@@ -112,11 +112,24 @@ En résumé :
 | Fichier | Rôle |
 |---|---|
 | `migrations/20260915090000_schema_complet.sql` | le schéma, extrait du projet distant |
+| `migrations/20260915095519_11_referentiels_position_categorie_saison.sql` | postes, catégories d'âge, saisons |
+| `migrations/20260915100601_12_niveau_adversaire_et_numero_maillot.sql` | niveaux de compétition, numéro de maillot |
+| `migrations/20260915111404_videos_libelles_derives_referentiels.sql` | recopie des libellés sur les vidéos |
+| `migrations/20260917075359_videos_numero_maillot_selon_sport.sql` | garde sur le numéro de maillot |
+| `migrations/20260917075436_videos_sync_labels_retrait_garde_maillot_redondante.sql` | retrait de cette garde, redondante |
+| `migrations/20260917080212_profiles_libelle_poste_derive.sql` | recopie du libellé de poste sur les profils |
+| `migrations/20260917080357_handle_new_user_lit_position_id.sql` | l'inscription lit `position_id` |
+| `migrations/20260917080959_recherche_athletes_etendue_aux_videos.sql` | recherche d'athlètes étendue au texte des vidéos |
 | `seed.sql` | jeu d'essai, rejoué à chaque `reset` |
 | `config.toml` | configuration des cinq services |
 
-Le schéma reproduit : 21 tables, 196 colonnes, 97 contraintes, 70 index,
-31 fonctions, 17 triggers, 62 policies RLS, 11 tables publiées en Realtime,
+Les deux dernières migrations sur le numéro de maillot se contredisent, et
+c'est voulu : la garde ajoutée s'est révélée inatteignable — le trigger
+`trg_check_jersey_number` s'exécute avant et lève déjà une erreur. Rejouer
+l'historique tel quel est ce qui garantit d'obtenir le schéma hébergé.
+
+Le schéma reproduit : 25 tables, 224 colonnes, 109 contraintes, 83 index,
+34 fonctions, 20 triggers, 66 policies RLS, 11 tables publiées en Realtime,
 6 buckets de stockage.
 
 La confirmation par e-mail est **désactivée**, comme en production : le
@@ -132,11 +145,15 @@ Le schéma et le jeu d'essai ont été **réellement exécutés** dans PostgreSQ
 
 | Contrôle | Résultat |
 |---|---|
-| Migration jouée instruction par instruction | 0 échec |
+| Migrations jouées instruction par instruction | 0 échec |
 | Jeu d'essai joué | 0 échec |
-| Tables / colonnes / contraintes vs production | 21 / 196 / 97 — identiques |
-| Triggers / policies / tables sous RLS | 17 / 62 / 21 — identiques |
+| Tables / colonnes / contraintes vs production | 25 / 224 / 109 — identiques |
+| Triggers / policies / tables sous RLS | 20 / 66 / 25 — identiques |
+| Fonctions / index vs production | 34 / 83 — identiques, aux 3 index trigram près (ci-dessous) |
 | Sports / buckets | 20 / 6 — identiques |
+| Référentiels chargés | 120 postes, 15 catégories d'âge, 20 saisons, 10 niveaux |
+| Recopie des libellés (vidéo, profil) | libellé juste, poste d'un autre sport refusé |
+| Numéro de maillot | refusé hors sport à maillot, et au-delà de 99 |
 | Trigger d'inscription | 4 comptes → 4 profils créés |
 | Compteurs dénormalisés | likes 2, abonnés 2, vidéos 2 — justes |
 | Triggers de notification | 7 notifications produites |
@@ -150,23 +167,21 @@ profil un niveau appartenant à l'énumération des *vidéos*. Les deux
 
 **Ce qui n'a pas pu être vérifié ici :** le démarrage de la pile Docker
 elle-même, l'environnement de développement utilisé n'ayant pas de daemon
-Docker. Deux index trigram (`profiles_name_trgm_idx`,
-`profiles_club_trgm_idx`) n'ont pas pu être créés non plus, PGlite
-n'embarquant pas `pg_trgm` — l'extension est présente sur Supabase, et
-c'est la seule raison de leur échec.
+Docker. Trois index trigram (`profiles_name_trgm_idx`,
+`profiles_club_trgm_idx`, `videos_text_trgm_idx`) n'ont pas pu être créés
+non plus, PGlite n'embarquant pas `pg_trgm` — l'extension est présente sur
+Supabase, et c'est la seule raison de leur échec.
 
 ---
 
 ## Rester aligné sur la production
 
-> **À faire avant le prochain `reset`.** Les référentiels (postes,
-> catégories d'âge, saisons, niveaux de compétition) et le trigger de
-> recopie des libellés ont été appliqués sur le projet hébergé **après**
-> cet instantané. La pile locale ne les a pas, et l'application branchée
-> sur ces tables ne fonctionnerait pas contre elle. Les commandes
-> ci-dessous les récupèrent.
+La pile locale est **à jour** : les huit migrations appliquées sur le projet
+hébergé depuis l'instantané ont été écrites dans `migrations/`, jusqu'à
+`20260917080959_recherche_athletes_etendue_aux_videos` incluse. Un `reset` reproduit
+le schéma hébergé.
 
-Ce schéma est un instantané du 15/09/2026. Quand la production évoluera,
+L'instantané lui-même date du 15/09/2026. Quand la production évoluera,
 récupérez les changements :
 
 ```bash

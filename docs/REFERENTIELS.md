@@ -252,26 +252,48 @@ du côté des vidéos.
 Les libellés de saison et de niveau d'adversaire alimentent désormais la
 recherche libre, aux côtés du titre, de la description et du championnat.
 
+### `search_athletes` regarde aussi les vidéos
+
+Migration `20260917080959_recherche_athletes_etendue_aux_videos`.
+
+La recherche libre côté serveur (`p_query`) ne se limite plus au nom et au
+club : un athlète remonte aussi quand la requête correspond au **titre** ou
+à la **description** d'une de ses vidéos. Même sémantique que côté profil —
+sous-chaîne, insensible à la casse et aux accents, via `search_key`.
+
+La fonction renvoie une colonne supplémentaire, `match_source`, qui dit d'où
+vient la correspondance : `nom`, `club`, `video_titre`, `video_description`,
+ou `NULL` quand aucune recherche texte n'est demandée. C'est aussi la clé de
+tri principale : un athlète trouvé par son nom passe devant un athlète trouvé
+par la description d'une vidéo. Les résultats sont dédoublonnés — trois vidéos
+correspondantes ne produisent qu'une ligne, avec la meilleure justification.
+
+L'index qui porte la chose est `videos_text_trgm_idx`, un GIN trigramme sur
+`search_key(coalesce(title,'') || ' ' || coalesce(description,''))`. Trigramme
+et non `tsvector`, pour rester cohérent avec `profiles_name_trgm_idx` et
+supporter la saisie au fil de la frappe. Une seule expression concaténée
+plutôt que deux index, pour un seul parcours au lieu d'un BitmapOr.
+
+**Attention** : l'expression indexée et celle du `WHERE` de la fonction
+doivent rester identiques au caractère près, sinon l'index n'est plus
+reconnu. Et sous 3 caractères, aucun trigramme complet n'est extractible :
+la requête retombe en parcours séquentiel — au front de n'interroger qu'à
+partir de 3 caractères.
+
 ## Reste à faire
 
-1. Étendre `search_athletes` aux titres et descriptions de vidéos.
+1. Brancher le front sur `search_athletes`. `SearchView` (`src/App.jsx`)
+   charge aujourd'hui **tous** les profils et les 200 dernières vidéos, puis
+   filtre et classe en JavaScript. L'extension serveur ne lui sert donc à
+   rien tant que l'appel `supabase.rpc('search_athletes', …)` n'est pas fait.
 2. Faire basculer `profiles.position` sur `position_id` — la colonne et sa
    clé étrangère existent, seul le formulaire de profil est encore en
    texte libre.
 
-## Attention : la pile locale est en retard
+## La pile locale est à jour
 
-Les migrations `11_referentiels_position_categorie_saison`,
-`12_niveau_adversaire_et_numero_maillot` et
-`videos_libelles_derives_referentiels` ont été appliquées **sur le projet
-hébergé**. L'instantané `supabase/migrations/20260915090000_schema_complet.sql`
-leur est antérieur : la pile locale ne les a donc pas, et le front
-branché ne fonctionnerait pas contre elle.
-
-Avant de relancer la pile locale, récupérez-les :
-
-```bash
-npx supabase link --project-ref uvsxteuhqqfgbmdgabfo
-npx supabase db pull          # écrit les migrations manquantes
-./scripts/db-local.sh reset
-```
+Les huit migrations postérieures à l'instantané
+`supabase/migrations/20260915090000_schema_complet.sql` ont été écrites dans
+`supabase/migrations/`, jusqu'à `20260917080959_recherche_athletes_etendue_aux_videos`
+incluse. `./scripts/db-local.sh reset` reproduit donc le schéma hébergé, et le
+front branché sur les référentiels fonctionne contre la pile locale.
