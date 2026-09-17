@@ -13,6 +13,7 @@ import {
   Calendar, Clock,
 } from 'lucide-react';
 import { supabase } from './supabase';
+import { useReferentiels, normaliserPoste } from './referentiels';
 import Auth from './Auth';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -184,81 +185,6 @@ const SPORTS = [
   { id: 'ultimate', label: 'Ultimate', icon: '🥏' },
   { id: 'kite', label: 'Kitesurf', icon: '🪁' },
 ];
-
-// ─── RÉFÉRENTIELS ────────────────────────────────────────────────
-// Postes, catégories d'âge, saisons et niveaux de compétition vivent en
-// base (tables positions / age_categories / seasons /
-// competition_levels). Les charger plutôt que les coder en dur évite la
-// dérive qui rendait les filtres muets sur `sport` : une liste figée
-// côté client finit toujours par diverger de ce que la base accepte.
-//
-// Chargement unique pour toute l'application : la promesse est mise en
-// cache au niveau du module, donc dix écrans qui montent en même temps
-// déclenchent une seule requête.
-let _refsPromise = null;
-
-function chargerReferentiels() {
-  if (_refsPromise) return _refsPromise;
-  _refsPromise = (async () => {
-    const [pos, ages, seasons, levels, sports] = await Promise.all([
-      supabase.from('positions').select('sport_id, id, label').order('sort_order'),
-      supabase.from('age_categories').select('id, label').order('sort_order'),
-      supabase.from('seasons').select('id, label, starts_on').order('sort_order'),
-      supabase.from('competition_levels').select('id, label, rank').order('rank'),
-      supabase.from('sports').select('id, has_jersey_number'),
-    ]);
-    const err = pos.error || ages.error || seasons.error || levels.error || sports.error;
-    if (err) {
-      console.error('Référentiels : chargement impossible', err);
-      // On relâche le cache : un écran monté plus tard pourra réessayer.
-      _refsPromise = null;
-      throw err;
-    }
-    // Postes regroupés par sport, pour n'afficher que ceux du sport choisi.
-    const postesParSport = {};
-    for (const r of pos.data ?? []) {
-      (postesParSport[r.sport_id] ||= []).push({ id: r.id, label: r.label });
-    }
-    // Le référentiel va de 2015-2016 à 2034-2035. Présenté tel quel, il
-    // ouvrirait la liste sur une saison dix ans dans le futur. On met donc
-    // la saison en cours en tête, puis les précédentes de la plus récente
-    // à la plus ancienne, et on relègue les saisons à venir en fin de liste.
-    const aujourdhui = new Date().toISOString().slice(0, 10);
-    const toutes = seasons.data ?? [];
-    const saisons = [
-      ...toutes.filter(s => s.starts_on <= aujourdhui).reverse(),
-      ...toutes.filter(s => s.starts_on > aujourdhui),
-    ];
-    return {
-      postesParSport,
-      categoriesAge: ages.data ?? [],
-      saisons,
-      niveauxCompetition: levels.data ?? [],
-      // La base refuse un numéro de maillot sur un sport qui n'en porte
-      // pas (trigger trg_check_jersey_number) : on lit la même source
-      // plutôt que d'entretenir une seconde liste ici.
-      sportsAvecMaillot: new Set((sports.data ?? []).filter(s => s.has_jersey_number).map(s => s.id)),
-    };
-  })();
-  return _refsPromise;
-}
-
-const REFS_VIDES = {
-  postesParSport: {}, categoriesAge: [], saisons: [],
-  niveauxCompetition: [], sportsAvecMaillot: new Set(),
-};
-
-function useReferentiels() {
-  const [refs, setRefs] = useState(REFS_VIDES);
-  useEffect(() => {
-    let vivant = true;
-    chargerReferentiels()
-      .then(r => { if (vivant) setRefs(r); })
-      .catch(() => { /* déjà journalisé ; les listes restent vides */ });
-    return () => { vivant = false; };
-  }, []);
-  return refs;
-}
 
 // Liste déroulante commune aux formulaires et aux filtres.
 function ChampSelect({ label, value, onChange, options, placeholder = 'Indifférent', disabled, compact }) {
@@ -502,38 +428,14 @@ function LandingPage({ onStart }) {
   );
 }
 
-// ─── POSITIONS / POSTES par sport ────────────────────────────────
-// Pour les sports collectifs et certaines disciplines, on propose une liste
-// fermée de postes. Pour les sports individuels sans poste, on laisse vide.
-const POSITIONS_BY_SPORT = {
-  foot: ['Gardien', 'Défenseur central', 'Latéral droit', 'Latéral gauche',
-         'Milieu défensif', 'Milieu central', 'Milieu offensif',
-         'Ailier droit', 'Ailier gauche', 'Avant-centre', 'Attaquant'],
-  basket: ['Meneur', 'Arrière', 'Ailier', 'Ailier fort', 'Pivot'],
-  hand: ['Gardien', 'Arrière gauche', 'Arrière droit', 'Demi-centre',
-         'Ailier gauche', 'Ailier droit', 'Pivot'],
-  rugby: ['Pilier', 'Talonneur', 'Deuxième ligne', 'Troisième ligne aile',
-          'Troisième ligne centre', 'Demi de mêlée', 'Demi d\'ouverture',
-          'Centre', 'Ailier', 'Arrière'],
-  volley: ['Passeur', 'Pointu', 'Réceptionneur-attaquant', 'Central', 'Libéro'],
-  'football-us': ['Quarterback', 'Running back', 'Wide receiver', 'Tight end',
-                  'Offensive lineman', 'Defensive lineman', 'Linebacker',
-                  'Cornerback', 'Safety', 'Kicker', 'Punter'],
-  baseball: ['Lanceur', 'Receveur', 'Première base', 'Deuxième base',
-             'Troisième base', 'Arrêt-court', 'Champ gauche', 'Champ centre',
-             'Champ droit', 'Frappeur désigné'],
-  hockey: ['Gardien', 'Défenseur', 'Ailier gauche', 'Ailier droit', 'Centre'],
-  cricket: ['Batteur', 'Lanceur', 'Tout-rounder', 'Gardien de guichet'],
-  athle: ['Sprint', 'Demi-fond', 'Fond', 'Haies', 'Marathon',
-          'Saut en hauteur', 'Saut en longueur', 'Triple saut', 'Perche',
-          'Lancer de poids', 'Lancer de disque', 'Lancer de javelot',
-          'Marteau', 'Décathlon / Heptathlon'],
-  nat: ['Crawl', 'Brasse', 'Dos', 'Papillon', '4 nages', 'Eau libre', 'Synchronisée'],
-  cyclo: ['Sprinteur', 'Rouleur', 'Grimpeur', 'Puncheur', 'Contre-la-montre'],
-};
-function getPositionsForSport(sport) {
-  return POSITIONS_BY_SPORT[sport] || null;
-}
+// La liste des postes par sport vivait ici en dur, en double avec une
+// copie dans Auth.jsx dont le commentaire demandait qu'elle « reste en
+// phase ». Elle ne l'était plus : 12 sports sur 20, et des libellés
+// divergents (« Gardien » contre « Gardien de but », « Crawl » contre
+// « Nage libre »). Les deux copies étaient par ailleurs mortes — plus
+// personne ne les lisait. La table `positions` fait désormais foi ;
+// voir `src/referentiels.js`.
+
 // Niveaux qui nécessitent une preuve avant affichage sur le profil
 const LEVELS_REQUIRING_PROOF = ['young_pro', 'senior_pro'];
 function levelRequiresProof(level) {
@@ -4991,9 +4893,15 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     if (filters.nationality && !norm(p.nationality).includes(norm(filters.nationality))) return false;
     // Niveau (multi-select)
     if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
-    // Poste — les profils gardent un poste en texte libre : on compare
-    // au libellé du référentiel, sans tenir compte de la casse.
-    if (libellePoste && !norm(p.position).includes(norm(libellePoste))) return false;
+    // Poste — les profils récents portent un identifiant de référentiel ;
+    // les plus anciens n'ont qu'un texte libre, qu'on compare alors au
+    // libellé, sans tenir compte de la casse ni des accents.
+    if (posteFiltre) {
+      const correspond = p.position_id
+        ? p.position_id === posteFiltre
+        : (!!libellePoste && normaliserPoste(p.position).includes(normaliserPoste(libellePoste)));
+      if (!correspond) return false;
+    }
     // Recherche texte
     if (query) {
       const needle = query.toLowerCase();
@@ -5001,7 +4909,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       if (!hay.includes(needle)) return false;
     }
     return true;
-  }), [profiles, query, filters, athletesOnly, currentUserId, libellePoste]);
+  }), [profiles, query, filters, athletesOnly, currentUserId, libellePoste, posteFiltre]);
 
   // Vidéos filtrées (onglet vidéos)
   const filteredVideos = useMemo(() => {
@@ -10837,7 +10745,26 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const computedAge = computeAge(birthdate);
   // Champs modifiables
   // sport : défini à l'inscription, non modifiable après coup
-  const [position, setPosition] = useState(userProfile?.position || '');
+  const refs = useReferentiels();
+  const postesDuSport = refs.postesParSport[userProfile?.sport] ?? [];
+  // Les profils créés avant les référentiels portent un poste en texte
+  // libre. On tente de le rattacher au référentiel par son libellé : la
+  // plupart correspondent, et le profil devient alors filtrable sans que
+  // son propriétaire ait rien à faire.
+  const posteRattache = useMemo(() => {
+    if (userProfile?.position_id) return userProfile.position_id;
+    const libelle = normaliserPoste(userProfile?.position);
+    if (!libelle) return null;
+    return postesDuSport.find(o => normaliserPoste(o.label) === libelle)?.id ?? null;
+  }, [userProfile?.position_id, userProfile?.position, postesDuSport]);
+  const [positionId, setPositionId] = useState(null);
+  // `posteRattache` n'est connu qu'une fois les référentiels chargés ;
+  // tant que l'utilisateur n'a rien choisi, c'est lui qui s'affiche.
+  const [posteTouche, setPosteTouche] = useState(false);
+  const posteCourant = posteTouche ? positionId : posteRattache;
+  // Texte libre qu'aucun poste du référentiel ne recouvre : on le montre
+  // plutôt que de le faire disparaître en silence.
+  const posteHeriteNonRattache = (!posteRattache && userProfile?.position) ? userProfile.position : null;
   const [club, setClub] = useState(userProfile?.club || '');
   const [organization, setOrganization] = useState(userProfile?.organization || '');
   const [bio, setBio] = useState(userProfile?.bio || '');
@@ -10902,7 +10829,12 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
       // L'âge est recalculé en cache à partir de birthdate.
       age: computedAge,
       // sport non modifiable (défini à l'inscription)
-      position: position.trim() || null,
+      // Le poste est un identifiant de référentiel ; le libellé texte est
+      // rempli par le trigger profiles_sync_position_label. On n'envoie
+      // `position` que pour effacer un ancien texte libre dont
+      // l'utilisateur vient explicitement de vider la liste.
+      position_id: posteCourant || null,
+      ...((posteTouche && !positionId) ? { position: null } : {}),
       club: isRecruiter ? null : (club.trim() || null),
       organization: isRecruiter ? (organization.trim() || null) : null,
       bio: bio.trim() || null,
@@ -11107,13 +11039,20 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
           {/* Poste sur le terrain — athlètes uniquement */}
           {isAthleteEditor && (
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                Poste sur le terrain
-              </label>
-              <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-                placeholder="Ex : Milieu offensif, Gardien, 100 m…"
-                maxLength={60} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+              <ChampSelect
+                label="Poste sur le terrain"
+                value={posteCourant}
+                onChange={(id) => { setPosteTouche(true); setPositionId(id); }}
+                options={postesDuSport}
+                placeholder={postesDuSport.length ? 'Choisir un poste' : 'Aucun poste pour ce sport'}
+                disabled={!postesDuSport.length} />
+              {posteHeriteNonRattache && !posteTouche && (
+                <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                  Poste actuellement enregistré : « {posteHeriteNonRattache} ». Il ne fait
+                  partie d'aucune liste officielle, donc les recruteurs ne te trouvent pas
+                  en filtrant par poste. Choisis l'équivalent ci-dessus pour y remédier.
+                </p>
+              )}
             </div>
           )}
 

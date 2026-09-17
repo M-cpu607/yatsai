@@ -1,34 +1,12 @@
 import React, { useState, useRef } from 'react'
 import { supabase } from './supabase'
+import { useReferentiels } from './referentiels'
 import { Loader2, Mail, Lock, User as UserIcon, Building2, Calendar, MapPin, Flag, Trophy, Upload, FileCheck2 } from 'lucide-react'
 
-// Liste des postes par sport (doit rester en phase avec App.jsx)
-const POSITIONS_BY_SPORT = {
-  foot: ['Gardien', 'Défenseur central', 'Latéral droit', 'Latéral gauche',
-         'Milieu défensif', 'Milieu central', 'Milieu offensif',
-         'Ailier droit', 'Ailier gauche', 'Avant-centre', 'Attaquant'],
-  basket: ['Meneur', 'Arrière', 'Ailier', 'Ailier fort', 'Pivot'],
-  hand: ['Gardien', 'Arrière gauche', 'Arrière droit', 'Demi-centre',
-         'Ailier gauche', 'Ailier droit', 'Pivot'],
-  rugby: ['Pilier', 'Talonneur', 'Deuxième ligne', 'Troisième ligne aile',
-          'Troisième ligne centre', 'Demi de mêlée', 'Demi d\'ouverture',
-          'Centre', 'Ailier', 'Arrière'],
-  volley: ['Passeur', 'Pointu', 'Réceptionneur-attaquant', 'Central', 'Libéro'],
-  'football-us': ['Quarterback', 'Running back', 'Wide receiver', 'Tight end',
-                  'Offensive lineman', 'Defensive lineman', 'Linebacker',
-                  'Cornerback', 'Safety', 'Kicker', 'Punter'],
-  baseball: ['Lanceur', 'Receveur', 'Première base', 'Deuxième base',
-             'Troisième base', 'Arrêt-court', 'Champ gauche', 'Champ centre',
-             'Champ droit', 'Frappeur désigné'],
-  hockey: ['Gardien', 'Défenseur', 'Ailier gauche', 'Ailier droit', 'Centre'],
-  cricket: ['Batteur', 'Lanceur', 'Tout-rounder', 'Gardien de guichet'],
-  athle: ['Sprint', 'Demi-fond', 'Fond', 'Haies', 'Marathon',
-          'Saut en hauteur', 'Saut en longueur', 'Triple saut', 'Perche',
-          'Lancer de poids', 'Lancer de disque', 'Lancer de javelot',
-          'Marteau', 'Décathlon / Heptathlon'],
-  nat: ['Crawl', 'Brasse', 'Dos', 'Papillon', '4 nages', 'Eau libre', 'Synchronisée'],
-  cyclo: ['Sprinteur', 'Rouleur', 'Grimpeur', 'Puncheur', 'Contre-la-montre'],
-}
+// Les postes viennent de la table `positions` (voir src/referentiels.js).
+// La liste était auparavant codée en dur ici, en double avec App.jsx, avec
+// la consigne de « rester en phase » — ce qu'elle n'était plus. Une seule
+// source, celle que la base fait respecter.
 const LEVELS_REQUIRING_PROOF = ['young_pro', 'senior_pro']
 
 const C = {
@@ -98,6 +76,7 @@ const LEVELS = [
 ]
 
 export default function Auth({ initialMode = 'login' }) {
+  const refs = useReferentiels()
   const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login')
   const [role, setRole] = useState('athlete')
   // Champs communs
@@ -109,7 +88,7 @@ export default function Auth({ initialMode = 'login' }) {
   const [birthdate, setBirthdate] = useState('')    // YYYY-MM-DD, non modifiable après inscription
   const [nationality, setNationality] = useState('')
   const [sport, setSport] = useState('')
-  const [position, setPosition] = useState('')      // poste choisi dans la liste du sport
+  const [positionId, setPositionId] = useState('')  // identifiant du poste dans la table `positions`
   const [hasClub, setHasClub] = useState(null)      // true | false
   const [club, setClub] = useState('')
   const [level, setLevel] = useState('')
@@ -224,7 +203,9 @@ export default function Auth({ initialMode = 'login' }) {
           metadata.age = computedAge !== null ? String(computedAge) : null
           metadata.nationality = nationality.trim() || null
           metadata.sport = sport || null
-          metadata.position = position || null
+          // handle_new_user lit position_id ; le libellé texte est rempli
+          // ensuite par le trigger profiles_sync_position_label.
+          metadata.position_id = positionId || null
           metadata.has_club = hasClub === true ? 'true' : 'false'
           metadata.club = (hasClub === true && club.trim()) ? club.trim() : null
           metadata.level = effectiveLevel
@@ -268,7 +249,7 @@ export default function Auth({ initialMode = 'login' }) {
             profileUpdate.age = computedAge // cache, mais source de vérité = birthdate
             profileUpdate.nationality = nationality.trim() || null
             profileUpdate.sport = sport || null
-            profileUpdate.position = position || null
+            profileUpdate.position_id = positionId || null
             profileUpdate.has_club = hasClub
             profileUpdate.club = (hasClub === true && club.trim()) ? club.trim() : null
             profileUpdate.level = effectiveLevel
@@ -496,7 +477,7 @@ export default function Auth({ initialMode = 'login' }) {
               <>
                 {/* Sport */}
                 <Section title="Ton sport principal">
-                  <select value={sport} onChange={(e) => { setSport(e.target.value); setPosition('') }}
+                  <select value={sport} onChange={(e) => { setSport(e.target.value); setPositionId('') }}
                     className="w-full px-3 py-3 rounded-xl text-sm outline-none"
                     style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
                     <option value="">— Choisir un sport —</option>
@@ -506,16 +487,26 @@ export default function Auth({ initialMode = 'login' }) {
                   </select>
                 </Section>
 
-                {/* Poste — champ texte libre */}
-                {sport && (
-                  <Section title="Ton poste / ta spécialité (optionnel)">
-                    <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-                      placeholder="Ex : Milieu offensif, Gardien, 100 m, simple…"
-                      maxLength={60}
-                      className="w-full px-3 py-3 rounded-xl text-sm outline-none"
-                      style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-                  </Section>
-                )}
+                {/* Poste — liste fermée, issue de la table `positions` */}
+                {sport && (() => {
+                  const postes = refs.postesParSport[sport] ?? []
+                  if (postes.length === 0) return null   // sport sans poste : on ne demande rien
+                  return (
+                    <Section title="Ton poste / ta spécialité (optionnel)">
+                      <select value={positionId} onChange={(e) => setPositionId(e.target.value)}
+                        className="w-full px-3 py-3 rounded-xl text-sm outline-none"
+                        style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
+                        <option value="">— Choisir un poste —</option>
+                        {postes.map(p => (
+                          <option key={p.id} value={p.id}>{p.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] mt-1.5" style={{ color: C.textMute }}>
+                        C'est ce qui permet aux recruteurs de te trouver en filtrant par poste.
+                      </p>
+                    </Section>
+                  )
+                })()}
 
                 {/* Inscrit en club ? */}
                 <Section title="Es-tu inscrit en club ?">
