@@ -4,9 +4,9 @@ Constat au **17 septembre 2026**, projet Supabase `uvsxteuhqqfgbmdgabfo`
 (région `eu-north-1`, PostgreSQL 17.6.1.113, statut `ACTIVE_HEALTHY`,
 créé le 4 mai 2026). **Plan gratuit.**
 
-Ce document constate. Un seul point y a été traité depuis sa rédaction —
-le **B6**, où les mesures avant/après sont reportées ; tout le reste est
-à faire.
+Ce document constate. Deux points y ont été traités depuis sa rédaction —
+le **A2** (confidentialité des profils) et le **B6** (index morts), où
+l'état avant/après est reporté ; tout le reste est à faire.
 
 ---
 
@@ -119,12 +119,63 @@ Avec 300 associations et des athlètes mineurs, ce n'est pas un défaut de
 finition : c'est un manquement au RGPD sur des données de mineurs, et le
 type de sujet qui arrête un partenariat institutionnel.
 
-**Action.** Faire appliquer `is_private` et `hide_location` par la RLS,
-pas par le navigateur. Concrètement : restreindre la règle de lecture de
-`profiles`, et exposer les informations publiques via une vue ou une
-fonction qui ne renvoie que les colonnes autorisées. Tant que la règle est
-`using (true)`, les réglages de confidentialité de l'application sont
-décoratifs.
+**Action — faite.** Trois migrations ont été appliquées le 17 septembre
+2026, après la rédaction de ce constat :
+`20260917082343_profils_masquage_age_et_localisation`,
+`20260917082547_profils_rls_prive_et_droits_par_colonne` et
+`20260917082606_get_feed_age_affiche_sans_birthdate`. La confidentialité
+n'est plus affaire de JavaScript.
+
+*Le profil privé.* La règle `profiles_select` n'est plus `using (true)` :
+une ligne dont `is_private` est coché n'est visible que de son
+propriétaire et des administrateurs. L'athlète de 16 ans de l'exemple
+ci-dessus disparaît maintenant des résultats de qui n'est pas elle.
+
+*La localisation et l'âge.* La RLS masque des lignes, jamais des
+colonnes, et les droits par colonne sont globaux, pas par ligne : ni l'un
+ni l'autre ne sait « cacher la ville de ceux qui l'ont demandé ». Le sens
+des colonnes a donc été inversé. `city`, `region`, `country` et `age`
+sont devenues des colonnes **générées** qui recopient
+`city_private`, `region_private`, `country_private` et `age_private` — ou
+`null` si `hide_location` / `hide_age` est coché. L'écriture vise
+désormais les colonnes `_private` ; la lecture, elle, n'a pas bougé, donc
+la quarantaine d'endroits de l'application qui lisent `city` sont
+corrects sans avoir été touchés.
+
+*Les colonnes qui ne devaient jamais sortir.* Le droit de lecture sur
+`profiles` a été retiré à `anon` et `authenticated`, puis rendu colonne
+par colonne. Ne sont plus lisibles : `birthdate`, `phone`,
+`level_proof_url`, `is_admin`, les quatre colonnes `_private` et trois
+colonnes d'état interne. **37 colonnes sur 48** restent lisibles. La date
+de naissance, celle qui rendait ce point grave, ne sort plus de la base :
+seul `age`, cache d'affichage masquable, sort.
+
+| | Avant | Après |
+|---|---|---|
+| Règle de lecture de `profiles` | `using (true)` | privé réservé au propriétaire et aux administrateurs |
+| `select('*')` sur `profiles` sans compte | renvoie tout | `permission denied for table profiles` |
+| Colonnes lisibles sans compte | 44 sur 44 | **37 sur 48** |
+| `birthdate` lisible par un tiers | oui | **non** |
+| « Masquer ma ville » appliqué par | le navigateur | la base |
+
+Trois conséquences de bord ont été traitées dans la foulée :
+`get_my_profile()` (`SECURITY DEFINER`, restreinte à `auth.uid()`) rend à
+chacun son propre profil complet, que les droits par colonne lui
+refusaient désormais ; `search_athletes` est passée `SECURITY DEFINER`
+avec `SET search_path TO ''` parce qu'elle filtre sur `birthdate`, et
+exclut explicitement les profils privés, la RLS ne s'appliquant plus à
+elle ; `get_feed` lit `age` au lieu de le recalculer depuis `birthdate`,
+qu'elle n'a plus le droit de lire. Côté application, les quatre
+`select('*')` sur `profiles` ont été corrigés — ils échoueraient sinon.
+
+L'ensemble a été rejoué instruction par instruction dans un vrai
+PostgreSQL avant d'être consigné : voir `supabase/README.md`, section
+« Vérifications effectuées ».
+
+**Ce qui reste à faire ici.** Le point **C2** (`search_path` mutable) est
+réglé pour `search_athletes` mais pas pour `get_feed`, laissée
+intentionnellement telle quelle. Et l'écoute Realtime globale sur
+`profiles` décrite au point **A4** reste ouverte.
 
 À distinguer de la table `videos`, elle aussi en `using (true)` : là,
 c'est **assumé et documenté** (`BACKEND.md` §4) — le feed doit être public
@@ -190,10 +241,14 @@ messagerie. Ne jamais abonner le feed en temps réel.** » C'est fait quand
 même.
 
 Ce même abonnement écoute aussi les modifications de la table `profiles`,
-**pour toutes les lignes**. Comme la règle de lecture de `profiles` est
-`using (true)` (point A2), Supabase pousse la **ligne de profil entière**
-— date de naissance, ville, biographie comprises — vers tous les clients
-connectés à chaque modification de profil, quel qu'il soit.
+**pour toutes les lignes**.
+
+*Mise à jour depuis la correction de A2.* Ce qui transite par ce canal est
+désormais filtré : Realtime applique la RLS et les droits par colonne, donc
+une modification de profil privé ne part plus, et la date de naissance non
+plus. Ce qui reste vrai, et qui suffit à garder ce point bloquant : chaque
+modification de profil, de qui que ce soit, réveille tous les clients
+connectés pour rien.
 
 **Conséquence concrète.** Un athlète publie une vidéo. À cet instant, les
 200 personnes ayant l'application ouverte rechargent chacune la totalité
@@ -337,11 +392,17 @@ sans aucune limite. Au total, `select('*')` apparaît **19 fois** dans
 `src/App.jsx`, dont plusieurs sur `videos` et `profiles`.
 
 **Conséquence concrète.** Même mécanique que A3, à plus petite échelle :
-l'onglet recherche devient lent à mesure que la plateforme grandit, et
-il transmet au navigateur des colonnes qu'il n'affiche jamais — y compris
-celles que le point A2 rend problématiques.
+l'onglet recherche devient lent à mesure que la plateforme grandit, et il
+transmet au navigateur des colonnes qu'il n'affiche jamais.
 
-**Action.** Ajouter une limite et n'énumérer que les colonnes affichées.
+*Mise à jour depuis la correction de A2.* Les colonnes sensibles ne sortent
+plus, et le `select('*')` de cet appel n'est plus seulement inutilement
+lourd : il est **refusé** par la base. Il a donc fallu y énumérer les
+colonnes pour que l'écran continue de fonctionner. Ce qui reste à faire
+ici, c'est la **limite** — l'appel ramène toujours tous les profils.
+
+**Action.** Ajouter une limite, et cesser de classer en JavaScript ce que
+`search_athletes` sait faire côté serveur.
 
 ## B5. Le comptage des vues écrit une ligne par vidéo regardée
 
@@ -465,15 +526,22 @@ maintenant 43 parce que des index ont été ajoutés depuis. Aucune action.
 À réévaluer **après** un mois de trafic réel, quand le verdict voudra dire
 quelque chose.
 
-## C2. `search_path` mutable sur `get_feed` et `search_athletes`
+## C2. `search_path` mutable sur `get_feed`
 
-L'advisor de sécurité les signale. **C'est un choix délibéré et
-documenté** (`BACKEND.md` §2) : ajouter cette clause empêche PostgreSQL
-d'intégrer la fonction dans la requête appelante, ce qui coûtait 2,5 fois
-plus cher à la mesure. Ces deux fonctions ne détiennent aucun privilège
-particulier (`SECURITY INVOKER`) et toutes leurs références sont
-qualifiées par leur schéma. J'ai relu la définition de `get_feed` : c'est
-exact. Aucune action.
+L'advisor de sécurité le signale. **C'est un choix délibéré et documenté**
+(`BACKEND.md` §2) : ajouter cette clause empêche PostgreSQL d'intégrer la
+fonction dans la requête appelante, ce qui coûtait 2,5 fois plus cher à la
+mesure. `get_feed` ne détient aucun privilège particulier
+(`SECURITY INVOKER`) et toutes ses références sont qualifiées par leur
+schéma. J'ai relu sa définition : c'est exact. Aucune action.
+
+*Mise à jour depuis la correction de A2.* Ce point ne concernait
+initialement pas que `get_feed` : `search_athletes` était dans le même cas.
+Elle est depuis passée en `SECURITY DEFINER`, ce qui rend la clause
+obligatoire — une fonction qui détient les privilèges de son propriétaire
+et laisse son `search_path` libre peut voir ses appels détournés par un
+objet glissé dans `pg_temp`. Elle l'a donc reçue, et l'arbitrage coût
+contre sécurité s'y est renversé.
 
 ## C3. `profiles` porte à la fois `age` et `birthdate`
 
@@ -594,12 +662,14 @@ sont dans le code de l'application et dans les règles d'accès de la base.
 | # | Point | Nature |
 |---|---|---|
 | A1 | Ajouter « mot de passe oublié » | code |
-| A2 | Faire appliquer `is_private` / `hide_location` par la RLS | base |
+| ~~A2~~ | ~~Faire appliquer `is_private` / `hide_location` par la RLS~~ — **fait** le 17/09/2026 | base |
 | A3 | Brancher le feed sur `get_feed` (déjà écrite et mesurée) | code |
 | A4 | Retirer l'abonnement Realtime du feed | code |
 | A5 | Passer au plan Pro, pour la sauvegarde | facturation |
 | A6 | Configurer un SMTP réel + vérifier l'URL du site | console |
 | B8 | Cocher « Leaked password protection » | console |
+
+Soit **six points restants** sur les sept d'origine.
 
 **Dans le mois qui suit :** B1 à B7, B9.
 
@@ -615,6 +685,8 @@ et l'application ne les appelle pas.
 ---
 
 *Constat établi en lecture seule le 17 septembre 2026 : ni la base ni le
-code n'ont été modifiés pendant l'analyse. Une seule action a été menée
-après coup, à la lecture du rapport — le `REINDEX` du point B6, dont les
-mesures avant/après sont reportées ci-dessus.*
+code n'ont été modifiés pendant l'analyse. Deux actions ont été menées
+après coup, à la lecture du rapport — le `REINDEX` du point B6 et les
+trois migrations de confidentialité du point A2 — dont l'état avant/après
+est reporté ci-dessus. Le reste du document décrit toujours la situation
+au 17 septembre 2026.*
