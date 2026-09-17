@@ -178,16 +178,100 @@ Volontairement non implémenté pour l'instant. À reprendre quand les
 premières données réelles montreront les qualités que les recruteurs
 cherchent effectivement.
 
-## Reste à faire côté application
+## Branchement du front
 
-Les tables sont prêtes, le front n'est pas branché :
+### Le problème à résoudre d'abord
 
-1. Remplacer les champs de saisie `position`, `age_category` par des listes
-   déroulantes alimentées par ces tables. La liste des postes se filtre sur
-   le sport déjà choisi.
-2. Ajouter à la publication : saison, date du match, niveau de
-   l'adversaire, et numéro de maillot — ce dernier affiché seulement si
-   `sports.has_jersey_number` est vrai pour le sport choisi.
-3. Brancher ces dimensions dans les filtres de recherche du recruteur.
-4. Étendre `search_athletes` aux titres et descriptions de vidéos, pour la
-   recherche libre.
+L'application lit les vidéos avec `select *` à une douzaine d'endroits et
+affiche `position` et `age_category` directement. Passer aux identifiants
+aurait donc voulu dire modifier chaque requête pour y ajouter une
+jointure, et chaque affichage pour lire la valeur jointe — beaucoup de
+surface pour un gain nul à l'écran.
+
+Un **trigger** (`videos_sync_labels`) recopie à l'écriture le libellé du
+référentiel dans la colonne texte correspondante :
+
+| Identifiant écrit | Libellé recopié |
+|---|---|
+| `position_id` | `position` |
+| `age_category_id` | `age_category` |
+| `season_id` | `season` *(colonne ajoutée)* |
+| `opponent_level_id` | `opponent_level` *(colonne ajoutée)* |
+
+Les **identifiants restent la source de vérité** : ce sont eux que
+contraignent les clés étrangères et sur eux que portent les filtres. Le
+texte n'est qu'un reflet, et il n'est jamais à écrire à la main.
+
+Un texte libre saisi **sans** identifiant est laissé intact : les vidéos
+antérieures ne sont pas touchées.
+
+Contrôles joués sur la base réelle, en transaction annulée :
+
+| Test | Résultat |
+|---|---|
+| Insertion avec les quatre identifiants | les quatre libellés recopiés |
+| Changement de sport **et** de poste | libellé suit (`Gardien de but` → `Meneur`) |
+| Retour des identifiants à `null` | libellés effacés |
+
+### Formulaire de publication
+
+- **Poste** : liste déroulante, restreinte aux postes du sport choisi.
+  Changer de sport invalide le choix précédent — obtenu en ne retenant la
+  valeur que tant qu'elle figure dans la liste du sport courant, plutôt
+  qu'en la remettant à zéro dans un effet.
+- **Catégorie d'âge**, **saison**, **niveau de l'adversaire** : listes
+  déroulantes.
+- **Date du match** : sélecteur de date, borné à aujourd'hui.
+- **Numéro de maillot** : affiché seulement pour les sports concernés,
+  borné à 0–99. La liste des sports concernés est **lue dans
+  `sports.has_jersey_number`**, pas recopiée dans le code — sans quoi
+  elle finirait par diverger de celle que le trigger fait respecter.
+
+L'ordre des saisons proposées mérite un mot : le référentiel va jusqu'à
+2034-2035. Présentée telle quelle, la liste se serait ouverte sur une
+saison dix ans en avant. Elle est donc réordonnée — saison en cours en
+tête, précédentes ensuite, à venir en fin.
+
+### Filtres de recherche
+
+Les deux panneaux de filtres (recherche du fil, recherche du recruteur)
+passent des champs de texte aux listes déroulantes pour le poste et la
+catégorie d'âge, et gagnent le niveau d'adversaire.
+
+Ce dernier est un **« ce niveau ou mieux »**, comparé sur `rank` :
+demander « régional » renvoie aussi l'inter-régional, le national, le
+professionnel et l'international. Les vidéos sans niveau renseigné sont
+écartées quand le filtre est actif — l'interface le dit.
+
+Côté profils, le poste reste stocké en texte libre : le filtre compare
+donc au **libellé** du poste choisi de ce côté-là, et à l'**identifiant**
+du côté des vidéos.
+
+### Recherche libre
+
+Les libellés de saison et de niveau d'adversaire alimentent désormais la
+recherche libre, aux côtés du titre, de la description et du championnat.
+
+## Reste à faire
+
+1. Étendre `search_athletes` aux titres et descriptions de vidéos.
+2. Faire basculer `profiles.position` sur `position_id` — la colonne et sa
+   clé étrangère existent, seul le formulaire de profil est encore en
+   texte libre.
+
+## Attention : la pile locale est en retard
+
+Les migrations `11_referentiels_position_categorie_saison`,
+`12_niveau_adversaire_et_numero_maillot` et
+`videos_libelles_derives_referentiels` ont été appliquées **sur le projet
+hébergé**. L'instantané `supabase/migrations/20260915090000_schema_complet.sql`
+leur est antérieur : la pile locale ne les a donc pas, et le front
+branché ne fonctionnerait pas contre elle.
+
+Avant de relancer la pile locale, récupérez-les :
+
+```bash
+npx supabase link --project-ref uvsxteuhqqfgbmdgabfo
+npx supabase db pull          # écrit les migrations manquantes
+./scripts/db-local.sh reset
+```

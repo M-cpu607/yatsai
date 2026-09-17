@@ -159,6 +159,13 @@ c'est la seule raison de leur échec.
 
 ## Rester aligné sur la production
 
+> **À faire avant le prochain `reset`.** Les référentiels (postes,
+> catégories d'âge, saisons, niveaux de compétition) et le trigger de
+> recopie des libellés ont été appliqués sur le projet hébergé **après**
+> cet instantané. La pile locale ne les a pas, et l'application branchée
+> sur ces tables ne fonctionnerait pas contre elle. Les commandes
+> ci-dessous les récupèrent.
+
 Ce schéma est un instantané du 15/09/2026. Quand la production évoluera,
 récupérez les changements :
 

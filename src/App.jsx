@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Heart, MessageCircle, Bookmark, Share2, Volume2, VolumeX,
   Plus, Search, User, Home, Inbox, Sparkles, BadgeCheck,
@@ -184,6 +184,112 @@ const SPORTS = [
   { id: 'ultimate', label: 'Ultimate', icon: '🥏' },
   { id: 'kite', label: 'Kitesurf', icon: '🪁' },
 ];
+
+// ─── RÉFÉRENTIELS ────────────────────────────────────────────────
+// Postes, catégories d'âge, saisons et niveaux de compétition vivent en
+// base (tables positions / age_categories / seasons /
+// competition_levels). Les charger plutôt que les coder en dur évite la
+// dérive qui rendait les filtres muets sur `sport` : une liste figée
+// côté client finit toujours par diverger de ce que la base accepte.
+//
+// Chargement unique pour toute l'application : la promesse est mise en
+// cache au niveau du module, donc dix écrans qui montent en même temps
+// déclenchent une seule requête.
+let _refsPromise = null;
+
+function chargerReferentiels() {
+  if (_refsPromise) return _refsPromise;
+  _refsPromise = (async () => {
+    const [pos, ages, seasons, levels, sports] = await Promise.all([
+      supabase.from('positions').select('sport_id, id, label').order('sort_order'),
+      supabase.from('age_categories').select('id, label').order('sort_order'),
+      supabase.from('seasons').select('id, label, starts_on').order('sort_order'),
+      supabase.from('competition_levels').select('id, label, rank').order('rank'),
+      supabase.from('sports').select('id, has_jersey_number'),
+    ]);
+    const err = pos.error || ages.error || seasons.error || levels.error || sports.error;
+    if (err) {
+      console.error('Référentiels : chargement impossible', err);
+      // On relâche le cache : un écran monté plus tard pourra réessayer.
+      _refsPromise = null;
+      throw err;
+    }
+    // Postes regroupés par sport, pour n'afficher que ceux du sport choisi.
+    const postesParSport = {};
+    for (const r of pos.data ?? []) {
+      (postesParSport[r.sport_id] ||= []).push({ id: r.id, label: r.label });
+    }
+    // Le référentiel va de 2015-2016 à 2034-2035. Présenté tel quel, il
+    // ouvrirait la liste sur une saison dix ans dans le futur. On met donc
+    // la saison en cours en tête, puis les précédentes de la plus récente
+    // à la plus ancienne, et on relègue les saisons à venir en fin de liste.
+    const aujourdhui = new Date().toISOString().slice(0, 10);
+    const toutes = seasons.data ?? [];
+    const saisons = [
+      ...toutes.filter(s => s.starts_on <= aujourdhui).reverse(),
+      ...toutes.filter(s => s.starts_on > aujourdhui),
+    ];
+    return {
+      postesParSport,
+      categoriesAge: ages.data ?? [],
+      saisons,
+      niveauxCompetition: levels.data ?? [],
+      // La base refuse un numéro de maillot sur un sport qui n'en porte
+      // pas (trigger trg_check_jersey_number) : on lit la même source
+      // plutôt que d'entretenir une seconde liste ici.
+      sportsAvecMaillot: new Set((sports.data ?? []).filter(s => s.has_jersey_number).map(s => s.id)),
+    };
+  })();
+  return _refsPromise;
+}
+
+const REFS_VIDES = {
+  postesParSport: {}, categoriesAge: [], saisons: [],
+  niveauxCompetition: [], sportsAvecMaillot: new Set(),
+};
+
+function useReferentiels() {
+  const [refs, setRefs] = useState(REFS_VIDES);
+  useEffect(() => {
+    let vivant = true;
+    chargerReferentiels()
+      .then(r => { if (vivant) setRefs(r); })
+      .catch(() => { /* déjà journalisé ; les listes restent vides */ });
+    return () => { vivant = false; };
+  }, []);
+  return refs;
+}
+
+// Liste déroulante commune aux formulaires et aux filtres.
+function ChampSelect({ label, value, onChange, options, placeholder = 'Indifférent', disabled, compact }) {
+  return (
+    <div>
+      {label && (
+        <label className="text-xs font-semibold mb-2 block" style={{ color: compact ? C.text : C.textDim }}>
+          {label}
+        </label>
+      )}
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        disabled={disabled}
+        className={compact
+          ? 'w-full px-2.5 py-2 rounded-lg text-xs outline-none'
+          : 'w-full px-4 py-3 rounded-xl text-sm outline-none'}
+        style={{
+          backgroundColor: compact ? C.bg : C.surface,
+          color: disabled ? C.textMute : C.text,
+          border: `1px solid ${C.border}`,
+          opacity: disabled ? 0.6 : 1,
+        }}>
+        <option value="">{placeholder}</option>
+        {options.map(o => (
+          <option key={o.id} value={o.id}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 // ─── RÔLES UTILISATEUR ───────────────────────────────────────────
 // 3 rôles : athlete (publie des vidéos), recruiter (recrute, peut signer)
@@ -1422,6 +1528,30 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               </div>
             )}
 
+            {/* Contexte du match — ce qui permet au recruteur de situer
+                la performance : contre qui, quand, à quel poste. */}
+            {(() => {
+              const chips = [];
+              if (data.position) chips.push(`🎯 ${data.position}`);
+              if (data.jersey_number != null) chips.push(`👕 n°${data.jersey_number}`);
+              if (data.opponent_level) chips.push(`🥊 ${data.opponent_level}`);
+              if (data.season) chips.push(`📅 ${data.season}`);
+              if (data.match_date) {
+                chips.push(`🗓️ ${new Date(data.match_date + 'T00:00:00').toLocaleDateString('fr-FR')}`);
+              }
+              if (chips.length === 0) return null;
+              return (
+                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                  {chips.map(c => (
+                    <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                      style={{ backgroundColor: C.surface, color: C.textDim, border: `1px solid ${C.border}` }}>
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+
             {data.description && (
               <p className="text-xs line-clamp-2" style={{ color: C.textDim }}>
                 {data.description}
@@ -2484,12 +2614,24 @@ function PublishView({ userProfile, setTab }) {
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState('foot');
-  const [position, setPosition] = useState('');
+  const [positionId, setPositionId] = useState(null);
   const [description, setDescription] = useState('');
   const [videoType, setVideoType] = useState(null); // 'match' | 'training'
   // Nouveaux champs vidéo
   const [championship, setChampionship] = useState('');
-  const [ageCategory, setAgeCategory] = useState('');
+  const [ageCategoryId, setAgeCategoryId] = useState(null);
+  const [seasonId, setSeasonId] = useState(null);
+  const [matchDate, setMatchDate] = useState('');
+  const [opponentLevelId, setOpponentLevelId] = useState(null);
+  const [jerseyNumber, setJerseyNumber] = useState('');
+  const refs = useReferentiels();
+  // Un poste n'a de sens que pour son sport : après un changement de
+  // sport, le choix précédent cesse d'être valide et la clé étrangère
+  // (sport, poste) rejetterait l'insertion. Plutôt que de le remettre à
+  // zéro dans un effet, on ne le retient que s'il figure toujours dans
+  // la liste du sport courant.
+  const postesDuSport = refs.postesParSport[sport] ?? [];
+  const posteChoisi = postesDuSport.some(o => o.id === positionId) ? positionId : null;
   const [videoLevel, setVideoLevel] = useState(''); // amateur | semi_pro | pro | entrainement
   const [city, setCity] = useState(userProfile?.city || '');
   const [region, setRegion] = useState(userProfile?.region || '');
@@ -2606,7 +2748,7 @@ function PublishView({ userProfile, setTab }) {
       user_id: userProfile.id,
       title: title.trim(),
       sport,
-      position: position.trim() || null,
+      position_id: posteChoisi,
       description: description.trim() || null,
       video_type: videoType,
       youtube_url: extra.youtube_url ?? null,
@@ -2615,7 +2757,14 @@ function PublishView({ userProfile, setTab }) {
       duration_seconds: extra.duration_seconds ?? null,
       needs_review: extra.needs_review || false,
       championship: championship.trim() || null,
-      age_category: ageCategory.trim() || null,
+      age_category_id: ageCategoryId || null,
+      season_id: seasonId || null,
+      match_date: matchDate || null,
+      opponent_level_id: opponentLevelId || null,
+      // La base refuse un numéro sur un sport qui n'en utilise pas ;
+      // on ne l'envoie donc que là où il a un sens.
+      jersey_number: (refs.sportsAvecMaillot.has(sport) && jerseyNumber !== '')
+        ? Number(jerseyNumber) : null,
       level: videoLevel || null,
       city: city.trim() || null,
       region: region.trim() || null,
@@ -2653,9 +2802,11 @@ function PublishView({ userProfile, setTab }) {
     setSuccess(true);
     setTimeout(() => {
       setSuccess(false);
-      setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
+      setYoutubeUrl(''); setTitle(''); setPositionId(null); setDescription('');
+      setAgeCategoryId(null); setSeasonId(null); setMatchDate('');
+      setOpponentLevelId(null); setJerseyNumber('');
       setVideoType(null);
-      setChampionship(''); setAgeCategory(''); setVideoLevel('');
+      setChampionship(''); setVideoLevel('');
       setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
       clearUpload();
       setTab('feed');
@@ -2914,16 +3065,14 @@ function PublishView({ userProfile, setTab }) {
           </div>
         </div>
 
-        {/* Position */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Poste (optionnel)
-          </label>
-          <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-            placeholder="Ex : Milieu offensif, Ailier, Pivot..." maxLength={60}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-        </div>
+        {/* Poste — proposé selon le sport choisi */}
+        <ChampSelect
+          label="Poste (optionnel)"
+          value={posteChoisi}
+          onChange={setPositionId}
+          options={postesDuSport}
+          placeholder={postesDuSport.length ? 'Choisir un poste' : 'Aucun poste pour ce sport'}
+          disabled={!postesDuSport.length} />
 
         {/* Description */}
         <div>
@@ -2951,15 +3100,68 @@ function PublishView({ userProfile, setTab }) {
         </div>
 
         {/* Catégorie d'âge */}
+        <ChampSelect
+          label="🎂 Catégorie d'âge (optionnel)"
+          value={ageCategoryId}
+          onChange={setAgeCategoryId}
+          options={refs.categoriesAge}
+          placeholder="Choisir une catégorie" />
+
+        {/* Saison */}
+        <ChampSelect
+          label="📅 Saison (optionnel)"
+          value={seasonId}
+          onChange={setSeasonId}
+          options={refs.saisons}
+          placeholder="Choisir une saison" />
+
+        {/* Date du match */}
         <div>
           <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            🎂 Catégorie d'âge (optionnel)
+            🗓️ Date du match (optionnel)
           </label>
-          <input type="text" value={ageCategory} onChange={(e) => setAgeCategory(e.target.value)}
-            placeholder="Ex : U15, U17, U19, Senior, Vétérans…" maxLength={40}
+          <input type="date" value={matchDate} max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setMatchDate(e.target.value)}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
             style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
         </div>
+
+        {/* Niveau de l'adversaire — ce qui donne sa valeur à la performance */}
+        <div>
+          <ChampSelect
+            label="🥊 Niveau de l'adversaire (optionnel)"
+            value={opponentLevelId}
+            onChange={setOpponentLevelId}
+            options={refs.niveauxCompetition}
+            placeholder="Choisir un niveau" />
+          <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+            Un but contre une équipe nationale ne vaut pas un but contre une équipe de district :
+            ce champ permet aux recruteurs de faire la différence.
+          </div>
+        </div>
+
+        {/* Numéro de maillot — seulement pour les sports qui en portent */}
+        {refs.sportsAvecMaillot.has(sport) && (
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+              👕 Numéro de maillot (optionnel)
+            </label>
+            <input type="number" inputMode="numeric" min={0} max={99}
+              value={jerseyNumber}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') return setJerseyNumber('');
+                const n = Number(v);
+                if (Number.isInteger(n) && n >= 0 && n <= 99) setJerseyNumber(v);
+              }}
+              placeholder="Ex : 10"
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+              Aide le recruteur à te repérer dans la vidéo.
+            </div>
+          </div>
+        )}
 
         {/* Niveau de la vidéo */}
         <div>
@@ -3161,15 +3363,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     videoType: null,       // 'match' | 'training'
     levels: [],            // niveaux d'auteur
     videoLevels: [],       // niveau spécifique à la vidéo (amateur/semi_pro/pro/entrainement)
-    position: '',          // texte libre
+    positionId: null,      // référentiel positions, dépend du sport
     periodDays: null,      // 1, 7, 30, 90, 180
     championship: '',      // nom du championnat
-    ageCategory: '',       // U17, U19, Senior…
+    ageCategoryId: null,   // référentiel age_categories
+    opponentLevelId: null, // niveau d'adversaire minimum (ce niveau ou mieux)
     country: '',
     region: '',
     city: '',
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const refs = useReferentiels();
+  // Un poste n'existe que dans son sport : après un changement de sport
+  // l'ancien choix ne correspondrait plus à rien. On ne le retient donc
+  // que tant qu'il figure dans la liste du sport sélectionné.
+  const postesDuSport = useMemo(
+    () => (filters.sport ? (refs.postesParSport[filters.sport] ?? []) : []),
+    [filters.sport, refs.postesParSport]);
+  const posteFiltre = postesDuSport.some(o => o.id === filters.positionId) ? filters.positionId : null;
 
   // Auto-focus à l'ouverture
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -3203,11 +3414,17 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
   const norm = (s) => (s || '').toLowerCase().trim();
   const needle = norm(query);
 
+  // Rang d'un niveau de compétition (1 = loisir … 10 = international).
+  const rangNiveau = useCallback((id) => {
+    if (!id) return null;
+    return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
+  }, [refs.niveauxCompetition]);
+
   // ─── Vidéos filtrées ─────────────────────────────────────────
   const filteredVideos = useMemo(() => videos.filter(v => {
     // Filtre texte : titre, description, sport, position, championship, age_category, ville, pays OU nom de l'auteur
     if (needle) {
-      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.season || ''} ${v.opponent_level || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
       if (!hay.includes(needle)) return false;
     }
     if (filters.sport && v.sport !== filters.sport) return false;
@@ -3220,18 +3437,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     if (filters.videoLevels.length > 0) {
       if (!v.level || !filters.videoLevels.includes(v.level)) return false;
     }
-    if (filters.position && !norm(v.position).includes(norm(filters.position))) return false;
+    if (posteFiltre && v.position_id !== posteFiltre) return false;
     if (filters.periodDays && v.created_at) {
       const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
       if (ageDays > filters.periodDays) return false;
     }
     if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
-    if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+    if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
+    // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
+    if (filters.opponentLevelId) {
+      const attendu = rangNiveau(filters.opponentLevelId);
+      const obtenu = rangNiveau(v.opponent_level_id);
+      if (obtenu === null || attendu === null || obtenu < attendu) return false;
+    }
     if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
     if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
     if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
     return true;
-  }), [videos, needle, filters]);
+  }), [videos, needle, filters, rangNiveau, posteFiltre]);
 
   // ─── Profils filtrés (uniquement par texte, pour ne pas dupliquer la logique vidéo) ───
   const filteredProfiles = useMemo(() => {
@@ -3251,10 +3474,11 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     + (filters.videoType ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
     + (filters.videoLevels.length > 0 ? 1 : 0)
-    + (filters.position.trim() ? 1 : 0)
+    + (posteFiltre ? 1 : 0)
     + (filters.periodDays ? 1 : 0)
     + (filters.championship.trim() ? 1 : 0)
-    + (filters.ageCategory.trim() ? 1 : 0)
+    + (filters.ageCategoryId ? 1 : 0)
+    + (filters.opponentLevelId ? 1 : 0)
     + (filters.country.trim() ? 1 : 0)
     + (filters.region.trim() ? 1 : 0)
     + (filters.city.trim() ? 1 : 0);
@@ -3439,15 +3663,14 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
-              {/* Poste */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎯 Poste</label>
-                <input type="text" value={filters.position}
-                  onChange={(e) => setFilters(f => ({ ...f, position: e.target.value }))}
-                  placeholder="Ex : Milieu, Gardien, Ailier…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              {/* Poste — dépend du sport choisi juste au-dessus */}
+              <ChampSelect compact
+                label="🎯 Poste"
+                value={posteFiltre}
+                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
+                options={postesDuSport}
+                disabled={!filters.sport}
+                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
 
               {/* Période */}
               <div>
@@ -3486,13 +3709,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               </div>
 
               {/* Catégorie d'âge */}
+              <ChampSelect compact
+                label="🎂 Catégorie d'âge"
+                value={filters.ageCategoryId}
+                onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
+                options={refs.categoriesAge} />
+
+              {/* Niveau de l'adversaire, à partir de… */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
-                <input type="text" value={filters.ageCategory}
-                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
-                  placeholder="Ex : U17, U19, Senior, Vétérans…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+                <ChampSelect compact
+                  label="🥊 Adversaire d'au moins"
+                  value={filters.opponentLevelId}
+                  onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
+                  options={refs.niveauxCompetition} />
+                {filters.opponentLevelId && (
+                  <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                    Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire renseigné sont écartées.
+                  </div>
+                )}
               </div>
 
               {/* Localisation vidéo */}
@@ -4645,13 +4879,22 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
   const DEFAULT_FILTERS = {
     sport: null, gender: null, ageMin: 14, ageMax: 35,
     country: '', region: '', city: '', nationality: '',
-    levels: [], position: '',
+    levels: [], positionId: null,
     championship: '',
-    ageCategory: '',
+    ageCategoryId: null,
+    opponentLevelId: null,
     recency: null,
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const refs = useReferentiels();
+  // Le poste dépend du sport : après un changement de sport l'ancien choix
+  // rendrait le filtre impossible à satisfaire. On ne le retient donc que
+  // tant qu'il appartient à la liste du sport sélectionné.
+  const postesDuSport = useMemo(
+    () => (filters.sport ? (refs.postesParSport[filters.sport] ?? []) : []),
+    [filters.sport, refs.postesParSport]);
+  const posteFiltre = postesDuSport.some(o => o.id === filters.positionId) ? filters.positionId : null;
   const [profiles, setProfiles] = useState([]);
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4719,6 +4962,19 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
   const norm = (s) => (s || '').toLowerCase().trim();
 
+  // Libellé du poste choisi : les profils stockent encore un poste en
+  // texte libre, on compare donc sur le libellé de leur côté, et sur
+  // l'identifiant du côté des vidéos, qui sont, elles, référencées.
+  const libellePoste = useMemo(
+    () => postesDuSport.find(o => o.id === posteFiltre)?.label ?? null,
+    [postesDuSport, posteFiltre]);
+
+  // Rang d'un niveau de compétition (1 = loisir … 10 = international).
+  const rangNiveau = useCallback((id) => {
+    if (!id) return null;
+    return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
+  }, [refs.niveauxCompetition]);
+
   const filtered = useMemo(() => profiles.filter(p => {
     // Compte privé : exclu de la recherche pour les autres (le propriétaire se voit toujours)
     if (p.is_private && p.id !== currentUserId) return false;
@@ -4735,8 +4991,9 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     if (filters.nationality && !norm(p.nationality).includes(norm(filters.nationality))) return false;
     // Niveau (multi-select)
     if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
-    // Poste — match flou (contient) sur p.position, insensible à la casse
-    if (filters.position && !norm(p.position).includes(norm(filters.position))) return false;
+    // Poste — les profils gardent un poste en texte libre : on compare
+    // au libellé du référentiel, sans tenir compte de la casse.
+    if (libellePoste && !norm(p.position).includes(norm(libellePoste))) return false;
     // Recherche texte
     if (query) {
       const needle = query.toLowerCase();
@@ -4744,14 +5001,14 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       if (!hay.includes(needle)) return false;
     }
     return true;
-  }), [profiles, query, filters, athletesOnly, currentUserId]);
+  }), [profiles, query, filters, athletesOnly, currentUserId, libellePoste]);
 
   // Vidéos filtrées (onglet vidéos)
   const filteredVideos = useMemo(() => {
     const needle = (query || '').toLowerCase().trim();
     return videos.filter(v => {
       if (needle) {
-        const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+        const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.season || ''} ${v.opponent_level || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       if (filters.sport && v.sport !== filters.sport) return false;
@@ -4761,7 +5018,14 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         if (ms && (Date.now() - new Date(v.created_at).getTime()) > ms) return false;
       }
       if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
-      if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+      if (posteFiltre && v.position_id !== posteFiltre) return false;
+      if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
+      // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
+      if (filters.opponentLevelId) {
+        const attendu = rangNiveau(filters.opponentLevelId);
+        const obtenu = rangNiveau(v.opponent_level_id);
+        if (obtenu === null || attendu === null || obtenu < attendu) return false;
+      }
       if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
       if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
       if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
@@ -4771,7 +5035,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       }
       return true;
     });
-  }, [videos, query, filters]);
+  }, [videos, query, filters, rangNiveau, posteFiltre]);
 
   const activeFilters = (filters.sport ? 1 : 0)
     + (filters.gender ? 1 : 0)
@@ -4781,10 +5045,11 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     + (filters.region.trim() ? 1 : 0)
     + (filters.city.trim() ? 1 : 0)
     + (filters.nationality.trim() ? 1 : 0)
-    + (filters.position.trim() ? 1 : 0)
+    + (posteFiltre ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
     + (filters.championship.trim() ? 1 : 0)
-    + (filters.ageCategory.trim() ? 1 : 0);
+    + (filters.ageCategoryId ? 1 : 0)
+    + (filters.opponentLevelId ? 1 : 0);
 
   const resetFilters = () => setFilters(DEFAULT_FILTERS);
   const toggleLevel = (id) => setFilters(f => ({
@@ -5069,29 +5334,44 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
               </div>
             </div>
 
-            {/* Poste / spécialité — champ de texte libre (match flou sur la BDD) */}
+            {/* Poste — liste du sport choisi */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎯 Poste</label>
-              <input type="text" value={filters.position}
-                onChange={(e) => setFilters(f => ({ ...f, position: e.target.value }))}
-                placeholder="Ex : Milieu, Gardien, Ailier…"
-                className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+              <ChampSelect compact
+                label="🎯 Poste"
+                value={posteFiltre}
+                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
+                options={postesDuSport}
+                disabled={!filters.sport}
+                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
               <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
-                Tape une partie du poste pour filtrer (lecture directe dans la base).
+                {filters.sport
+                  ? 'Les postes proposés sont ceux du sport sélectionné.'
+                  : 'Sélectionnez un sport pour voir ses postes.'}
               </p>
             </div>
 
-            {/* Catégorie d'âge (onglet vidéos) */}
+            {/* Catégorie d'âge et niveau d'adversaire (onglet vidéos) */}
             {activeTab === 'videos' && (
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
-                <input type="text" value={filters.ageCategory}
-                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
-                  placeholder="Ex : U17, U19, Senior, Vétérans…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              <>
+                <ChampSelect compact
+                  label="🎂 Catégorie d'âge"
+                  value={filters.ageCategoryId}
+                  onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
+                  options={refs.categoriesAge} />
+
+                <div>
+                  <ChampSelect compact
+                    label="🥊 Adversaire d'au moins"
+                    value={filters.opponentLevelId}
+                    onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
+                    options={refs.niveauxCompetition} />
+                  {filters.opponentLevelId && (
+                    <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                      Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire sont écartées.
+                    </p>
+                  )}
+                </div>
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-2">
