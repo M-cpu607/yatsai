@@ -4446,21 +4446,39 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
     if (sensitiveAnswer) { push({ role: 'assistant', content: sensitiveAnswer }); setLoading(false); return; }
 
     try {
-      // TOUS les comptes (athlètes, recruteurs, observateurs) + TOUTES les vidéos
-      // + signatures. Le chatbot connaît ainsi tout le monde et tous les titres /
-      // descriptions. (.limit élevé pour ne pas être plafonné à 1000 lignes.)
+      // Le chatbot raisonne sur l'ensemble des comptes et des vidéos : son
+      // rapprochement en langage naturel construit son vocabulaire (villes,
+      // régions, nationalités) à partir des valeurs réellement présentes, et
+      // tronquer le jeu lui ferait répondre « personne ne correspond » à tort.
+      // On ne réduit donc pas le nombre de lignes — on réduit ce que chaque
+      // ligne pèse.
+      //
+      // Deux économies sans aucun changement de comportement :
+      //  · la jointure `profiles!videos_user_id_fkey` recopiait l'auteur sur
+      //    CHAQUE vidéo, alors que tous les profils sont déjà chargés juste
+      //    au-dessus. On résout l'auteur localement par un index.
+      //  · `bio` et `banner_url` étaient chargées et jamais lues.
       const [profilesRes, videosRes, signedRes] = await Promise.all([
         supabase.from('profiles')
-          .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status, is_private, hide_location')
-          .neq('id', currentUserId || '').limit(10000),
+          .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, verified, avatar_url, level_proof_status, is_private, hide_location')
+          .limit(10000),
         supabase.from('videos')
-          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)')
+          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at')
           .limit(10000),
         supabase.from('signed_posts').select('id, athlete_id, caption').limit(10000),
       ]);
-      const allProfiles = profilesRes.data || [];
-      const videos = videosRes.data || [];
+      const tousProfils = profilesRes.data || [];
       const signedPosts = signedRes.data || [];
+      // L'exclusion de soi-même était faite par la requête. Elle se fait
+      // maintenant sur les listes de résultats, pour que l'index des auteurs
+      // reste complet : sans sa propre ligne, une de ses propres vidéos
+      // n'aurait plus d'auteur résolvable.
+      const allProfiles = tousProfils.filter(p => p.id !== currentUserId);
+      const profilsParId = new Map(tousProfils.map(p => [p.id, p]));
+      const videos = (videosRes.data || []).map(v => ({
+        ...v,
+        profiles: profilsParId.get(v.user_id) || null,
+      }));
       const roleOf = (p) => (p && p.role) ? p.role : (p && p.is_recruiter ? 'recruiter' : 'athlete');
       // Athlètes « découvrables » pour la recherche/suggestion de recrutement :
       // on respecte le réglage « compte privé » choisi par chaque utilisateur.
@@ -4874,22 +4892,66 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [videosLoading, setVideosLoading] = useState(true);
+  const [pageProfils, setPageProfils] = useState(0);
+  const [finProfils, setFinProfils] = useState(false);
+
+  // ─── Recherche de profils, côté serveur ───────────────────────
+  // Avant : toute la table `profiles` était téléchargée, puis filtrée et
+  // classée en JavaScript. Deux défauts, dont le second est le vrai.
+  //
+  // 1. Le volume — sans `.limit()`, la requête grandit avec la
+  //    plateforme.
+  // 2. Surtout : filtrer APRÈS avoir paginé donne un résultat FAUX. Le
+  //    serveur rendrait vingt lignes, le navigateur en écarterait
+  //    dix-sept, l'écran en montrerait trois — en laissant croire qu'il
+  //    n'y en a pas d'autres. `search_athletes` applique donc tous les
+  //    filtres avant le `limit`.
+  const TAILLE_PAGE_PROFILS = 20;
+  // Sous trois caractères, aucun trigramme complet n'est extractible :
+  // l'index ne peut pas filtrer et la requête retomberait en parcours
+  // séquentiel. On attend donc, plutôt que de faire travailler la base
+  // pour une saisie qui n'a pas encore de sens.
+  const requeteTexte = query.trim();
+  const texteUtilisable = requeteTexte.length === 0 || requeteTexte.length >= 3;
 
   useEffect(() => {
-    let cancel = false;
-    setLoading(true);
-    (async () => {
-      let q = supabase.from('profiles').select(COLONNES_PROFIL_PUBLIC);
-      if (currentUserId) q = q.neq('id', currentUserId);
-      if (athletesOnly) q = q.eq('is_recruiter', false);
-      const { data, error } = await q.order('created_at', { ascending: false });
-      if (cancel) return;
-      if (error) console.error('Erreur chargement profils:', error);
-      setProfiles(data || []);
+    if (!texteUtilisable) return;
+    let annule = false;
+    // Délai de grâce : sans lui, chaque frappe lancerait une requête.
+    const minuteur = setTimeout(async () => {
+      setLoading(true);
+      const { data, error } = await supabase.rpc('search_athletes', {
+        p_query: requeteTexte || null,
+        p_sport: filters.sport || null,
+        p_gender: filters.gender || null,
+        p_age_min: filters.ageMin,
+        p_age_max: filters.ageMax,
+        p_limit: TAILLE_PAGE_PROFILS,
+        p_offset: pageProfils * TAILLE_PAGE_PROFILS,
+        p_country: filters.country || null,
+        p_region: filters.region || null,
+        p_city: filters.city || null,
+        p_nationality: filters.nationality || null,
+        p_levels: filters.levels.length ? filters.levels : null,
+        p_position_id: posteFiltre || null,
+        // L'écran sert deux usages : la recherche d'athlètes du recruteur,
+        // et la recherche générale, qui montre aussi recruteurs et
+        // observateurs.
+        p_include_recruiters: !athletesOnly,
+      });
+      if (annule) return;
+      if (error) console.error('Erreur recherche de profils:', error);
+      const page = (data || []).filter(p => p.id !== currentUserId);
+      setProfiles(prev => (pageProfils === 0 ? page : [...prev, ...page]));
+      setFinProfils((data || []).length < TAILLE_PAGE_PROFILS);
       setLoading(false);
-    })();
-    return () => { cancel = true; };
-  }, [currentUserId, athletesOnly]);
+    }, 300);
+    return () => { annule = true; clearTimeout(minuteur); };
+  }, [requeteTexte, texteUtilisable, filters, posteFiltre, pageProfils,
+      athletesOnly, currentUserId]);
+
+  // Toute modification de la recherche ou des filtres repart de la page 1.
+  useEffect(() => { setPageProfils(0); }, [requeteTexte, filters, posteFiltre, athletesOnly]);
 
   // Charge les vidéos pour l'onglet vidéos
   useEffect(() => {
@@ -4911,38 +4973,21 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
   // (filtre période supprimé de l'onglet Profils)
 
-  // Realtime : patcher les profils listés dans la recherche
-  useEffect(() => {
-    const channel = supabase
-      .channel(`search-profiles-${currentUserId || 'anon'}`)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        (payload) => {
-          const updated = payload.new;
-          if (!updated?.id) return;
-          setProfiles(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
-        })
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'profiles' },
-        (payload) => {
-          const inserted = payload.new;
-          if (!inserted?.id) return;
-          if (currentUserId && inserted.id === currentUserId) return;
-          if (athletesOnly && inserted.is_recruiter) return;
-          setProfiles(prev => prev.some(p => p.id === inserted.id) ? prev : [inserted, ...prev]);
-        })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [currentUserId, athletesOnly]);
+  // L'abonnement Realtime sur toute la table `profiles` a été retiré. Il
+  // réveillait chaque appareil ayant l'écran de recherche ouvert à chaque
+  // modification ou création de profil, de qui que ce soit — et insérait
+  // dans la liste des profils qui ne correspondaient pas forcément à la
+  // recherche en cours. La liste se rafraîchit au prochain appel, c'est-
+  // à-dire dès que la personne touche à sa recherche.
 
   const norm = (s) => (s || '').toLowerCase().trim();
 
-  // Libellé du poste choisi : les profils stockent encore un poste en
-  // texte libre, on compare donc sur le libellé de leur côté, et sur
-  // l'identifiant du côté des vidéos, qui sont, elles, référencées.
-  const libellePoste = useMemo(
-    () => postesDuSport.find(o => o.id === posteFiltre)?.label ?? null,
-    [postesDuSport, posteFiltre]);
+  // Le rapprochement du poste par LIBELLÉ a disparu : `search_athletes`
+  // filtre sur `position_id`. Ce que cela coûte : un profil créé avant les
+  // référentiels, qui n'a qu'un poste en texte libre, ne ressort plus d'un
+  // filtre par poste. Relevé en base, un seul profil est dans ce cas, et
+  // son sport est `null` — il ne pouvait de toute façon pas satisfaire un
+  // filtre de poste, qui est toujours attaché à un sport.
 
   // Rang d'un niveau de compétition (1 = loisir … 10 = international).
   const rangNiveau = useCallback((id) => {
@@ -4950,39 +4995,11 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
   }, [refs.niveauxCompetition]);
 
-  const filtered = useMemo(() => profiles.filter(p => {
-    // Compte privé : exclu de la recherche pour les autres (le propriétaire se voit toujours)
-    if (p.is_private && p.id !== currentUserId) return false;
-    if (filters.sport && p.sport !== filters.sport) return false;
-    if (filters.gender && p.gender !== filters.gender) return false;
-    // Filtre âge (s'applique dès qu'un profil a un âge renseigné, athlète OU recruteur)
-    if (p.age != null && (filters.ageMin !== 14 || filters.ageMax !== 35)) {
-      if (p.age < filters.ageMin || p.age > filters.ageMax) return false;
-    }
-    // Filtres localisation (match flou, insensible à la casse)
-    if (filters.country && !norm(p.country).includes(norm(filters.country))) return false;
-    if (filters.region && !norm(p.region).includes(norm(filters.region))) return false;
-    if (filters.city && !norm(p.city).includes(norm(filters.city))) return false;
-    if (filters.nationality && !norm(p.nationality).includes(norm(filters.nationality))) return false;
-    // Niveau (multi-select)
-    if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
-    // Poste — les profils récents portent un identifiant de référentiel ;
-    // les plus anciens n'ont qu'un texte libre, qu'on compare alors au
-    // libellé, sans tenir compte de la casse ni des accents.
-    if (posteFiltre) {
-      const correspond = p.position_id
-        ? p.position_id === posteFiltre
-        : (!!libellePoste && normaliserPoste(p.position).includes(normaliserPoste(libellePoste)));
-      if (!correspond) return false;
-    }
-    // Recherche texte
-    if (query) {
-      const needle = query.toLowerCase();
-      const hay = `${p.full_name || ''} ${p.club || ''} ${p.organization || ''} ${p.position || ''} ${p.city || ''} ${p.region || ''} ${p.country || ''} ${p.nationality || ''}`.toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
-  }), [profiles, query, filters, athletesOnly, currentUserId, libellePoste, posteFiltre]);
+  // Le tri et le filtrage sont désormais faits par `search_athletes`,
+  // AVANT la pagination. Refiltrer ici reviendrait à écarter des lignes
+  // déjà comptées dans la page, et à retrouver le défaut qu'on corrige.
+  // L'ordre renvoyé est déjà le bon : pertinence, puis popularité.
+  const filtered = profiles;
 
   // Vidéos filtrées (onglet vidéos)
   const filteredVideos = useMemo(() => {
@@ -5084,7 +5101,13 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         </div>
         <p className="text-sm" style={{ color: C.textDim }}>
           {activeTab === 'profiles'
-            ? (loading ? 'Chargement…' : `${filtered.length} ${labelKind}${filtered.length > 1 ? 's' : ''} trouvé${filtered.length > 1 ? 's' : ''}`)
+            // « affichés » et non « trouvés » : la liste est paginée, le
+            // compte à l'écran n'est pas le total. Annoncer un total qu'on
+            // n'a pas serait exactement le genre d'approximation que la
+            // recherche côté serveur sert à éliminer.
+            ? (loading && filtered.length === 0
+                ? 'Chargement…'
+                : `${filtered.length}${finProfils ? '' : '+'} ${labelKind}${filtered.length > 1 ? 's' : ''} affiché${filtered.length > 1 ? 's' : ''}`)
             : (videosLoading ? 'Chargement…' : `${filteredVideos.length} vidéo${filteredVideos.length > 1 ? 's' : ''} trouvée${filteredVideos.length > 1 ? 's' : ''}`)}
         </p>
       </div>
@@ -5368,7 +5391,17 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
         </div>
       ) : activeTab === 'profiles' ? (
-        filtered.length === 0 ? (
+        !texteUtilisable ? (
+          <div className="px-4 mt-8 text-center">
+            <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
+            <p className="text-sm" style={{ color: C.textDim }}>
+              Encore {3 - requeteTexte.length} caractère{3 - requeteTexte.length > 1 ? 's' : ''}…
+            </p>
+            <p className="text-[11px] mt-1" style={{ color: C.textMute }}>
+              La recherche démarre à trois caractères.
+            </p>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="px-4 mt-8 text-center">
             <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
             <p className="text-sm" style={{ color: C.textDim }}>Aucun {labelKind} trouvé.</p>
@@ -5379,20 +5412,32 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             )}
           </div>
         ) : (
-          <div className="px-4 grid grid-cols-2 gap-3">
-            {filtered.map(p => {
-              const status = dbShortlist?.get(p.id)?.status;
-              const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
-              return (
-                <ProfileCard key={p.id} profile={p}
-                  onSelect={() => onSelectProfile?.(p)}
-                  shortlistStatus={status}
-                  onToggleShortlist={showShortlistButton
-                    ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
-                    : undefined} />
-              );
-            })}
-          </div>
+          <>
+            <div className="px-4 grid grid-cols-2 gap-3">
+              {filtered.map(p => {
+                const status = dbShortlist?.get(p.id)?.status;
+                const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
+                return (
+                  <ProfileCard key={p.id} profile={p}
+                    onSelect={() => onSelectProfile?.(p)}
+                    shortlistStatus={status}
+                    onToggleShortlist={showShortlistButton
+                      ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
+                      : undefined} />
+                );
+              })}
+            </div>
+            {!finProfils && (
+              <div className="px-4 mt-4">
+                <button onClick={() => setPageProfils(n => n + 1)} disabled={loading}
+                  className="w-full py-3 rounded-xl text-sm font-semibold"
+                  style={{ backgroundColor: 'transparent', color: C.gold,
+                           border: `1px solid ${C.borderGold}`, opacity: loading ? 0.5 : 1 }}>
+                  {loading ? 'Chargement…' : 'Voir plus'}
+                </button>
+              </div>
+            )}
+          </>
         )
       ) : (
         /* ─── Onglet Vidéos ─── */
