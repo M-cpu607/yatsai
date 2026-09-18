@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Heart, MessageCircle, Bookmark, Share2, Volume2, VolumeX,
   Plus, Search, User, Home, Inbox, Sparkles, BadgeCheck,
@@ -13,6 +13,7 @@ import {
   Calendar, Clock,
 } from 'lucide-react';
 import { supabase } from './supabase';
+import { useReferentiels, normaliserPoste } from './referentiels';
 import Auth from './Auth';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -184,6 +185,60 @@ const SPORTS = [
   { id: 'ultimate', label: 'Ultimate', icon: '🥏' },
   { id: 'kite', label: 'Kitesurf', icon: '🪁' },
 ];
+
+// Liste déroulante commune aux formulaires et aux filtres.
+function ChampSelect({ label, value, onChange, options, placeholder = 'Indifférent', disabled, compact }) {
+  return (
+    <div>
+      {label && (
+        <label className="text-xs font-semibold mb-2 block" style={{ color: compact ? C.text : C.textDim }}>
+          {label}
+        </label>
+      )}
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        disabled={disabled}
+        className={compact
+          ? 'w-full px-2.5 py-2 rounded-lg text-xs outline-none'
+          : 'w-full px-4 py-3 rounded-xl text-sm outline-none'}
+        style={{
+          backgroundColor: compact ? C.bg : C.surface,
+          color: disabled ? C.textMute : C.text,
+          border: `1px solid ${C.border}`,
+          opacity: disabled ? 0.6 : 1,
+        }}>
+        <option value="">{placeholder}</option>
+        {options.map(o => (
+          <option key={o.id} value={o.id}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// ─── COLONNES DE PROFIL LISIBLES PAR LES AUTRES ──────────────────
+// La base n'accorde plus la lecture de `profiles` colonne par colonne :
+// date de naissance, téléphone, pièce justificative de niveau et état
+// interne ne sortent plus. Conséquence directe : un `select('*')` sur
+// `profiles` est désormais REFUSÉ, il faut énumérer.
+//
+// Pour lire son PROPRE profil en entier — colonnes privées comprises —
+// on passe par la fonction `get_my_profile()`, qui ne peut renvoyer que
+// la ligne de l'appelant.
+//
+// Cette liste doit rester alignée sur les droits accordés par la
+// migration `profils_rls_prive_et_droits_par_colonne`.
+const COLONNES_PROFIL_PUBLIC = [
+  'id', 'username', 'full_name', 'age', 'sport', 'position', 'position_id',
+  'club', 'bio', 'avatar_url', 'banner_url', 'is_recruiter', 'organization',
+  'verified', 'created_at', 'city', 'region', 'country', 'gender',
+  'nationality', 'level', 'has_club', 'recruiting_gender', 'recruiting_levels',
+  'recruiting_age_min', 'recruiting_age_max', 'is_private', 'hide_age',
+  'hide_location', 'messaging_pref', 'social_links', 'level_proof_status',
+  'role', 'season_start_month', 'followers_count', 'following_count',
+  'videos_count',
+].join(', ');
 
 // ─── RÔLES UTILISATEUR ───────────────────────────────────────────
 // 3 rôles : athlete (publie des vidéos), recruiter (recrute, peut signer)
@@ -396,38 +451,14 @@ function LandingPage({ onStart }) {
   );
 }
 
-// ─── POSITIONS / POSTES par sport ────────────────────────────────
-// Pour les sports collectifs et certaines disciplines, on propose une liste
-// fermée de postes. Pour les sports individuels sans poste, on laisse vide.
-const POSITIONS_BY_SPORT = {
-  foot: ['Gardien', 'Défenseur central', 'Latéral droit', 'Latéral gauche',
-         'Milieu défensif', 'Milieu central', 'Milieu offensif',
-         'Ailier droit', 'Ailier gauche', 'Avant-centre', 'Attaquant'],
-  basket: ['Meneur', 'Arrière', 'Ailier', 'Ailier fort', 'Pivot'],
-  hand: ['Gardien', 'Arrière gauche', 'Arrière droit', 'Demi-centre',
-         'Ailier gauche', 'Ailier droit', 'Pivot'],
-  rugby: ['Pilier', 'Talonneur', 'Deuxième ligne', 'Troisième ligne aile',
-          'Troisième ligne centre', 'Demi de mêlée', 'Demi d\'ouverture',
-          'Centre', 'Ailier', 'Arrière'],
-  volley: ['Passeur', 'Pointu', 'Réceptionneur-attaquant', 'Central', 'Libéro'],
-  'football-us': ['Quarterback', 'Running back', 'Wide receiver', 'Tight end',
-                  'Offensive lineman', 'Defensive lineman', 'Linebacker',
-                  'Cornerback', 'Safety', 'Kicker', 'Punter'],
-  baseball: ['Lanceur', 'Receveur', 'Première base', 'Deuxième base',
-             'Troisième base', 'Arrêt-court', 'Champ gauche', 'Champ centre',
-             'Champ droit', 'Frappeur désigné'],
-  hockey: ['Gardien', 'Défenseur', 'Ailier gauche', 'Ailier droit', 'Centre'],
-  cricket: ['Batteur', 'Lanceur', 'Tout-rounder', 'Gardien de guichet'],
-  athle: ['Sprint', 'Demi-fond', 'Fond', 'Haies', 'Marathon',
-          'Saut en hauteur', 'Saut en longueur', 'Triple saut', 'Perche',
-          'Lancer de poids', 'Lancer de disque', 'Lancer de javelot',
-          'Marteau', 'Décathlon / Heptathlon'],
-  nat: ['Crawl', 'Brasse', 'Dos', 'Papillon', '4 nages', 'Eau libre', 'Synchronisée'],
-  cyclo: ['Sprinteur', 'Rouleur', 'Grimpeur', 'Puncheur', 'Contre-la-montre'],
-};
-function getPositionsForSport(sport) {
-  return POSITIONS_BY_SPORT[sport] || null;
-}
+// La liste des postes par sport vivait ici en dur, en double avec une
+// copie dans Auth.jsx dont le commentaire demandait qu'elle « reste en
+// phase ». Elle ne l'était plus : 12 sports sur 20, et des libellés
+// divergents (« Gardien » contre « Gardien de but », « Crawl » contre
+// « Nage libre »). Les deux copies étaient par ailleurs mortes — plus
+// personne ne les lisait. La table `positions` fait désormais foi ;
+// voir `src/referentiels.js`.
+
 // Niveaux qui nécessitent une preuve avant affichage sur le profil
 const LEVELS_REQUIRING_PROOF = ['young_pro', 'senior_pro'];
 function levelRequiresProof(level) {
@@ -1422,6 +1453,30 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               </div>
             )}
 
+            {/* Contexte du match — ce qui permet au recruteur de situer
+                la performance : contre qui, quand, à quel poste. */}
+            {(() => {
+              const chips = [];
+              if (data.position) chips.push(`🎯 ${data.position}`);
+              if (data.jersey_number != null) chips.push(`👕 n°${data.jersey_number}`);
+              if (data.opponent_level) chips.push(`🥊 ${data.opponent_level}`);
+              if (data.season) chips.push(`📅 ${data.season}`);
+              if (data.match_date) {
+                chips.push(`🗓️ ${new Date(data.match_date + 'T00:00:00').toLocaleDateString('fr-FR')}`);
+              }
+              if (chips.length === 0) return null;
+              return (
+                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                  {chips.map(c => (
+                    <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                      style={{ backgroundColor: C.surface, color: C.textDim, border: `1px solid ${C.border}` }}>
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+
             {data.description && (
               <p className="text-xs line-clamp-2" style={{ color: C.textDim }}>
                 {data.description}
@@ -1873,10 +1928,35 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                     onLike, onAddComment, onDeleteComment, onShare,
                     onAddToShortlist, onSelectProfile, onOpenSearch, onReport,
                     onOpenNotifications, notifUnreadCount,
-                    savedVideoIds, onToggleSaveVideo }) {
+                    savedVideoIds, onToggleSaveVideo,
+                    onChargerSuite, feedTermine,
+                    nouvellesVideos, onRechargerFeed }) {
   const [muted, setMuted] = useState(true);      // son global du feed (muet par défaut)
   const [commentsVideo, setCommentsVideo] = useState(null);
   const [shareVideo, setShareVideo] = useState(null);
+
+  // Charge la page suivante quand la dernière vidéo entre dans l'écran.
+  // Un observateur plutôt qu'un gestionnaire de défilement : le fil défile
+  // par à-coups (scroll-snap) et un handler se déclencherait en rafale.
+  const sentinelleRef = useRef(null);
+  // `onChargerSuite` est recréée à chaque rendu du parent ; la mettre en
+  // dépendance ferait défaire et refaire l'observateur à chaque rendu. On
+  // garde la dernière version dans une référence, et l'observateur ne se
+  // reconstruit que lorsque la liste change vraiment.
+  const chargerSuiteRef = useRef(onChargerSuite);
+  // Mise à jour après le rendu, pas pendant : écrire dans une référence
+  // au fil du rendu rend celui-ci impur.
+  useEffect(() => { chargerSuiteRef.current = onChargerSuite; });
+  useEffect(() => {
+    const cible = sentinelleRef.current;
+    if (!cible || feedTermine) return;
+    const obs = new IntersectionObserver(
+      (entrees) => { if (entrees.some(e => e.isIntersecting)) chargerSuiteRef.current?.(); },
+      { rootMargin: '600px' },   // anticiper, pour que le fil ne se vide jamais
+    );
+    obs.observe(cible);
+    return () => obs.disconnect();
+  }, [feedTermine, videos.length]);
 
   const isEmpty = !videos || videos.length === 0;
   const hasFilter = !!periodFilter;
@@ -1952,7 +2032,32 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                 onToggleSave={onToggleSaveVideo} />
             );
           })}
+
+          {/* Repère de fin de liste : c'est son entrée à l'écran qui
+              déclenche le chargement de la page suivante. */}
+          {!feedTermine && (
+            <div ref={sentinelleRef} className="flex items-center justify-center py-6"
+              style={{ backgroundColor: '#000' }}>
+              <Loader2 size={18} className="animate-spin" style={{ color: 'rgba(255,255,255,0.4)' }} />
+            </div>
+          )}
+          {feedTermine && videos.length > 0 && (
+            <div className="text-center text-[11px] py-6" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              Tu as tout vu.
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Nouvelles vidéos publiées pendant la lecture. Auparavant, chaque
+          publication rechargeait tout le catalogue chez tout le monde ;
+          on propose désormais, au lieu d'imposer. */}
+      {nouvellesVideos > 0 && (
+        <button onClick={() => { onRechargerFeed?.(); window.scrollTo?.({ top: 0 }); }}
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold shadow-lg"
+          style={{ backgroundColor: C.gold, color: C.bg }}>
+          ↑ {nouvellesVideos} nouvelle{nouvellesVideos > 1 ? 's' : ''} vidéo{nouvellesVideos > 1 ? 's' : ''}
+        </button>
       )}
 
       {/* Loupe Recherche en haut à gauche (overlay fixe) */}
@@ -2484,12 +2589,24 @@ function PublishView({ userProfile, setTab }) {
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState('foot');
-  const [position, setPosition] = useState('');
+  const [positionId, setPositionId] = useState(null);
   const [description, setDescription] = useState('');
   const [videoType, setVideoType] = useState(null); // 'match' | 'training'
   // Nouveaux champs vidéo
   const [championship, setChampionship] = useState('');
-  const [ageCategory, setAgeCategory] = useState('');
+  const [ageCategoryId, setAgeCategoryId] = useState(null);
+  const [seasonId, setSeasonId] = useState(null);
+  const [matchDate, setMatchDate] = useState('');
+  const [opponentLevelId, setOpponentLevelId] = useState(null);
+  const [jerseyNumber, setJerseyNumber] = useState('');
+  const refs = useReferentiels();
+  // Un poste n'a de sens que pour son sport : après un changement de
+  // sport, le choix précédent cesse d'être valide et la clé étrangère
+  // (sport, poste) rejetterait l'insertion. Plutôt que de le remettre à
+  // zéro dans un effet, on ne le retient que s'il figure toujours dans
+  // la liste du sport courant.
+  const postesDuSport = refs.postesParSport[sport] ?? [];
+  const posteChoisi = postesDuSport.some(o => o.id === positionId) ? positionId : null;
   const [videoLevel, setVideoLevel] = useState(''); // amateur | semi_pro | pro | entrainement
   const [city, setCity] = useState(userProfile?.city || '');
   const [region, setRegion] = useState(userProfile?.region || '');
@@ -2606,7 +2723,7 @@ function PublishView({ userProfile, setTab }) {
       user_id: userProfile.id,
       title: title.trim(),
       sport,
-      position: position.trim() || null,
+      position_id: posteChoisi,
       description: description.trim() || null,
       video_type: videoType,
       youtube_url: extra.youtube_url ?? null,
@@ -2615,7 +2732,14 @@ function PublishView({ userProfile, setTab }) {
       duration_seconds: extra.duration_seconds ?? null,
       needs_review: extra.needs_review || false,
       championship: championship.trim() || null,
-      age_category: ageCategory.trim() || null,
+      age_category_id: ageCategoryId || null,
+      season_id: seasonId || null,
+      match_date: matchDate || null,
+      opponent_level_id: opponentLevelId || null,
+      // La base refuse un numéro sur un sport qui n'en utilise pas ;
+      // on ne l'envoie donc que là où il a un sens.
+      jersey_number: (refs.sportsAvecMaillot.has(sport) && jerseyNumber !== '')
+        ? Number(jerseyNumber) : null,
       level: videoLevel || null,
       city: city.trim() || null,
       region: region.trim() || null,
@@ -2653,9 +2777,11 @@ function PublishView({ userProfile, setTab }) {
     setSuccess(true);
     setTimeout(() => {
       setSuccess(false);
-      setYoutubeUrl(''); setTitle(''); setPosition(''); setDescription('');
+      setYoutubeUrl(''); setTitle(''); setPositionId(null); setDescription('');
+      setAgeCategoryId(null); setSeasonId(null); setMatchDate('');
+      setOpponentLevelId(null); setJerseyNumber('');
       setVideoType(null);
-      setChampionship(''); setAgeCategory(''); setVideoLevel('');
+      setChampionship(''); setVideoLevel('');
       setCity(userProfile?.city || ''); setRegion(userProfile?.region || ''); setCountry(userProfile?.country || '');
       clearUpload();
       setTab('feed');
@@ -2914,16 +3040,14 @@ function PublishView({ userProfile, setTab }) {
           </div>
         </div>
 
-        {/* Position */}
-        <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Poste (optionnel)
-          </label>
-          <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-            placeholder="Ex : Milieu offensif, Ailier, Pivot..." maxLength={60}
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-        </div>
+        {/* Poste — proposé selon le sport choisi */}
+        <ChampSelect
+          label="Poste (optionnel)"
+          value={posteChoisi}
+          onChange={setPositionId}
+          options={postesDuSport}
+          placeholder={postesDuSport.length ? 'Choisir un poste' : 'Aucun poste pour ce sport'}
+          disabled={!postesDuSport.length} />
 
         {/* Description */}
         <div>
@@ -2951,15 +3075,68 @@ function PublishView({ userProfile, setTab }) {
         </div>
 
         {/* Catégorie d'âge */}
+        <ChampSelect
+          label="🎂 Catégorie d'âge (optionnel)"
+          value={ageCategoryId}
+          onChange={setAgeCategoryId}
+          options={refs.categoriesAge}
+          placeholder="Choisir une catégorie" />
+
+        {/* Saison */}
+        <ChampSelect
+          label="📅 Saison (optionnel)"
+          value={seasonId}
+          onChange={setSeasonId}
+          options={refs.saisons}
+          placeholder="Choisir une saison" />
+
+        {/* Date du match */}
         <div>
           <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            🎂 Catégorie d'âge (optionnel)
+            🗓️ Date du match (optionnel)
           </label>
-          <input type="text" value={ageCategory} onChange={(e) => setAgeCategory(e.target.value)}
-            placeholder="Ex : U15, U17, U19, Senior, Vétérans…" maxLength={40}
+          <input type="date" value={matchDate} max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setMatchDate(e.target.value)}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
             style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
         </div>
+
+        {/* Niveau de l'adversaire — ce qui donne sa valeur à la performance */}
+        <div>
+          <ChampSelect
+            label="🥊 Niveau de l'adversaire (optionnel)"
+            value={opponentLevelId}
+            onChange={setOpponentLevelId}
+            options={refs.niveauxCompetition}
+            placeholder="Choisir un niveau" />
+          <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+            Un but contre une équipe nationale ne vaut pas un but contre une équipe de district :
+            ce champ permet aux recruteurs de faire la différence.
+          </div>
+        </div>
+
+        {/* Numéro de maillot — seulement pour les sports qui en portent */}
+        {refs.sportsAvecMaillot.has(sport) && (
+          <div>
+            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
+              👕 Numéro de maillot (optionnel)
+            </label>
+            <input type="number" inputMode="numeric" min={0} max={99}
+              value={jerseyNumber}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '') return setJerseyNumber('');
+                const n = Number(v);
+                if (Number.isInteger(n) && n >= 0 && n <= 99) setJerseyNumber(v);
+              }}
+              placeholder="Ex : 10"
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+            <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+              Aide le recruteur à te repérer dans la vidéo.
+            </div>
+          </div>
+        )}
 
         {/* Niveau de la vidéo */}
         <div>
@@ -3161,15 +3338,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     videoType: null,       // 'match' | 'training'
     levels: [],            // niveaux d'auteur
     videoLevels: [],       // niveau spécifique à la vidéo (amateur/semi_pro/pro/entrainement)
-    position: '',          // texte libre
+    positionId: null,      // référentiel positions, dépend du sport
     periodDays: null,      // 1, 7, 30, 90, 180
     championship: '',      // nom du championnat
-    ageCategory: '',       // U17, U19, Senior…
+    ageCategoryId: null,   // référentiel age_categories
+    opponentLevelId: null, // niveau d'adversaire minimum (ce niveau ou mieux)
     country: '',
     region: '',
     city: '',
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const refs = useReferentiels();
+  // Un poste n'existe que dans son sport : après un changement de sport
+  // l'ancien choix ne correspondrait plus à rien. On ne le retient donc
+  // que tant qu'il figure dans la liste du sport sélectionné.
+  const postesDuSport = useMemo(
+    () => (filters.sport ? (refs.postesParSport[filters.sport] ?? []) : []),
+    [filters.sport, refs.postesParSport]);
+  const posteFiltre = postesDuSport.some(o => o.id === filters.positionId) ? filters.positionId : null;
 
   // Auto-focus à l'ouverture
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -3203,11 +3389,17 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
   const norm = (s) => (s || '').toLowerCase().trim();
   const needle = norm(query);
 
+  // Rang d'un niveau de compétition (1 = loisir … 10 = international).
+  const rangNiveau = useCallback((id) => {
+    if (!id) return null;
+    return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
+  }, [refs.niveauxCompetition]);
+
   // ─── Vidéos filtrées ─────────────────────────────────────────
   const filteredVideos = useMemo(() => videos.filter(v => {
     // Filtre texte : titre, description, sport, position, championship, age_category, ville, pays OU nom de l'auteur
     if (needle) {
-      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.season || ''} ${v.opponent_level || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
       if (!hay.includes(needle)) return false;
     }
     if (filters.sport && v.sport !== filters.sport) return false;
@@ -3220,18 +3412,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     if (filters.videoLevels.length > 0) {
       if (!v.level || !filters.videoLevels.includes(v.level)) return false;
     }
-    if (filters.position && !norm(v.position).includes(norm(filters.position))) return false;
+    if (posteFiltre && v.position_id !== posteFiltre) return false;
     if (filters.periodDays && v.created_at) {
       const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
       if (ageDays > filters.periodDays) return false;
     }
     if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
-    if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+    if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
+    // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
+    if (filters.opponentLevelId) {
+      const attendu = rangNiveau(filters.opponentLevelId);
+      const obtenu = rangNiveau(v.opponent_level_id);
+      if (obtenu === null || attendu === null || obtenu < attendu) return false;
+    }
     if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
     if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
     if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
     return true;
-  }), [videos, needle, filters]);
+  }), [videos, needle, filters, rangNiveau, posteFiltre]);
 
   // ─── Profils filtrés (uniquement par texte, pour ne pas dupliquer la logique vidéo) ───
   const filteredProfiles = useMemo(() => {
@@ -3251,10 +3449,11 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     + (filters.videoType ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
     + (filters.videoLevels.length > 0 ? 1 : 0)
-    + (filters.position.trim() ? 1 : 0)
+    + (posteFiltre ? 1 : 0)
     + (filters.periodDays ? 1 : 0)
     + (filters.championship.trim() ? 1 : 0)
-    + (filters.ageCategory.trim() ? 1 : 0)
+    + (filters.ageCategoryId ? 1 : 0)
+    + (filters.opponentLevelId ? 1 : 0)
     + (filters.country.trim() ? 1 : 0)
     + (filters.region.trim() ? 1 : 0)
     + (filters.city.trim() ? 1 : 0);
@@ -3439,15 +3638,14 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
-              {/* Poste */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎯 Poste</label>
-                <input type="text" value={filters.position}
-                  onChange={(e) => setFilters(f => ({ ...f, position: e.target.value }))}
-                  placeholder="Ex : Milieu, Gardien, Ailier…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              {/* Poste — dépend du sport choisi juste au-dessus */}
+              <ChampSelect compact
+                label="🎯 Poste"
+                value={posteFiltre}
+                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
+                options={postesDuSport}
+                disabled={!filters.sport}
+                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
 
               {/* Période */}
               <div>
@@ -3486,13 +3684,24 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               </div>
 
               {/* Catégorie d'âge */}
+              <ChampSelect compact
+                label="🎂 Catégorie d'âge"
+                value={filters.ageCategoryId}
+                onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
+                options={refs.categoriesAge} />
+
+              {/* Niveau de l'adversaire, à partir de… */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
-                <input type="text" value={filters.ageCategory}
-                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
-                  placeholder="Ex : U17, U19, Senior, Vétérans…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+                <ChampSelect compact
+                  label="🥊 Adversaire d'au moins"
+                  value={filters.opponentLevelId}
+                  onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
+                  options={refs.niveauxCompetition} />
+                {filters.opponentLevelId && (
+                  <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                    Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire renseigné sont écartées.
+                  </div>
+                )}
               </div>
 
               {/* Localisation vidéo */}
@@ -4237,21 +4446,39 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
     if (sensitiveAnswer) { push({ role: 'assistant', content: sensitiveAnswer }); setLoading(false); return; }
 
     try {
-      // TOUS les comptes (athlètes, recruteurs, observateurs) + TOUTES les vidéos
-      // + signatures. Le chatbot connaît ainsi tout le monde et tous les titres /
-      // descriptions. (.limit élevé pour ne pas être plafonné à 1000 lignes.)
+      // Le chatbot raisonne sur l'ensemble des comptes et des vidéos : son
+      // rapprochement en langage naturel construit son vocabulaire (villes,
+      // régions, nationalités) à partir des valeurs réellement présentes, et
+      // tronquer le jeu lui ferait répondre « personne ne correspond » à tort.
+      // On ne réduit donc pas le nombre de lignes — on réduit ce que chaque
+      // ligne pèse.
+      //
+      // Deux économies sans aucun changement de comportement :
+      //  · la jointure `profiles!videos_user_id_fkey` recopiait l'auteur sur
+      //    CHAQUE vidéo, alors que tous les profils sont déjà chargés juste
+      //    au-dessus. On résout l'auteur localement par un index.
+      //  · `bio` et `banner_url` étaient chargées et jamais lues.
       const [profilesRes, videosRes, signedRes] = await Promise.all([
         supabase.from('profiles')
-          .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, bio, verified, avatar_url, banner_url, level_proof_status, is_private, hide_location')
-          .neq('id', currentUserId || '').limit(10000),
+          .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, verified, avatar_url, level_proof_status, is_private, hide_location')
+          .limit(10000),
         supabase.from('videos')
-          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, city, region, country)')
+          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at')
           .limit(10000),
         supabase.from('signed_posts').select('id, athlete_id, caption').limit(10000),
       ]);
-      const allProfiles = profilesRes.data || [];
-      const videos = videosRes.data || [];
+      const tousProfils = profilesRes.data || [];
       const signedPosts = signedRes.data || [];
+      // L'exclusion de soi-même était faite par la requête. Elle se fait
+      // maintenant sur les listes de résultats, pour que l'index des auteurs
+      // reste complet : sans sa propre ligne, une de ses propres vidéos
+      // n'aurait plus d'auteur résolvable.
+      const allProfiles = tousProfils.filter(p => p.id !== currentUserId);
+      const profilsParId = new Map(tousProfils.map(p => [p.id, p]));
+      const videos = (videosRes.data || []).map(v => ({
+        ...v,
+        profiles: profilsParId.get(v.user_id) || null,
+      }));
       const roleOf = (p) => (p && p.role) ? p.role : (p && p.is_recruiter ? 'recruiter' : 'athlete');
       // Athlètes « découvrables » pour la recherche/suggestion de recrutement :
       // on respecte le réglage « compte privé » choisi par chaque utilisateur.
@@ -4645,33 +4872,86 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
   const DEFAULT_FILTERS = {
     sport: null, gender: null, ageMin: 14, ageMax: 35,
     country: '', region: '', city: '', nationality: '',
-    levels: [], position: '',
+    levels: [], positionId: null,
     championship: '',
-    ageCategory: '',
+    ageCategoryId: null,
+    opponentLevelId: null,
     recency: null,
   };
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const refs = useReferentiels();
+  // Le poste dépend du sport : après un changement de sport l'ancien choix
+  // rendrait le filtre impossible à satisfaire. On ne le retient donc que
+  // tant qu'il appartient à la liste du sport sélectionné.
+  const postesDuSport = useMemo(
+    () => (filters.sport ? (refs.postesParSport[filters.sport] ?? []) : []),
+    [filters.sport, refs.postesParSport]);
+  const posteFiltre = postesDuSport.some(o => o.id === filters.positionId) ? filters.positionId : null;
   const [profiles, setProfiles] = useState([]);
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [videosLoading, setVideosLoading] = useState(true);
+  const [pageProfils, setPageProfils] = useState(0);
+  const [finProfils, setFinProfils] = useState(false);
+
+  // ─── Recherche de profils, côté serveur ───────────────────────
+  // Avant : toute la table `profiles` était téléchargée, puis filtrée et
+  // classée en JavaScript. Deux défauts, dont le second est le vrai.
+  //
+  // 1. Le volume — sans `.limit()`, la requête grandit avec la
+  //    plateforme.
+  // 2. Surtout : filtrer APRÈS avoir paginé donne un résultat FAUX. Le
+  //    serveur rendrait vingt lignes, le navigateur en écarterait
+  //    dix-sept, l'écran en montrerait trois — en laissant croire qu'il
+  //    n'y en a pas d'autres. `search_athletes` applique donc tous les
+  //    filtres avant le `limit`.
+  const TAILLE_PAGE_PROFILS = 20;
+  // Sous trois caractères, aucun trigramme complet n'est extractible :
+  // l'index ne peut pas filtrer et la requête retomberait en parcours
+  // séquentiel. On attend donc, plutôt que de faire travailler la base
+  // pour une saisie qui n'a pas encore de sens.
+  const requeteTexte = query.trim();
+  const texteUtilisable = requeteTexte.length === 0 || requeteTexte.length >= 3;
 
   useEffect(() => {
-    let cancel = false;
-    setLoading(true);
-    (async () => {
-      let q = supabase.from('profiles').select('*');
-      if (currentUserId) q = q.neq('id', currentUserId);
-      if (athletesOnly) q = q.eq('is_recruiter', false);
-      const { data, error } = await q.order('created_at', { ascending: false });
-      if (cancel) return;
-      if (error) console.error('Erreur chargement profils:', error);
-      setProfiles(data || []);
+    if (!texteUtilisable) return;
+    let annule = false;
+    // Délai de grâce : sans lui, chaque frappe lancerait une requête.
+    const minuteur = setTimeout(async () => {
+      setLoading(true);
+      const { data, error } = await supabase.rpc('search_athletes', {
+        p_query: requeteTexte || null,
+        p_sport: filters.sport || null,
+        p_gender: filters.gender || null,
+        p_age_min: filters.ageMin,
+        p_age_max: filters.ageMax,
+        p_limit: TAILLE_PAGE_PROFILS,
+        p_offset: pageProfils * TAILLE_PAGE_PROFILS,
+        p_country: filters.country || null,
+        p_region: filters.region || null,
+        p_city: filters.city || null,
+        p_nationality: filters.nationality || null,
+        p_levels: filters.levels.length ? filters.levels : null,
+        p_position_id: posteFiltre || null,
+        // L'écran sert deux usages : la recherche d'athlètes du recruteur,
+        // et la recherche générale, qui montre aussi recruteurs et
+        // observateurs.
+        p_include_recruiters: !athletesOnly,
+      });
+      if (annule) return;
+      if (error) console.error('Erreur recherche de profils:', error);
+      const page = (data || []).filter(p => p.id !== currentUserId);
+      setProfiles(prev => (pageProfils === 0 ? page : [...prev, ...page]));
+      setFinProfils((data || []).length < TAILLE_PAGE_PROFILS);
       setLoading(false);
-    })();
-    return () => { cancel = true; };
-  }, [currentUserId, athletesOnly]);
+    }, 300);
+    return () => { annule = true; clearTimeout(minuteur); };
+  }, [requeteTexte, texteUtilisable, filters, posteFiltre, pageProfils,
+      athletesOnly, currentUserId]);
+
+  // Toute modification de la recherche ou des filtres repart de la page 1.
+  useEffect(() => { setPageProfils(0); }, [requeteTexte, filters, posteFiltre, athletesOnly]);
 
   // Charge les vidéos pour l'onglet vidéos
   useEffect(() => {
@@ -4693,65 +4973,40 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
   // (filtre période supprimé de l'onglet Profils)
 
-  // Realtime : patcher les profils listés dans la recherche
-  useEffect(() => {
-    const channel = supabase
-      .channel(`search-profiles-${currentUserId || 'anon'}`)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        (payload) => {
-          const updated = payload.new;
-          if (!updated?.id) return;
-          setProfiles(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
-        })
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'profiles' },
-        (payload) => {
-          const inserted = payload.new;
-          if (!inserted?.id) return;
-          if (currentUserId && inserted.id === currentUserId) return;
-          if (athletesOnly && inserted.is_recruiter) return;
-          setProfiles(prev => prev.some(p => p.id === inserted.id) ? prev : [inserted, ...prev]);
-        })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [currentUserId, athletesOnly]);
+  // L'abonnement Realtime sur toute la table `profiles` a été retiré. Il
+  // réveillait chaque appareil ayant l'écran de recherche ouvert à chaque
+  // modification ou création de profil, de qui que ce soit — et insérait
+  // dans la liste des profils qui ne correspondaient pas forcément à la
+  // recherche en cours. La liste se rafraîchit au prochain appel, c'est-
+  // à-dire dès que la personne touche à sa recherche.
 
   const norm = (s) => (s || '').toLowerCase().trim();
 
-  const filtered = useMemo(() => profiles.filter(p => {
-    // Compte privé : exclu de la recherche pour les autres (le propriétaire se voit toujours)
-    if (p.is_private && p.id !== currentUserId) return false;
-    if (filters.sport && p.sport !== filters.sport) return false;
-    if (filters.gender && p.gender !== filters.gender) return false;
-    // Filtre âge (s'applique dès qu'un profil a un âge renseigné, athlète OU recruteur)
-    if (p.age != null && (filters.ageMin !== 14 || filters.ageMax !== 35)) {
-      if (p.age < filters.ageMin || p.age > filters.ageMax) return false;
-    }
-    // Filtres localisation (match flou, insensible à la casse)
-    if (filters.country && !norm(p.country).includes(norm(filters.country))) return false;
-    if (filters.region && !norm(p.region).includes(norm(filters.region))) return false;
-    if (filters.city && !norm(p.city).includes(norm(filters.city))) return false;
-    if (filters.nationality && !norm(p.nationality).includes(norm(filters.nationality))) return false;
-    // Niveau (multi-select)
-    if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
-    // Poste — match flou (contient) sur p.position, insensible à la casse
-    if (filters.position && !norm(p.position).includes(norm(filters.position))) return false;
-    // Recherche texte
-    if (query) {
-      const needle = query.toLowerCase();
-      const hay = `${p.full_name || ''} ${p.club || ''} ${p.organization || ''} ${p.position || ''} ${p.city || ''} ${p.region || ''} ${p.country || ''} ${p.nationality || ''}`.toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
-  }), [profiles, query, filters, athletesOnly, currentUserId]);
+  // Le rapprochement du poste par LIBELLÉ a disparu : `search_athletes`
+  // filtre sur `position_id`. Ce que cela coûte : un profil créé avant les
+  // référentiels, qui n'a qu'un poste en texte libre, ne ressort plus d'un
+  // filtre par poste. Relevé en base, un seul profil est dans ce cas, et
+  // son sport est `null` — il ne pouvait de toute façon pas satisfaire un
+  // filtre de poste, qui est toujours attaché à un sport.
+
+  // Rang d'un niveau de compétition (1 = loisir … 10 = international).
+  const rangNiveau = useCallback((id) => {
+    if (!id) return null;
+    return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
+  }, [refs.niveauxCompetition]);
+
+  // Le tri et le filtrage sont désormais faits par `search_athletes`,
+  // AVANT la pagination. Refiltrer ici reviendrait à écarter des lignes
+  // déjà comptées dans la page, et à retrouver le défaut qu'on corrige.
+  // L'ordre renvoyé est déjà le bon : pertinence, puis popularité.
+  const filtered = profiles;
 
   // Vidéos filtrées (onglet vidéos)
   const filteredVideos = useMemo(() => {
     const needle = (query || '').toLowerCase().trim();
     return videos.filter(v => {
       if (needle) {
-        const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
+        const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.season || ''} ${v.opponent_level || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       if (filters.sport && v.sport !== filters.sport) return false;
@@ -4761,7 +5016,14 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         if (ms && (Date.now() - new Date(v.created_at).getTime()) > ms) return false;
       }
       if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
-      if (filters.ageCategory && !norm(v.age_category).includes(norm(filters.ageCategory))) return false;
+      if (posteFiltre && v.position_id !== posteFiltre) return false;
+      if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
+      // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
+      if (filters.opponentLevelId) {
+        const attendu = rangNiveau(filters.opponentLevelId);
+        const obtenu = rangNiveau(v.opponent_level_id);
+        if (obtenu === null || attendu === null || obtenu < attendu) return false;
+      }
       if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
       if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
       if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
@@ -4771,7 +5033,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       }
       return true;
     });
-  }, [videos, query, filters]);
+  }, [videos, query, filters, rangNiveau, posteFiltre]);
 
   const activeFilters = (filters.sport ? 1 : 0)
     + (filters.gender ? 1 : 0)
@@ -4781,10 +5043,11 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     + (filters.region.trim() ? 1 : 0)
     + (filters.city.trim() ? 1 : 0)
     + (filters.nationality.trim() ? 1 : 0)
-    + (filters.position.trim() ? 1 : 0)
+    + (posteFiltre ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
     + (filters.championship.trim() ? 1 : 0)
-    + (filters.ageCategory.trim() ? 1 : 0);
+    + (filters.ageCategoryId ? 1 : 0)
+    + (filters.opponentLevelId ? 1 : 0);
 
   const resetFilters = () => setFilters(DEFAULT_FILTERS);
   const toggleLevel = (id) => setFilters(f => ({
@@ -4838,7 +5101,13 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         </div>
         <p className="text-sm" style={{ color: C.textDim }}>
           {activeTab === 'profiles'
-            ? (loading ? 'Chargement…' : `${filtered.length} ${labelKind}${filtered.length > 1 ? 's' : ''} trouvé${filtered.length > 1 ? 's' : ''}`)
+            // « affichés » et non « trouvés » : la liste est paginée, le
+            // compte à l'écran n'est pas le total. Annoncer un total qu'on
+            // n'a pas serait exactement le genre d'approximation que la
+            // recherche côté serveur sert à éliminer.
+            ? (loading && filtered.length === 0
+                ? 'Chargement…'
+                : `${filtered.length}${finProfils ? '' : '+'} ${labelKind}${filtered.length > 1 ? 's' : ''} affiché${filtered.length > 1 ? 's' : ''}`)
             : (videosLoading ? 'Chargement…' : `${filteredVideos.length} vidéo${filteredVideos.length > 1 ? 's' : ''} trouvée${filteredVideos.length > 1 ? 's' : ''}`)}
         </p>
       </div>
@@ -5069,29 +5338,44 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
               </div>
             </div>
 
-            {/* Poste / spécialité — champ de texte libre (match flou sur la BDD) */}
+            {/* Poste — liste du sport choisi */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎯 Poste</label>
-              <input type="text" value={filters.position}
-                onChange={(e) => setFilters(f => ({ ...f, position: e.target.value }))}
-                placeholder="Ex : Milieu, Gardien, Ailier…"
-                className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+              <ChampSelect compact
+                label="🎯 Poste"
+                value={posteFiltre}
+                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
+                options={postesDuSport}
+                disabled={!filters.sport}
+                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
               <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
-                Tape une partie du poste pour filtrer (lecture directe dans la base).
+                {filters.sport
+                  ? 'Les postes proposés sont ceux du sport sélectionné.'
+                  : 'Sélectionnez un sport pour voir ses postes.'}
               </p>
             </div>
 
-            {/* Catégorie d'âge (onglet vidéos) */}
+            {/* Catégorie d'âge et niveau d'adversaire (onglet vidéos) */}
             {activeTab === 'videos' && (
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎂 Catégorie d'âge</label>
-                <input type="text" value={filters.ageCategory}
-                  onChange={(e) => setFilters(f => ({ ...f, ageCategory: e.target.value }))}
-                  placeholder="Ex : U17, U19, Senior, Vétérans…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
+              <>
+                <ChampSelect compact
+                  label="🎂 Catégorie d'âge"
+                  value={filters.ageCategoryId}
+                  onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
+                  options={refs.categoriesAge} />
+
+                <div>
+                  <ChampSelect compact
+                    label="🥊 Adversaire d'au moins"
+                    value={filters.opponentLevelId}
+                    onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
+                    options={refs.niveauxCompetition} />
+                  {filters.opponentLevelId && (
+                    <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                      Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire sont écartées.
+                    </p>
+                  )}
+                </div>
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-2">
@@ -5107,7 +5391,17 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
         </div>
       ) : activeTab === 'profiles' ? (
-        filtered.length === 0 ? (
+        !texteUtilisable ? (
+          <div className="px-4 mt-8 text-center">
+            <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
+            <p className="text-sm" style={{ color: C.textDim }}>
+              Encore {3 - requeteTexte.length} caractère{3 - requeteTexte.length > 1 ? 's' : ''}…
+            </p>
+            <p className="text-[11px] mt-1" style={{ color: C.textMute }}>
+              La recherche démarre à trois caractères.
+            </p>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="px-4 mt-8 text-center">
             <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
             <p className="text-sm" style={{ color: C.textDim }}>Aucun {labelKind} trouvé.</p>
@@ -5118,20 +5412,32 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             )}
           </div>
         ) : (
-          <div className="px-4 grid grid-cols-2 gap-3">
-            {filtered.map(p => {
-              const status = dbShortlist?.get(p.id)?.status;
-              const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
-              return (
-                <ProfileCard key={p.id} profile={p}
-                  onSelect={() => onSelectProfile?.(p)}
-                  shortlistStatus={status}
-                  onToggleShortlist={showShortlistButton
-                    ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
-                    : undefined} />
-              );
-            })}
-          </div>
+          <>
+            <div className="px-4 grid grid-cols-2 gap-3">
+              {filtered.map(p => {
+                const status = dbShortlist?.get(p.id)?.status;
+                const showShortlistButton = !!onAddToShortlist && !p.is_recruiter;
+                return (
+                  <ProfileCard key={p.id} profile={p}
+                    onSelect={() => onSelectProfile?.(p)}
+                    shortlistStatus={status}
+                    onToggleShortlist={showShortlistButton
+                      ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
+                      : undefined} />
+                );
+              })}
+            </div>
+            {!finProfils && (
+              <div className="px-4 mt-4">
+                <button onClick={() => setPageProfils(n => n + 1)} disabled={loading}
+                  className="w-full py-3 rounded-xl text-sm font-semibold"
+                  style={{ backgroundColor: 'transparent', color: C.gold,
+                           border: `1px solid ${C.borderGold}`, opacity: loading ? 0.5 : 1 }}>
+                  {loading ? 'Chargement…' : 'Voir plus'}
+                </button>
+              </div>
+            )}
+          </>
         )
       ) : (
         /* ─── Onglet Vidéos ─── */
@@ -8785,7 +9091,7 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModerat
     setExportBusy(true);
     try {
       const [profile, videos, messages, applications, follows, shortlist] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userProfile.id).single(),
+        supabase.rpc('get_my_profile'),
         supabase.from('videos').select('*').eq('user_id', userProfile.id),
         // Messages : seulement ceux dont je suis l'auteur (mes données)
         supabase.from('messages').select('id, receiver_id, content, created_at').eq('sender_id', userProfile.id),
@@ -10557,7 +10863,26 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   const computedAge = computeAge(birthdate);
   // Champs modifiables
   // sport : défini à l'inscription, non modifiable après coup
-  const [position, setPosition] = useState(userProfile?.position || '');
+  const refs = useReferentiels();
+  const postesDuSport = refs.postesParSport[userProfile?.sport] ?? [];
+  // Les profils créés avant les référentiels portent un poste en texte
+  // libre. On tente de le rattacher au référentiel par son libellé : la
+  // plupart correspondent, et le profil devient alors filtrable sans que
+  // son propriétaire ait rien à faire.
+  const posteRattache = useMemo(() => {
+    if (userProfile?.position_id) return userProfile.position_id;
+    const libelle = normaliserPoste(userProfile?.position);
+    if (!libelle) return null;
+    return postesDuSport.find(o => normaliserPoste(o.label) === libelle)?.id ?? null;
+  }, [userProfile?.position_id, userProfile?.position, postesDuSport]);
+  const [positionId, setPositionId] = useState(null);
+  // `posteRattache` n'est connu qu'une fois les référentiels chargés ;
+  // tant que l'utilisateur n'a rien choisi, c'est lui qui s'affiche.
+  const [posteTouche, setPosteTouche] = useState(false);
+  const posteCourant = posteTouche ? positionId : posteRattache;
+  // Texte libre qu'aucun poste du référentiel ne recouvre : on le montre
+  // plutôt que de le faire disparaître en silence.
+  const posteHeriteNonRattache = (!posteRattache && userProfile?.position) ? userProfile.position : null;
   const [club, setClub] = useState(userProfile?.club || '');
   const [organization, setOrganization] = useState(userProfile?.organization || '');
   const [bio, setBio] = useState(userProfile?.bio || '');
@@ -10619,16 +10944,26 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
     setError(''); setSaving(true);
     const updates = {
       // full_name et birthdate sont volontairement omis (non modifiables).
-      // L'âge est recalculé en cache à partir de birthdate.
-      age: computedAge,
+      // L'âge est recalculé en cache à partir de birthdate. Il part dans
+      // `age_private` : la colonne `age` est générée par la base, qui la
+      // masque quand « masquer mon âge » est actif.
+      age_private: computedAge,
       // sport non modifiable (défini à l'inscription)
-      position: position.trim() || null,
+      // Le poste est un identifiant de référentiel ; le libellé texte est
+      // rempli par le trigger profiles_sync_position_label. On n'envoie
+      // `position` que pour effacer un ancien texte libre dont
+      // l'utilisateur vient explicitement de vider la liste.
+      position_id: posteCourant || null,
+      ...((posteTouche && !positionId) ? { position: null } : {}),
       club: isRecruiter ? null : (club.trim() || null),
       organization: isRecruiter ? (organization.trim() || null) : null,
       bio: bio.trim() || null,
-      country: country.trim() || null,
-      region: region.trim() || null,
-      city: city.trim() || null,
+      // Même principe que l'âge : la localisation saisie va dans les
+      // colonnes sources, et la base publie une version masquée quand
+      // « masquer ma localisation » est actif.
+      country_private: country.trim() || null,
+      region_private: region.trim() || null,
+      city_private: city.trim() || null,
       phone: phone.trim() || null,
       username: username.trim() || null,
       season_start_month: seasonStartMonth,
@@ -10827,13 +11162,20 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
           {/* Poste sur le terrain — athlètes uniquement */}
           {isAthleteEditor && (
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                Poste sur le terrain
-              </label>
-              <input type="text" value={position} onChange={(e) => setPosition(e.target.value)}
-                placeholder="Ex : Milieu offensif, Gardien, 100 m…"
-                maxLength={60} className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+              <ChampSelect
+                label="Poste sur le terrain"
+                value={posteCourant}
+                onChange={(id) => { setPosteTouche(true); setPositionId(id); }}
+                options={postesDuSport}
+                placeholder={postesDuSport.length ? 'Choisir un poste' : 'Aucun poste pour ce sport'}
+                disabled={!postesDuSport.length} />
+              {posteHeriteNonRattache && !posteTouche && (
+                <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                  Poste actuellement enregistré : « {posteHeriteNonRattache} ». Il ne fait
+                  partie d'aucune liste officielle, donc les recruteurs ne te trouvent pas
+                  en filtrant par poste. Choisis l'équivalent ci-dessus pour y remédier.
+                </p>
+              )}
             </div>
           )}
 
@@ -12209,11 +12551,55 @@ function BottomNav({ tab, setTab, mode }) {
   );
 }
 
+// Une page du fil sert les champs de l'auteur à plat (author_name…) alors
+// que les écrans lisent `v.profiles.full_name`. On reconstitue la forme
+// attendue plutôt que de toucher aux dix endroits qui la lisent.
+const adapterLigneFeed = (r) => ({
+  ...r,
+  profiles: {
+    id: r.author_id,
+    full_name: r.author_name,
+    username: r.author_username,
+    avatar_url: r.author_avatar,
+    verified: r.author_verified,
+    club: r.author_club,
+    age: r.author_age,
+    gender: r.author_gender,
+    level: r.author_level,
+    is_recruiter: r.author_is_recruiter,
+  },
+});
+
+// L'engagement vient désormais du fil lui-même : `get_feed` rend les
+// quatre compteurs, maintenus par trigger, et le fait que l'appelant ait
+// aimé la vidéo.
+const engagementDepuisFeed = (lignes) => {
+  const m = {};
+  for (const r of lignes) {
+    m[r.id] = {
+      likes: r.likes_count ?? 0,
+      comments: r.comments_count ?? 0,
+      shares: r.shares_count ?? 0,
+      likedByMe: !!r.viewer_liked,
+    };
+  }
+  return m;
+};
+
+const TAILLE_PAGE_FEED = 20;
+
 // ═══ APP ═══════════════════════════════════════════════════════════
 export default function App() {
 // ─── AUTHENTIFICATION SUPABASE ─────────────────────────────────
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  // Vrai quand la personne arrive par un lien « mot de passe oublié ».
+  // L'état initial lit l'adresse : `onAuthStateChange` finit par émettre
+  // PASSWORD_RECOVERY, mais `getSession()` peut répondre avant lui, et
+  // l'application s'afficherait alors une fraction de seconde.
+  const [recuperationMdp, setRecuperationMdp] = useState(
+    () => typeof window !== 'undefined' && /(^|[#&?])type=recovery(&|$)/.test(window.location.hash + window.location.search)
+  );
   // Écran de lancement Yatsai : durée minimale ~3 s (même si la session
   // se charge plus vite), pour une intro de marque propre.
   const [splashMinElapsed, setSplashMinElapsed] = useState(false);
@@ -12227,35 +12613,93 @@ export default function App() {
   const [userProfile, setUserProfile] = useState(null);
   const [videos, setVideos] = useState([]);
 
-  const loadVideos = async () => {
-    // 1) Charger les vidéos + auteur + count de likes (via la relation)
-    const { data, error } = await supabase
-      .from('videos')
-      .select(`
-        *,
-        profiles!videos_user_id_fkey ( id, full_name, username, is_recruiter, avatar_url, sport, level ),
-        likes(count)
-      `)
-      .order('created_at', { ascending: false });
-    if (error) {
-      console.error('Erreur chargement vidéos:', error);
-      return;
+  // ─── ENGAGEMENT (compteurs de likes / commentaires / partages) ─
+  // { [videoId]: { likes, comments, shares, likedByMe } }
+  // Déclaré ici, et non plus bas : `chargerFeed` le remplit, et une
+  // constante utilisée avant sa déclaration empêche React Compiler
+  // d'optimiser le composant.
+  const [engagement, setEngagement] = useState({});
+
+  // ─── FIL : chargement page par page ──────────────────────────
+  // Avant, cette fonction demandait TOUTES les vidéos, sans limite, avec
+  // toutes leurs colonnes et un comptage de likes par vidéo. À trois
+  // mille vidéos, chaque ouverture de l'application aurait téléchargé les
+  // trois mille. `get_feed` en rend vingt, par curseur.
+  //
+  // Curseur et fin de fil vivent dans des références, pas dans des états :
+  // `chargerFeed` doit garder la même identité d'un rendu à l'autre, sans
+  // quoi l'observateur qui la déclenche se défait et se refait sans cesse.
+  // `feedTermine` a en plus un état, parce que l'affichage en dépend.
+  const feedCurseurRef = useRef(null);
+  const feedTermineRef = useRef(false);
+  const feedEnCoursRef = useRef(false);
+  const [feedTermine, setFeedTermine] = useState(false);
+  const [feedNouvelles, setFeedNouvelles] = useState(0);  // publiées depuis l'ouverture
+
+  const chargerFeed = useCallback(async ({ reprise = false } = {}) => {
+    // Garde par référence et non par état : deux passages rapprochés du
+    // bas de page liraient la même valeur périmée et lanceraient deux
+    // fois la même requête.
+    if (feedEnCoursRef.current) return;
+    if (!reprise && feedTermineRef.current) return;
+    feedEnCoursRef.current = true;
+
+    const curseur = reprise ? null : feedCurseurRef.current;
+    const { data, error } = await supabase.rpc('get_feed', {
+      p_limit: TAILLE_PAGE_FEED,
+      p_cursor_created_at: curseur?.created_at ?? null,
+      p_cursor_id: curseur?.id ?? null,
+      p_sport: null,
+    });
+
+    feedEnCoursRef.current = false;
+    if (error) { console.error('Erreur chargement du fil:', error); return; }
+
+    const lignes = data || [];
+    const page = lignes.map(adapterLigneFeed);
+    setEngagement(prev => ({ ...prev, ...engagementDepuisFeed(lignes) }));
+
+    if (reprise) {
+      setVideos(page);
+      setFeedNouvelles(0);
+    } else {
+      // Dédoublonnage : une vidéo publiée pendant la lecture décale la
+      // pagination et peut faire réapparaître une ligne déjà en mémoire.
+      setVideos(prev => {
+        const vus = new Set(prev.map(v => v.id));
+        return [...prev, ...page.filter(v => !vus.has(v.id))];
+      });
     }
-    setVideos(data || []);
-  };
+
+    const derniere = lignes[lignes.length - 1];
+    feedCurseurRef.current = derniere
+      ? { created_at: derniere.created_at, id: derniere.id }
+      : (reprise ? null : feedCurseurRef.current);
+
+    const fini = lignes.length < TAILLE_PAGE_FEED;
+    feedTermineRef.current = fini;
+    setFeedTermine(fini);
+  }, []);
 
   useEffect(() => {
-    loadVideos();
-    // Realtime : recharger le feed dès qu'une vidéo est ajoutée/supprimée
-    // OU qu'un profil est modifié (changement de niveau, avatar, nom…).
+    chargerFeed({ reprise: true });
+    // Realtime. Auparavant, chaque publication déclenchait chez TOUTES les
+    // personnes connectées un rechargement complet du catalogue : deux
+    // cents applications ouvertes, deux cents requêtes lourdes au même
+    // instant. `BACKEND.md` §4 l'interdisait d'ailleurs noir sur blanc.
+    // On se contente désormais de compter, et de proposer.
     const channel = supabase
       .channel('videos-feed-realtime')
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'videos' },
-        () => loadVideos())
+        () => setFeedNouvelles(n => n + 1))
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'videos' },
-        () => loadVideos())
+        (payload) => {
+          // Retrait local : inutile de redemander la page entière.
+          const id = payload.old?.id;
+          if (id) setVideos(prev => prev.filter(v => v.id !== id));
+        })
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'videos' },
         (payload) => {
@@ -12266,29 +12710,22 @@ export default function App() {
             v.id === u.id ? { ...v, ...u, profiles: v.profiles, likes: v.likes } : v
           ));
         })
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        (payload) => {
-          // Patch local : on met à jour le profil intégré aux vidéos
-          // concernées sans refaire toute la requête.
-          const updated = payload.new;
-          if (!updated?.id) return;
-          setVideos(prev => prev.map(v =>
-            v.user_id === updated.id && v.profiles
-              ? { ...v, profiles: { ...v.profiles, ...updated } }
-              : v
-          ));
-        })
+      // L'abonnement aux modifications de `profiles`, toutes lignes
+      // confondues, a été retiré : il réveillait chaque appareil connecté
+      // à chaque changement de profil de qui que ce soit, pour rafraîchir
+      // un avatar. Le nom et l'avatar se mettent à jour au prochain
+      // chargement du fil, ce qui est un prix très inférieur.
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+    // `chargerFeed` est stabilisée par useCallback : la citer ici ne
+    // provoque aucun réabonnement.
+  }, [chargerFeed]);
 
   const loadProfile = async (userId) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
+    // `get_my_profile()` plutôt qu'un select : elle seule donne accès aux
+    // colonnes privées (date de naissance, téléphone), dont le formulaire
+    // de profil a besoin. Elle ne peut renvoyer que la ligne de l'appelant.
+    const { data, error } = await supabase.rpc('get_my_profile');
     if (error) {
       console.error('Erreur chargement profil:', error);
       return;
@@ -12297,11 +12734,13 @@ export default function App() {
     if (data?.birthdate) {
       const liveAge = computeAge(data.birthdate);
       if (liveAge !== null && liveAge !== data.age) {
-        supabase.from('profiles').update({ age: liveAge }).eq('id', userId)
+        supabase.from('profiles').update({ age_private: liveAge }).eq('id', userId)
           .then(({ error: upErr }) => {
             if (upErr) console.warn('Auto-sync âge échec:', upErr.message);
           });
-        data.age = liveAge; // miroir immédiat en mémoire
+        // Miroir immédiat en mémoire, en respectant « masquer mon âge » :
+        // c'est ce que renverra la colonne générée au prochain chargement.
+        data.age = data.hide_age ? null : liveAge;
       }
     }
     setUserProfile(data);
@@ -12314,7 +12753,12 @@ export default function App() {
       if (session) loadProfile(session.user.id);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Un lien « mot de passe oublié » ouvre une session de récupération
+      // comme n'importe quelle connexion. Sans cette interception, la
+      // personne se retrouverait simplement connectée, et l'écran qui lui
+      // permet de choisir un nouveau mot de passe ne s'afficherait jamais.
+      if (event === 'PASSWORD_RECOVERY') setRecuperationMdp(true);
       setSession(session);
       if (session) loadProfile(session.user.id);
       else setUserProfile(null);
@@ -12423,35 +12867,15 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, [userProfile?.id, userProfile?.is_recruiter]);
 
-  // ─── ENGAGEMENT (likes / comments / shares counts) ────────────
-  // { [videoId]: { likes, comments, shares, likedByMe } }
-  const [engagement, setEngagement] = useState({});
-
-  const loadEngagement = async (videoIds, currentUserId) => {
-    if (!videoIds || videoIds.length === 0) return;
-    const [likesRes, commentsRes, sharesRes, myLikesRes] = await Promise.all([
-      supabase.from('likes').select('video_id').in('video_id', videoIds),
-      supabase.from('comments').select('video_id').in('video_id', videoIds),
-      supabase.from('shares').select('video_id').in('video_id', videoIds),
-      currentUserId
-        ? supabase.from('likes').select('video_id').eq('user_id', currentUserId).in('video_id', videoIds)
-        : Promise.resolve({ data: [] }),
-    ]);
-    const counts = {};
-    for (const id of videoIds) counts[id] = { likes: 0, comments: 0, shares: 0, likedByMe: false };
-    for (const r of likesRes.data || []) counts[r.video_id].likes++;
-    for (const r of commentsRes.data || []) counts[r.video_id].comments++;
-    for (const r of sharesRes.data || []) counts[r.video_id].shares++;
-    for (const r of myLikesRes.data || []) counts[r.video_id].likedByMe = true;
-    setEngagement(counts);
-  };
-
-  // Charge l'engagement quand vidéos ou user changent
-  useEffect(() => {
-    if (videos.length > 0) {
-      loadEngagement(videos.map(v => v.id), userProfile?.id);
-    }
-  }, [videos, userProfile?.id]);
+  // Ce bloc chargeait l'engagement par quatre requêtes — toutes les lignes
+  // de `likes`, `comments`, `shares`, plus « mes likes » — pour les compter
+  // en JavaScript, et recommençait à chaque changement de la liste des
+  // vidéos. Il écrasait de surcroît tout l'état, ce qui aurait effacé
+  // l'engagement des pages déjà chargées.
+  //
+  // `get_feed` rend les quatre compteurs, maintenus par trigger, et
+  // `viewer_liked`. L'engagement est donc rempli au fil des pages, dans
+  // `chargerFeed`, sans une seule requête supplémentaire.
 
   // ─── ACTIONS LIKE / COMMENT / SHARE ──────────────────────────
   const toggleLike = async (videoId) => {
@@ -12505,10 +12929,15 @@ export default function App() {
   // ─── PROFIL : mise à jour ────────────────────────────────────
   const updateProfile = async (updates) => {
     if (!userProfile?.id) return { error: 'Non connecté' };
-    const { data, error } = await supabase.from('profiles')
-      .update(updates).eq('id', userProfile.id)
-      .select().single();
+    // `.select()` sans argument demanderait toutes les colonnes, ce que la
+    // base refuse désormais. On relit par `get_my_profile()`, qui rend en
+    // prime les colonnes privées et les colonnes générées (ville et âge
+    // masqués) recalculées après l'écriture.
+    const { error } = await supabase.from('profiles')
+      .update(updates).eq('id', userProfile.id);
     if (error) { console.error('Erreur update profil:', error); return { error: error.message }; }
+    const { data, error: relecture } = await supabase.rpc('get_my_profile');
+    if (relecture) { console.error('Erreur relecture profil:', relecture); return { error: relecture.message }; }
     setUserProfile(data);
     return { data };
   };
@@ -13285,7 +13714,9 @@ export default function App() {
         const createdAt = v.created_at ? new Date(v.created_at).getTime() : now;
         const ageDays = Math.max(0, (now - createdAt) / (1000 * 60 * 60 * 24));
         const recency = Math.exp(-ageDays / 21);
-        const likesCount = v.likes?.[0]?.count || 0;
+        // `likes_count` vient de `get_feed` ; l'ancienne forme
+        // `likes:[{count}]` était celle du select agrégé, disparu avec lui.
+        const likesCount = v.likes_count ?? v.likes?.[0]?.count ?? 0;
         const likesScore = Math.log(1 + likesCount);
         let prefScore = 0;
         if (userSport && v.sport === userSport) prefScore += 0.3;
@@ -13411,7 +13842,7 @@ export default function App() {
     // …puis on complète avec le profil COMPLET (bannière, bio, localisation, etc.)
     // quel que soit l'endroit d'où on l'ouvre (feed, partage, messagerie…).
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', profile.id).single();
+      const { data } = await supabase.from('profiles').select(COLONNES_PROFIL_PUBLIC).eq('id', profile.id).single();
       if (data) setSelectedProfile(prev => (prev && prev.id === data.id ? data : prev));
     } catch {}
   };
@@ -13490,6 +13921,10 @@ export default function App() {
 
   const feedProps = {
     videos: feedVideos,
+    onChargerSuite: chargerFeed,
+    feedTermine,
+    nouvellesVideos: feedNouvelles,
+    onRechargerFeed: () => chargerFeed({ reprise: true }),
     onView: registerVideoView,
     periodFilter: feedPeriodFilter,
     onChangePeriodFilter: setFeedPeriodFilter,
@@ -13620,6 +14055,14 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // Arrivée par un lien de réinitialisation : cet écran passe avant tout
+  // le reste, y compris avant l'application elle-même — la session est
+  // ouverte, mais tant que le mot de passe n'est pas choisi il n'y a rien
+  // d'autre à faire.
+  if (recuperationMdp) {
+    return <Auth initialMode="reset" onPasswordReset={() => setRecuperationMdp(false)} />;
   }
 
   // Pas connecté → Landing page puis écran d'authentification
