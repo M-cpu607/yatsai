@@ -1928,10 +1928,35 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                     onLike, onAddComment, onDeleteComment, onShare,
                     onAddToShortlist, onSelectProfile, onOpenSearch, onReport,
                     onOpenNotifications, notifUnreadCount,
-                    savedVideoIds, onToggleSaveVideo }) {
+                    savedVideoIds, onToggleSaveVideo,
+                    onChargerSuite, feedTermine,
+                    nouvellesVideos, onRechargerFeed }) {
   const [muted, setMuted] = useState(true);      // son global du feed (muet par défaut)
   const [commentsVideo, setCommentsVideo] = useState(null);
   const [shareVideo, setShareVideo] = useState(null);
+
+  // Charge la page suivante quand la dernière vidéo entre dans l'écran.
+  // Un observateur plutôt qu'un gestionnaire de défilement : le fil défile
+  // par à-coups (scroll-snap) et un handler se déclencherait en rafale.
+  const sentinelleRef = useRef(null);
+  // `onChargerSuite` est recréée à chaque rendu du parent ; la mettre en
+  // dépendance ferait défaire et refaire l'observateur à chaque rendu. On
+  // garde la dernière version dans une référence, et l'observateur ne se
+  // reconstruit que lorsque la liste change vraiment.
+  const chargerSuiteRef = useRef(onChargerSuite);
+  // Mise à jour après le rendu, pas pendant : écrire dans une référence
+  // au fil du rendu rend celui-ci impur.
+  useEffect(() => { chargerSuiteRef.current = onChargerSuite; });
+  useEffect(() => {
+    const cible = sentinelleRef.current;
+    if (!cible || feedTermine) return;
+    const obs = new IntersectionObserver(
+      (entrees) => { if (entrees.some(e => e.isIntersecting)) chargerSuiteRef.current?.(); },
+      { rootMargin: '600px' },   // anticiper, pour que le fil ne se vide jamais
+    );
+    obs.observe(cible);
+    return () => obs.disconnect();
+  }, [feedTermine, videos.length]);
 
   const isEmpty = !videos || videos.length === 0;
   const hasFilter = !!periodFilter;
@@ -2007,7 +2032,32 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                 onToggleSave={onToggleSaveVideo} />
             );
           })}
+
+          {/* Repère de fin de liste : c'est son entrée à l'écran qui
+              déclenche le chargement de la page suivante. */}
+          {!feedTermine && (
+            <div ref={sentinelleRef} className="flex items-center justify-center py-6"
+              style={{ backgroundColor: '#000' }}>
+              <Loader2 size={18} className="animate-spin" style={{ color: 'rgba(255,255,255,0.4)' }} />
+            </div>
+          )}
+          {feedTermine && videos.length > 0 && (
+            <div className="text-center text-[11px] py-6" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              Tu as tout vu.
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Nouvelles vidéos publiées pendant la lecture. Auparavant, chaque
+          publication rechargeait tout le catalogue chez tout le monde ;
+          on propose désormais, au lieu d'imposer. */}
+      {nouvellesVideos > 0 && (
+        <button onClick={() => { onRechargerFeed?.(); window.scrollTo?.({ top: 0 }); }}
+          className="fixed top-24 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold shadow-lg"
+          style={{ backgroundColor: C.gold, color: C.bg }}>
+          ↑ {nouvellesVideos} nouvelle{nouvellesVideos > 1 ? 's' : ''} vidéo{nouvellesVideos > 1 ? 's' : ''}
+        </button>
       )}
 
       {/* Loupe Recherche en haut à gauche (overlay fixe) */}
@@ -12456,6 +12506,43 @@ function BottomNav({ tab, setTab, mode }) {
   );
 }
 
+// Une page du fil sert les champs de l'auteur à plat (author_name…) alors
+// que les écrans lisent `v.profiles.full_name`. On reconstitue la forme
+// attendue plutôt que de toucher aux dix endroits qui la lisent.
+const adapterLigneFeed = (r) => ({
+  ...r,
+  profiles: {
+    id: r.author_id,
+    full_name: r.author_name,
+    username: r.author_username,
+    avatar_url: r.author_avatar,
+    verified: r.author_verified,
+    club: r.author_club,
+    age: r.author_age,
+    gender: r.author_gender,
+    level: r.author_level,
+    is_recruiter: r.author_is_recruiter,
+  },
+});
+
+// L'engagement vient désormais du fil lui-même : `get_feed` rend les
+// quatre compteurs, maintenus par trigger, et le fait que l'appelant ait
+// aimé la vidéo.
+const engagementDepuisFeed = (lignes) => {
+  const m = {};
+  for (const r of lignes) {
+    m[r.id] = {
+      likes: r.likes_count ?? 0,
+      comments: r.comments_count ?? 0,
+      shares: r.shares_count ?? 0,
+      likedByMe: !!r.viewer_liked,
+    };
+  }
+  return m;
+};
+
+const TAILLE_PAGE_FEED = 20;
+
 // ═══ APP ═══════════════════════════════════════════════════════════
 export default function App() {
 // ─── AUTHENTIFICATION SUPABASE ─────────────────────────────────
@@ -12481,35 +12568,93 @@ export default function App() {
   const [userProfile, setUserProfile] = useState(null);
   const [videos, setVideos] = useState([]);
 
-  const loadVideos = async () => {
-    // 1) Charger les vidéos + auteur + count de likes (via la relation)
-    const { data, error } = await supabase
-      .from('videos')
-      .select(`
-        *,
-        profiles!videos_user_id_fkey ( id, full_name, username, is_recruiter, avatar_url, sport, level ),
-        likes(count)
-      `)
-      .order('created_at', { ascending: false });
-    if (error) {
-      console.error('Erreur chargement vidéos:', error);
-      return;
+  // ─── ENGAGEMENT (compteurs de likes / commentaires / partages) ─
+  // { [videoId]: { likes, comments, shares, likedByMe } }
+  // Déclaré ici, et non plus bas : `chargerFeed` le remplit, et une
+  // constante utilisée avant sa déclaration empêche React Compiler
+  // d'optimiser le composant.
+  const [engagement, setEngagement] = useState({});
+
+  // ─── FIL : chargement page par page ──────────────────────────
+  // Avant, cette fonction demandait TOUTES les vidéos, sans limite, avec
+  // toutes leurs colonnes et un comptage de likes par vidéo. À trois
+  // mille vidéos, chaque ouverture de l'application aurait téléchargé les
+  // trois mille. `get_feed` en rend vingt, par curseur.
+  //
+  // Curseur et fin de fil vivent dans des références, pas dans des états :
+  // `chargerFeed` doit garder la même identité d'un rendu à l'autre, sans
+  // quoi l'observateur qui la déclenche se défait et se refait sans cesse.
+  // `feedTermine` a en plus un état, parce que l'affichage en dépend.
+  const feedCurseurRef = useRef(null);
+  const feedTermineRef = useRef(false);
+  const feedEnCoursRef = useRef(false);
+  const [feedTermine, setFeedTermine] = useState(false);
+  const [feedNouvelles, setFeedNouvelles] = useState(0);  // publiées depuis l'ouverture
+
+  const chargerFeed = useCallback(async ({ reprise = false } = {}) => {
+    // Garde par référence et non par état : deux passages rapprochés du
+    // bas de page liraient la même valeur périmée et lanceraient deux
+    // fois la même requête.
+    if (feedEnCoursRef.current) return;
+    if (!reprise && feedTermineRef.current) return;
+    feedEnCoursRef.current = true;
+
+    const curseur = reprise ? null : feedCurseurRef.current;
+    const { data, error } = await supabase.rpc('get_feed', {
+      p_limit: TAILLE_PAGE_FEED,
+      p_cursor_created_at: curseur?.created_at ?? null,
+      p_cursor_id: curseur?.id ?? null,
+      p_sport: null,
+    });
+
+    feedEnCoursRef.current = false;
+    if (error) { console.error('Erreur chargement du fil:', error); return; }
+
+    const lignes = data || [];
+    const page = lignes.map(adapterLigneFeed);
+    setEngagement(prev => ({ ...prev, ...engagementDepuisFeed(lignes) }));
+
+    if (reprise) {
+      setVideos(page);
+      setFeedNouvelles(0);
+    } else {
+      // Dédoublonnage : une vidéo publiée pendant la lecture décale la
+      // pagination et peut faire réapparaître une ligne déjà en mémoire.
+      setVideos(prev => {
+        const vus = new Set(prev.map(v => v.id));
+        return [...prev, ...page.filter(v => !vus.has(v.id))];
+      });
     }
-    setVideos(data || []);
-  };
+
+    const derniere = lignes[lignes.length - 1];
+    feedCurseurRef.current = derniere
+      ? { created_at: derniere.created_at, id: derniere.id }
+      : (reprise ? null : feedCurseurRef.current);
+
+    const fini = lignes.length < TAILLE_PAGE_FEED;
+    feedTermineRef.current = fini;
+    setFeedTermine(fini);
+  }, []);
 
   useEffect(() => {
-    loadVideos();
-    // Realtime : recharger le feed dès qu'une vidéo est ajoutée/supprimée
-    // OU qu'un profil est modifié (changement de niveau, avatar, nom…).
+    chargerFeed({ reprise: true });
+    // Realtime. Auparavant, chaque publication déclenchait chez TOUTES les
+    // personnes connectées un rechargement complet du catalogue : deux
+    // cents applications ouvertes, deux cents requêtes lourdes au même
+    // instant. `BACKEND.md` §4 l'interdisait d'ailleurs noir sur blanc.
+    // On se contente désormais de compter, et de proposer.
     const channel = supabase
       .channel('videos-feed-realtime')
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'videos' },
-        () => loadVideos())
+        () => setFeedNouvelles(n => n + 1))
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'videos' },
-        () => loadVideos())
+        (payload) => {
+          // Retrait local : inutile de redemander la page entière.
+          const id = payload.old?.id;
+          if (id) setVideos(prev => prev.filter(v => v.id !== id));
+        })
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'videos' },
         (payload) => {
@@ -12520,22 +12665,16 @@ export default function App() {
             v.id === u.id ? { ...v, ...u, profiles: v.profiles, likes: v.likes } : v
           ));
         })
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        (payload) => {
-          // Patch local : on met à jour le profil intégré aux vidéos
-          // concernées sans refaire toute la requête.
-          const updated = payload.new;
-          if (!updated?.id) return;
-          setVideos(prev => prev.map(v =>
-            v.user_id === updated.id && v.profiles
-              ? { ...v, profiles: { ...v.profiles, ...updated } }
-              : v
-          ));
-        })
+      // L'abonnement aux modifications de `profiles`, toutes lignes
+      // confondues, a été retiré : il réveillait chaque appareil connecté
+      // à chaque changement de profil de qui que ce soit, pour rafraîchir
+      // un avatar. Le nom et l'avatar se mettent à jour au prochain
+      // chargement du fil, ce qui est un prix très inférieur.
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+    // `chargerFeed` est stabilisée par useCallback : la citer ici ne
+    // provoque aucun réabonnement.
+  }, [chargerFeed]);
 
   const loadProfile = async (userId) => {
     // `get_my_profile()` plutôt qu'un select : elle seule donne accès aux
@@ -12683,35 +12822,15 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, [userProfile?.id, userProfile?.is_recruiter]);
 
-  // ─── ENGAGEMENT (likes / comments / shares counts) ────────────
-  // { [videoId]: { likes, comments, shares, likedByMe } }
-  const [engagement, setEngagement] = useState({});
-
-  const loadEngagement = async (videoIds, currentUserId) => {
-    if (!videoIds || videoIds.length === 0) return;
-    const [likesRes, commentsRes, sharesRes, myLikesRes] = await Promise.all([
-      supabase.from('likes').select('video_id').in('video_id', videoIds),
-      supabase.from('comments').select('video_id').in('video_id', videoIds),
-      supabase.from('shares').select('video_id').in('video_id', videoIds),
-      currentUserId
-        ? supabase.from('likes').select('video_id').eq('user_id', currentUserId).in('video_id', videoIds)
-        : Promise.resolve({ data: [] }),
-    ]);
-    const counts = {};
-    for (const id of videoIds) counts[id] = { likes: 0, comments: 0, shares: 0, likedByMe: false };
-    for (const r of likesRes.data || []) counts[r.video_id].likes++;
-    for (const r of commentsRes.data || []) counts[r.video_id].comments++;
-    for (const r of sharesRes.data || []) counts[r.video_id].shares++;
-    for (const r of myLikesRes.data || []) counts[r.video_id].likedByMe = true;
-    setEngagement(counts);
-  };
-
-  // Charge l'engagement quand vidéos ou user changent
-  useEffect(() => {
-    if (videos.length > 0) {
-      loadEngagement(videos.map(v => v.id), userProfile?.id);
-    }
-  }, [videos, userProfile?.id]);
+  // Ce bloc chargeait l'engagement par quatre requêtes — toutes les lignes
+  // de `likes`, `comments`, `shares`, plus « mes likes » — pour les compter
+  // en JavaScript, et recommençait à chaque changement de la liste des
+  // vidéos. Il écrasait de surcroît tout l'état, ce qui aurait effacé
+  // l'engagement des pages déjà chargées.
+  //
+  // `get_feed` rend les quatre compteurs, maintenus par trigger, et
+  // `viewer_liked`. L'engagement est donc rempli au fil des pages, dans
+  // `chargerFeed`, sans une seule requête supplémentaire.
 
   // ─── ACTIONS LIKE / COMMENT / SHARE ──────────────────────────
   const toggleLike = async (videoId) => {
@@ -13550,7 +13669,9 @@ export default function App() {
         const createdAt = v.created_at ? new Date(v.created_at).getTime() : now;
         const ageDays = Math.max(0, (now - createdAt) / (1000 * 60 * 60 * 24));
         const recency = Math.exp(-ageDays / 21);
-        const likesCount = v.likes?.[0]?.count || 0;
+        // `likes_count` vient de `get_feed` ; l'ancienne forme
+        // `likes:[{count}]` était celle du select agrégé, disparu avec lui.
+        const likesCount = v.likes_count ?? v.likes?.[0]?.count ?? 0;
         const likesScore = Math.log(1 + likesCount);
         let prefScore = 0;
         if (userSport && v.sport === userSport) prefScore += 0.3;
@@ -13755,6 +13876,10 @@ export default function App() {
 
   const feedProps = {
     videos: feedVideos,
+    onChargerSuite: chargerFeed,
+    feedTermine,
+    nouvellesVideos: feedNouvelles,
+    onRechargerFeed: () => chargerFeed({ reprise: true }),
     onView: registerVideoView,
     periodFilter: feedPeriodFilter,
     onChangePeriodFilter: setFeedPeriodFilter,
