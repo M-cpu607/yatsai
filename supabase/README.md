@@ -123,6 +123,11 @@ En résumé :
 | `migrations/20260917082343_profils_masquage_age_et_localisation.sql` | `city`/`region`/`country`/`age` deviennent des colonnes générées, masquées selon `hide_location` / `hide_age` |
 | `migrations/20260917082547_profils_rls_prive_et_droits_par_colonne.sql` | RLS sur les profils privés, droits de lecture rendus colonne par colonne, `get_my_profile()` |
 | `migrations/20260917082606_get_feed_age_affiche_sans_birthdate.sql` | `get_feed` lit `age` au lieu de recalculer depuis `birthdate` |
+| `migrations/20260917085629_compte_prive_vidéos_reservees_aux_abonnes.sql` | `videos.author_is_private` et RLS : les vidéos d'un compte privé ne sortent plus, son profil s'ouvre à ses abonnés |
+| `migrations/20260917085804_get_feed_colonnes_completes_de_la_carte.sql` | `get_feed` rend toutes les colonnes que la carte du fil utilise, pas treize |
+| `migrations/20260917172228_compteur_partages_et_get_feed_complet.sql` | `videos.shares_count`, quatrième compteur dénormalisé, et `get_feed` qui le rend |
+| `migrations/20260918082218_search_athletes_absorbe_tous_les_filtres.sql` | localisation, nationalité, niveaux et poste appliqués avant le `limit` |
+| `migrations/20260918082352_search_athletes_recherche_generale.sql` | `p_include_recruiters`, plus `organization`, `is_recruiter` et `role` au retour |
 | `seed.sql` | jeu d'essai, rejoué à chaque `reset` |
 | `config.toml` | configuration des cinq services |
 
@@ -147,8 +152,23 @@ les migrations du 17/09 :
   propre profil en entier, y compris `birthdate` et `phone`, il y a
   `get_my_profile()`.
 
-Le schéma reproduit : 25 tables, 228 colonnes, 109 contraintes, 83 index,
-35 fonctions, 20 triggers, 66 policies RLS, 11 tables publiées en Realtime,
+**Et deux points sur `videos`.** Depuis les migrations du 17/09 au soir :
+
+- `author_is_private` recopie le `is_private` de l'auteur, et
+  `shares_count` compte les partages. Comme `likes_count`,
+  `comments_count` et `saves_count`, ce sont des colonnes **maintenues
+  par trigger** : on ne les écrit pas à la main. `author_is_private`
+  existe parce qu'une policy RLS qui irait lire `profiles.is_private`
+  serait filtrée par la RLS de `profiles` et conclurait l'inverse de ce
+  qu'elle cherche.
+- `get_feed()` rend désormais **48 colonnes** — 36 de la vidéo, 10 de
+  l'auteur, 2 sur l'appelant (`viewer_liked`, `viewer_saved`). L'instantané
+  du 15/09 en rendait 23, dont 13 seulement de la vidéo : pas de
+  `video_url`, pas de `tracking_points`, pas de `video_type`, pas de
+  `user_id` — de quoi ne pas afficher une carte de fil.
+
+Le schéma reproduit : 25 tables, 230 colonnes, 109 contraintes, 84 index,
+38 fonctions, 23 triggers, 66 policies RLS, 11 tables publiées en Realtime,
 6 buckets de stockage.
 
 La confirmation par e-mail est **désactivée**, comme en production : le
@@ -164,11 +184,11 @@ Le schéma et le jeu d'essai ont été **réellement exécutés** dans PostgreSQ
 
 | Contrôle | Résultat |
 |---|---|
-| Migrations jouées instruction par instruction | 0 échec |
+| Migrations jouées instruction par instruction | 439 instructions, 8 échecs — tous imputables à `pg_trgm` et `unaccent`, absentes de PGlite (détail plus bas) |
 | Jeu d'essai joué | 0 échec |
-| Tables / colonnes / contraintes vs production | 25 / 228 / 109 — identiques |
-| Triggers / policies / tables sous RLS | 20 / 66 / 25 — identiques |
-| Fonctions / index vs production | 35 / 83 — identiques, aux 3 index trigram près (ci-dessous) |
+| Tables / colonnes / contraintes vs production | 25 / 230 / 109 — identiques |
+| Triggers / policies / tables sous RLS | 23 / 66 / 25 — identiques |
+| Fonctions / index vs production | 37 / 81 contre 38 / 84 — l'écart est entièrement dû à `unaccent` et `pg_trgm` (ci-dessous) |
 | Sports / buckets | 20 / 6 — identiques |
 | Référentiels chargés | 120 postes, 15 catégories d'âge, 20 saisons, 10 niveaux |
 | Recopie des libellés (vidéo, profil) | libellé juste, poste d'un autre sport refusé |
@@ -181,9 +201,15 @@ Le schéma et le jeu d'essai ont été **réellement exécutés** dans PostgreSQ
 | Écriture directe dans `city` | refusée (`column "city" can only be updated to DEFAULT`) |
 | Colonnes de `profiles` lisibles par `anon` / `authenticated` | 37 / 37 — identique à la production ; `birthdate`, `phone`, `level_proof_url`, `is_admin`, les `_private` et les 3 colonnes d'état interne : 0 droit |
 | `select *` sur `profiles` en tant qu'`anon` | refusé ; l'énumération des colonnes publiques passe |
-| Règle `profiles_select` | privé visible du seul propriétaire ou d'un administrateur |
+| Règle `profiles_select` | privé visible du propriétaire, d'un administrateur et — depuis le 17/09 au soir — de ses abonnés |
 | `search_athletes` | `SECURITY DEFINER`, `search_path` vide, exclusion des profils privés présente |
 | `get_feed` après substitution | ne référence plus `birthdate`, lit `p.age` |
+| Recopie de `author_is_private` | profil passé en privé → la vidéo suit ; repassé en public → elle redescend ; la vidéo d'un autre auteur n'est pas touchée |
+| Vidéos d'un compte privé | inconnu : 1 vidéo sur 2 ; abonné : 2 ; propriétaire : 2 |
+| Profil d'un compte privé | invisible de l'inconnu, **visible de son abonné** |
+| `shares_count` | 0 → 2 partages → suppression d'un partage → 1 |
+| `get_feed` | 48 colonnes, dont `video_url`, `tracking_points`, `video_type`, `shares_count`, `author_level`, `author_is_recruiter` |
+| `search_athletes` étendue | 14 paramètres ; filtre ville, filtre niveau et `p_include_recruiters` appliqués **avant** le `limit` ; `organization`, `is_recruiter` et `role` au retour |
 
 Un bug a été trouvé et corrigé par ces tests : le jeu d'essai donnait à un
 profil un niveau appartenant à l'énumération des *vidéos*. Les deux
@@ -199,13 +225,30 @@ Docker. Trois index trigram (`profiles_name_trgm_idx`,
 non plus, PGlite n'embarquant pas `pg_trgm` — l'extension est présente sur
 Supabase, et c'est la seule raison de leur échec.
 
+`unaccent` manque pour la même raison, et c'est elle qui explique le reste
+de l'écart : `immutable_unaccent` ne peut pas être créée, donc
+`public.search_key()` non plus, donc aucune des fonctions de recherche qui
+s'appuient dessus. Sur les **17 fichiers, 439 instructions** rejoués, les
+**8 échecs** se répartissent ainsi : 2 `create extension`, 2 fonctions
+dépendant d'`unaccent`, 3 index trigram et le `comment` posé sur l'un
+d'eux. En substituant à `search_key()` un équivalent sans `unaccent`, les
+439 instructions passent moins ces 8 — dont **0 dans les cinq migrations
+du 17 au 18/09**. Aucun défaut du schéma n'est en cause.
+
+Le décompte des contraintes demande une précaution : PGlite tourne sur
+PostgreSQL 18, qui inscrit les contraintes `NOT NULL` dans
+`pg_constraint`, ce que PostgreSQL 17.6 — la version du projet hébergé —
+ne fait pas. Compté à l'identique des deux côtés (`contype <> 'n'`), le
+total est bien de 109 de part et d'autre ; compté naïvement, PGlite en
+annonce 221.
+
 ---
 
 ## Rester aligné sur la production
 
-La pile locale est **à jour** : les onze migrations appliquées sur le projet
+La pile locale est **à jour** : les seize migrations appliquées sur le projet
 hébergé depuis l'instantané ont été écrites dans `migrations/`, jusqu'à
-`20260917082606_get_feed_age_affiche_sans_birthdate` incluse. Un `reset` reproduit
+`20260918082352_search_athletes_recherche_generale` incluse. Un `reset` reproduit
 le schéma hébergé.
 
 L'instantané lui-même date du 15/09/2026. Quand la production évoluera,
