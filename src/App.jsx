@@ -1458,7 +1458,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             {(() => {
               const chips = [];
               if (data.opponent_level) chips.push(`🥊 ${data.opponent_level}`);
-              if (data.season) chips.push(`📅 ${data.season}`);
               if (data.match_date) {
                 chips.push(`🗓️ ${new Date(data.match_date + 'T00:00:00').toLocaleDateString('fr-FR')}`);
               }
