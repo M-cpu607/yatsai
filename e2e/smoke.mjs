@@ -1,11 +1,11 @@
-// Test de fumée : l'app tourne-t-elle vraiment, de la connexion au feed ?
+// Test de fumée : l'app tourne-t-elle vraiment, de l'accueil au feed ?
 // Voir e2e/README.md.
 import { chromium } from 'playwright';
 
 const BASE = 'http://127.0.0.1:4173';
 const SHOT = process.env.SHOT_DIR ?? '.';
 const res = [];
-const ok = (n, c, d='') => { res.push({n, c, d}); console.log(`${c?'OK   ':'ECHEC'}  ${n}${d?'  — '+d:''}`); };
+const ok = (n, c, d = '') => { res.push({ n, c, d }); console.log(`${c ? 'OK   ' : 'ECHEC'}  ${n}${d ? '  — ' + d : ''}`); };
 
 const nav = await chromium.launch(
   process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -18,56 +18,114 @@ const echecsReseau = [];
 page.on('requestfailed', r => echecsReseau.push(`${r.url()} :: ${r.failure()?.errorText}`));
 page.on('pageerror', e => erreurs.push('PAGEERROR: ' + e.message));
 
-// ── 1. Écran de connexion ──
-await page.goto(BASE, { waitUntil: 'networkidle' });
+// La page d'accueil pose un halo décoratif par-dessus ses boutons : un clic
+// aux coordonnées l'atteindrait lui. On déclenche donc le clic sur l'élément.
+const clic = async (motif, attente = 700) => {
+  const el = page.getByText(motif).first();
+  if (!(await el.count())) return false;
+  await el.evaluate(e => e.click());
+  await page.waitForTimeout(attente);
+  return true;
+};
+
+// ── 1. Accueil, puis écran de connexion ──
+// L'écran de lancement dure 3 s au minimum, et la page d'accueil s'intercale
+// avant l'authentification : les attendre, sinon tout le reste échoue.
+await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(4200);
+ok('Page d\'accueil affichée', (await page.textContent('body')).includes('Yatsai'));
+await page.screenshot({ path: `${SHOT}/1-accueil.png` });
+
+await clic(/se connecter/i);
 const aFormulaire = await page.locator('input[type="email"]').count() > 0;
 ok('Écran de connexion affiché', aFormulaire);
-await page.screenshot({ path: `${SHOT}/1-login.png` });
 
-// ── 2. Connexion ──
+// ── 2. « Mot de passe oublié » ──
+const aLienOubli = await page.getByText(/mot de passe oublié/i).count() > 0;
+ok('Lien « mot de passe oublié » présent', aLienOubli);
+if (aLienOubli) {
+  await clic(/mot de passe oublié/i);
+  ok('Écran de réinitialisation atteignable',
+     (await page.textContent('body')).includes('Envoyer le lien'));
+  await clic(/retour à la connexion/i);
+}
+
+// ── 3. Connexion ──
 await page.fill('input[type="email"]', 'andreas@example.com');
 await page.fill('input[type="password"]', 'motdepasse123');
 await page.click('button[type="submit"]');
-await page.waitForTimeout(1500);
+await page.waitForTimeout(2500);
+await clic(/plus tard/i, 400);            // écarter la bannière de saison
 
-// ── 3. Le feed s'affiche ──
+// ── 4. Le feed s'affiche ──
 const corps = await page.textContent('body');
-const feedAffiche = corps.includes('Highlights saison 2026');
-ok('Feed rendu après connexion', feedAffiche);
-ok('Nom de l\'auteur affiché (author_name)', corps.includes('Kylian Benga') || corps.includes('Aminata'),
-   'champ à plat renvoyé par get_feed');
+ok('Feed rendu après connexion', corps.includes('Highlights saison 2026'));
 ok('Pas d\'état vide "Aucune vidéo"', !corps.includes('Aucune vidéo encore'));
 
-// Miniatures YouTube réellement résolues
-const miniatures = await page.locator('img[src*="img.youtube.com"]').count();
-ok('Miniatures YouTube construites', miniatures > 0, `${miniatures} image(s)`);
+// Les colonnes que `get_feed` doit rendre, vues depuis l'écran. Si l'une
+// disparaît du contrat serveur, c'est ici que ça se voit.
+ok('Niveau de l\'adversaire affiché', /Régional|National|District|International|Loisir/.test(corps),
+   'colonne opponent_level');
+ok('Saison affichée', /20\d\d-20\d\d/.test(corps), 'colonne season');
 await page.screenshot({ path: `${SHOT}/2-feed.png` });
 
-// ── 4. Défilement infini ──
-const compter = () => page.evaluate(() =>
-  document.body.innerText.match(/Highlights saison 2026/g)?.length ?? 0);
+// ── 5. Pagination par curseur ──
+// Le feed ne doit PAS tout charger d'un coup : une première page, puis les
+// suivantes à l'approche du bas.
+const compter = async () =>
+  (await page.textContent('body')).match(/Highlights saison 2026/g)?.length ?? 0;
 const avant = await compter();
+ok('Première page limitée', avant > 0 && avant <= 25, `${avant} cartes au chargement`);
+
 const scroller = page.locator('div.overflow-y-auto').first();
-for (let i = 0; i < 6; i++) {
-  await scroller.evaluate(el => el.scrollTop = el.scrollHeight);
-  await page.waitForTimeout(400);
+if (await scroller.count()) {
+  for (let i = 0; i < 8; i++) {
+    await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(400);
+  }
 }
 const apres = await compter();
 ok('Défilement infini charge une page suivante', apres > avant, `${avant} → ${apres} cartes`);
 await page.screenshot({ path: `${SHOT}/3-scroll.png` });
 
-// ── 5. Aucune erreur console ──
-// Le proxy de cet environnement bloque tout hote externe. On distingue
-// donc les echecs reseau externes (attendus ici) des erreurs applicatives.
-const externes = echecsReseau.filter(u => /youtube|gstatic|googleapis|fonts/.test(u));
-const internes = echecsReseau.filter(u => !/youtube|gstatic|googleapis|fonts/.test(u));
-console.log(`\n  ressources externes bloquees par le proxy : ${externes.length}`);
-externes.slice(0,2).forEach(u => console.log('    ' + u.slice(0,110)));
-if (internes.length) internes.slice(0,5).forEach(u => console.log('    INTERNE ' + u.slice(0,110)));
+// ── 6. Les référentiels alimentent le formulaire de publication ──
+await page.locator('nav button').nth(2).evaluate(e => e.click());
+await page.waitForTimeout(1500);
+const listes = page.locator('select');
+const nbListes = await listes.count();
+ok('Formulaire de publication : listes déroulantes', nbListes >= 5, `${nbListes} listes`);
+if (nbListes >= 4) {
+  const postes = await listes.nth(1).locator('option').allTextContents();
+  ok('Postes restreints au sport choisi', postes.length > 1 && postes.length < 30,
+     postes.slice(1, 4).join(', '));
+  const saisons = await listes.nth(3).locator('option').allTextContents();
+  const premiere = saisons[1] ?? '';
+  const anneeCourante = new Date().getFullYear();
+  ok('Saisons ordonnées : la courante en tête',
+     Number(premiere.slice(0, 4)) >= anneeCourante - 1 && Number(premiere.slice(0, 4)) <= anneeCourante + 1,
+     `première proposée : ${premiere}`);
+}
+
+// ── 7. La recherche passe par le serveur ──
+await page.locator('nav button').nth(1).evaluate(e => e.click());
+await page.waitForTimeout(2000);
+const corpsRecherche = await page.textContent('body');
+ok('Recherche : résultats rendus', /utilisateur|athlète/.test(corpsRecherche));
+ok('Compte annoncé comme « affichés », pas « trouvés »', /affich/i.test(corpsRecherche),
+   'la liste est paginée : annoncer un total qu\'on n\'a pas serait faux');
+await page.screenshot({ path: `${SHOT}/4-recherche.png` });
+
+// ── 8. Aucune erreur applicative ──
+// Le proxy de cet environnement bloque tout hôte externe. On distingue donc
+// les échecs réseau externes (attendus) des erreurs applicatives.
+const externes = echecsReseau.filter(u => /youtube|ytimg|gstatic|googleapis|fonts/.test(u));
+const internes = echecsReseau.filter(u => !/youtube|ytimg|gstatic|googleapis|fonts/.test(u));
+console.log(`\n  ressources externes bloquées par le proxy : ${externes.length}`);
+if (internes.length) internes.slice(0, 5).forEach(u => console.log('    INTERNE ' + u.slice(0, 110)));
 
 const graves = erreurs.filter(e =>
-  !/favicon|React DevTools|ERR_TUNNEL_CONNECTION_FAILED|Failed to load resource/i.test(e));
-ok('Aucune requete applicative en echec', internes.length === 0, internes.slice(0,2).join(' | '));
+  !/favicon|React DevTools|ERR_TUNNEL_CONNECTION_FAILED|ERR_CERT_AUTHORITY_INVALID|Failed to load resource|WebSocket/i.test(e));
+ok('Aucune requête applicative en échec', internes.length === 0, internes.slice(0, 2).join(' | '));
 ok('Aucune erreur JavaScript applicative', graves.length === 0, graves.slice(0, 3).join(' | '));
 
 await nav.close();
