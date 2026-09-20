@@ -7,7 +7,7 @@ import {
   Briefcase, Star, NotebookPen, Building2,
   Mail, Edit3, Save, Loader2,
   Bot, Send, SlidersHorizontal, Wand2,
-  Eye, EyeOff, Flag, MoreVertical, AlertTriangle,
+  Eye, Flag, MoreVertical, AlertTriangle,
   Mic, MicOff, Bell, Video, Users, Settings, Lock,
   Folder, FolderOpen, Upload, FileCheck2,
   Calendar, Clock,
@@ -1154,7 +1154,6 @@ function FitToggleIcon({ size = 18, color = '#fff' }) {
 function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOpenComments, onOpenShare,
                              isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
                              onView, isSaved, onToggleSave }) {
-  const [infoHidden, setInfoHidden] = useState(false);
   const [viewCount, setViewCount] = useState(data.views || 0);
   const viewedRef = useRef(false); // garantit 1 vue comptée par affichage de carte
   const markViewed = () => {
@@ -1381,25 +1380,9 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             className="flex-shrink-0">
             <Avatar profile={data.profiles} size={48} ringColor={C.gold} />
           </button>
-          {/* Niveau de l'athlète — masquable via le bouton œil */}
-          {!infoHidden && data.profiles?.level && <LevelChip level={data.profiles.level} />}
-          {/* Bouton œil — placé après le niveau */}
-          <button onClick={(e) => { e.stopPropagation(); setInfoHidden(h => !h); }}
-            aria-label={infoHidden ? 'Afficher les infos' : 'Masquer les infos'}
-            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-            style={{
-              backgroundColor: 'rgba(8,15,32,0.6)',
-              backdropFilter: 'blur(10px)',
-              border: `1px solid rgba(255,255,255,0.15)`,
-            }}>
-            {infoHidden
-              ? <Eye size={13} style={{ color: C.text }} strokeWidth={2.2} />
-              : <EyeOff size={13} style={{ color: C.text }} strokeWidth={2.2} />}
-          </button>
-          {/* Catégorie de la vidéo (Match ou Entraînement) — masquable via le bouton œil */}
-          {!infoHidden && data.video_type && <VideoTypeBadge type={data.video_type} />}
-          {/* Poste de l'athlète — affiché en dessous du type, masquable aussi */}
-          {!infoHidden && data.position && (
+          {data.profiles?.level && <LevelChip level={data.profiles.level} />}
+          {data.video_type && <VideoTypeBadge type={data.video_type} />}
+          {data.position && (
             <span className="inline-flex items-center gap-1 rounded-full font-semibold px-2.5 py-1 text-[11px]"
               style={{
                 backgroundColor: 'rgba(8,15,32,0.65)', color: C.text,
@@ -1411,7 +1394,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           )}
         </div>
 
-        {!infoHidden && (
+        {(
           <>
             <h2 className="text-lg font-extrabold mb-1" style={{ color: C.text }}>
               {data.title}
