@@ -1427,17 +1427,16 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               <Eye size={13} strokeWidth={2.2} /> {formatCount(viewCount)} vue{viewCount > 1 ? 's' : ''}
             </div>
 
-            {/* Ligne meta : âge · catégorie d'âge · niveau spécifique vidéo */}
+            {/* Ligne meta : âge de l'athlète · catégorie d'âge de la compétition.
+                Le niveau de la vidéo n'y figure plus : il se lisait à côté du
+                badge Match/Entraînement comme une contradiction — « Match »
+                d'un côté, « Entraînement » de l'autre — alors que ce sont deux
+                notions distinctes, le type de séquence et son niveau de jeu. */}
             {(() => {
               const authorAge = computeAge(data.profiles?.birthdate) ?? data.profiles?.age;
-              const videoLevelLabel = data.level && {
-                amateur: '🌱 Amateur', semi_pro: '⭐ Semi-pro',
-                pro: '🏆 Pro', entrainement: '🏋️ Entraînement',
-              }[data.level];
               const items = [];
               if (authorAge) items.push(`${authorAge} ans`);
               if (data.age_category) items.push(data.age_category);
-              if (videoLevelLabel) items.push(videoLevelLabel);
               if (items.length === 0) return null;
               return (
                 <div className="text-xs mb-1" style={{ color: C.textDim }}>
