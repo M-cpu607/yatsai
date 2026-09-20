@@ -1457,7 +1457,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 la performance : contre qui, quand, à quel poste. */}
             {(() => {
               const chips = [];
-              if (data.jersey_number != null) chips.push(`👕 n°${data.jersey_number}`);
               if (data.opponent_level) chips.push(`🥊 ${data.opponent_level}`);
               if (data.season) chips.push(`📅 ${data.season}`);
               if (data.match_date) {
