@@ -66,7 +66,12 @@ ok('Pas d\'état vide "Aucune vidéo"', !corps.includes('Aucune vidéo encore'))
 // disparaît du contrat serveur, c'est ici que ça se voit.
 ok('Niveau de l\'adversaire affiché', /Régional|National|District|International|Loisir/.test(corps),
    'colonne opponent_level');
-ok('Saison affichée', /20\d\d-20\d\d/.test(corps), 'colonne season');
+// La saison a été RETIRÉE de la carte : la date de match la contient déjà,
+// et les afficher toutes les deux disait deux fois la même chose. Le test
+// vérifie donc l'inverse de ce qu'il vérifiait avant.
+ok('Date du match affichée', /\d\d\/\d\d\/\d{4}/.test(corps), 'colonne match_date');
+ok('Saison absente de la carte', !/20\d\d-20\d\d/.test(corps),
+   'la date la contient : l\'afficher aussi ferait doublon');
 await page.screenshot({ path: `${SHOT}/2-feed.png` });
 
 // ── 5. Pagination par curseur ──
