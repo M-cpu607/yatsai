@@ -3328,18 +3328,21 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
   // ─── Filtres VIDÉOS ─────────────────────────────────────────────
   const DEFAULT_FILTERS = {
     sport: null,
-    videoType: null,       // 'match' | 'training'
     levels: [],            // niveaux d'auteur
-    videoLevels: [],       // niveau spécifique à la vidéo (amateur/semi_pro/pro/entrainement)
     positionId: null,      // référentiel positions, dépend du sport
     periodDays: null,      // 1, 7, 30, 90, 180
-    championship: '',      // nom du championnat
     ageCategoryId: null,   // référentiel age_categories
     opponentLevelId: null, // niveau d'adversaire minimum (ce niveau ou mieux)
-    country: '',
-    region: '',
-    city: '',
+    lieu: '',              // ville, région ou pays — un seul champ
   };
+  // Trois filtres ont été retirés de ce panneau :
+  //  · le TYPE de vidéo, déjà proposé en pastilles au-dessus du fil ;
+  //  · le NIVEAU DE LA VIDÉO, qui se lisait à côté du niveau de l'auteur
+  //    sans qu'on puisse deviner lequel désignait quoi — et que le niveau
+  //    de l'adversaire renseigne mieux ;
+  //  · le CHAMPIONNAT, du texte libre : un filtre sur du texte libre ne
+  //    peut par construction jamais être exhaustif.
+  // Et les trois champs pays / région / ville n'en font plus qu'un.
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const refs = useReferentiels();
   // Un poste n'existe que dans son sport : après un changement de sport
@@ -3396,21 +3399,15 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
       if (!hay.includes(needle)) return false;
     }
     if (filters.sport && v.sport !== filters.sport) return false;
-    if (filters.videoType && v.video_type !== filters.videoType) return false;
     if (filters.levels.length > 0) {
       const lvl = v.profiles?.level;
       if (!lvl || !filters.levels.includes(lvl)) return false;
-    }
-    // Filtre Niveau spécifique de la vidéo
-    if (filters.videoLevels.length > 0) {
-      if (!v.level || !filters.videoLevels.includes(v.level)) return false;
     }
     if (posteFiltre && v.position_id !== posteFiltre) return false;
     if (filters.periodDays && v.created_at) {
       const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
       if (ageDays > filters.periodDays) return false;
     }
-    if (filters.championship && !norm(v.championship).includes(norm(filters.championship))) return false;
     if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
     // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
     if (filters.opponentLevelId) {
@@ -3418,9 +3415,9 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
       const obtenu = rangNiveau(v.opponent_level_id);
       if (obtenu === null || attendu === null || obtenu < attendu) return false;
     }
-    if (filters.country && !norm(v.country).includes(norm(filters.country))) return false;
-    if (filters.region && !norm(v.region).includes(norm(filters.region))) return false;
-    if (filters.city && !norm(v.city).includes(norm(filters.city))) return false;
+    // Un seul champ de lieu, comparé aux trois colonnes : celui qui cherche
+    // « Bordeaux » n'a pas à savoir si c'est une ville, une région ou un pays.
+    if (filters.lieu && !norm(`${v.city || ''} ${v.region || ''} ${v.country || ''}`).includes(norm(filters.lieu))) return false;
     return true;
   }), [videos, needle, filters, rangNiveau, posteFiltre]);
 
@@ -3439,17 +3436,12 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
   }, [profiles, needle, filters]);
 
   const activeFilterCount = (filters.sport ? 1 : 0)
-    + (filters.videoType ? 1 : 0)
     + (filters.levels.length > 0 ? 1 : 0)
-    + (filters.videoLevels.length > 0 ? 1 : 0)
     + (posteFiltre ? 1 : 0)
     + (filters.periodDays ? 1 : 0)
-    + (filters.championship.trim() ? 1 : 0)
     + (filters.ageCategoryId ? 1 : 0)
     + (filters.opponentLevelId ? 1 : 0)
-    + (filters.country.trim() ? 1 : 0)
-    + (filters.region.trim() ? 1 : 0)
-    + (filters.city.trim() ? 1 : 0);
+    + (filters.lieu.trim() ? 1 : 0);
 
   const toggleLevel = (lv) => setFilters(f => ({
     ...f,
@@ -3553,29 +3545,6 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
-              {/* Type de vidéo */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📹 Type</label>
-                <div className="flex gap-1.5">
-                  {[
-                    { id: null, label: 'Tout' },
-                    { id: 'match', label: '🏆 Match' },
-                    { id: 'training', label: '🏋️ Entraînement' },
-                  ].map(t => {
-                    const active = (filters.videoType ?? null) === t.id;
-                    return (
-                      <button key={String(t.id)} onClick={() => setFilters(f => ({ ...f, videoType: t.id }))}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.bg,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>{t.label}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
               {/* Niveaux de l'auteur */}
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏅 Niveau de l'auteur</label>
@@ -3590,36 +3559,6 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                     const active = filters.levels.includes(lv.id);
                     return (
                       <button key={lv.id} onClick={() => toggleLevel(lv.id)}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.bg,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>{lv.label}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Niveau de la vidéo (déclaré à la publication) */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🎬 Niveau de la vidéo</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { id: 'amateur',      label: '🌱 Amateur' },
-                    { id: 'semi_pro',     label: '⭐ Semi-pro' },
-                    { id: 'pro',          label: '🏆 Pro' },
-                    { id: 'entrainement', label: '🏋️ Entraînement' },
-                  ].map(lv => {
-                    const active = filters.videoLevels.includes(lv.id);
-                    return (
-                      <button key={lv.id}
-                        onClick={() => setFilters(f => ({
-                          ...f,
-                          videoLevels: active
-                            ? f.videoLevels.filter(x => x !== lv.id)
-                            : [...f.videoLevels, lv.id],
-                        }))}
                         className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
                         style={{
                           backgroundColor: active ? C.goldSoft : C.bg,
@@ -3666,16 +3605,6 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 </div>
               </div>
 
-              {/* Championnat */}
-              <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
-                <input type="text" value={filters.championship}
-                  onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
-                  placeholder="Ex : National 2, Ligue 1, Régional 1…"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
-
               {/* Catégorie d'âge */}
               <ChampSelect compact
                 label="🎂 Catégorie d'âge"
@@ -3697,26 +3626,16 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                 )}
               </div>
 
-              {/* Localisation vidéo */}
+              {/* Localisation — un seul champ au lieu de trois. Celui qui
+                  cherche « Bordeaux » n'a pas à décider si c'est une ville,
+                  une région ou un pays : la saisie est comparée aux trois. */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📍 Localisation</label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  <input type="text" value={filters.country}
-                    onChange={(e) => setFilters(f => ({ ...f, country: e.target.value }))}
-                    placeholder="Pays"
-                    className="px-2 py-2 rounded-lg text-xs outline-none"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                  <input type="text" value={filters.region}
-                    onChange={(e) => setFilters(f => ({ ...f, region: e.target.value }))}
-                    placeholder="Région"
-                    className="px-2 py-2 rounded-lg text-xs outline-none"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                  <input type="text" value={filters.city}
-                    onChange={(e) => setFilters(f => ({ ...f, city: e.target.value }))}
-                    placeholder="Ville"
-                    className="px-2 py-2 rounded-lg text-xs outline-none"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                </div>
+                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📍 Lieu</label>
+                <input type="text" value={filters.lieu}
+                  onChange={(e) => setFilters(f => ({ ...f, lieu: e.target.value }))}
+                  placeholder="Ville, région ou pays"
+                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
+                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
               </div>
 
               {/* Reset */}
