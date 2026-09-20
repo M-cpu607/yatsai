@@ -29,3 +29,8 @@ dist-ssr
 
 # Outils internes Claude Code
 .claude/
+
+# Base Supabase locale
+supabase/dumps/
+supabase/.temp/
+supabase/.branches/

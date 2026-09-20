@@ -1,0 +1,74 @@
+# Configuration de la pile Supabase locale pour Scolympia.
+# Lancée par `supabase start`, elle démarre sur votre machine les cinq
+# services que l'application utilise : Postgres, PostgREST, GoTrue,
+# Realtime et Storage.
+
+project_id = "scolympia"
+
+[api]
+enabled = true
+port = 54321
+# `extensions` est indispensable : search_key() et les index trigram
+# y résolvent unaccent et gin_trgm_ops.
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# Aligné sur la production (PostgreSQL 17.6). Ne pas baisser : le
+# schéma utilise des comportements propres à PG17.
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[realtime]
+enabled = true
+
+[studio]
+# Interface d'administration : http://127.0.0.1:54323
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+# Boîte mail locale : http://127.0.0.1:54324
+# Tous les e-mails de l'app y arrivent, sans limite de débit et sans
+# jamais partir sur Internet. C'est ici que vous pourrez construire et
+# tester « mot de passe oublié » sans toucher à un service d'envoi.
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+# Les 6 buckets (avatars, banners, level-proofs, signed-posts,
+# sponsored, videos) sont créés par la migration.
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173", "http://127.0.0.1:5173"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+# Confirmation par e-mail désactivée, comme en production : le code de
+# Auth.jsx attend une session immédiatement après signUp, et resterait
+# bloqué si la confirmation était exigée.
+enable_confirmations = false
+secure_password_change = false
+
+[analytics]
+enabled = false
