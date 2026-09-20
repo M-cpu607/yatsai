@@ -1153,7 +1153,7 @@ function FitToggleIcon({ size = 18, color = '#fff' }) {
 
 function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOpenComments, onOpenShare,
                              isRecruiter, canBookmark, shortlistStatus, onAddShortlist, isOwnVideo, onSelectProfile,
-                             onReport, onView, isSaved, onToggleSave }) {
+                             onView, isSaved, onToggleSave }) {
   const [infoHidden, setInfoHidden] = useState(false);
   const [viewCount, setViewCount] = useState(data.views || 0);
   const viewedRef = useRef(false); // garantit 1 vue comptée par affichage de carte
@@ -1341,11 +1341,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
         <IconButton icon={Share2} label="Partager"
           onClick={(e) => { e?.stopPropagation?.(); onOpenShare?.(data); }}
           count={formatCount(stats.shares)} />
-        {/* Bouton Signaler — accessible à tous (sauf sur sa propre vidéo) */}
-        {!isOwnVideo && (
-          <IconButton icon={Flag} label="Signaler"
-            onClick={(e) => { e?.stopPropagation?.(); onReport?.('video', data.id, data.title); }} />
-        )}
         {/* Bouton enregistrer (favoris) — recruteurs + observateurs */}
         {canBookmark && !isOwnVideo && (
           <IconButton icon={Bookmark} label="Enregistrer" active={isSaved}
@@ -1706,7 +1701,7 @@ function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete, onRepor
 }
 
 // ─── PARTAGE MODAL ──────────────────────────────────────────────
-function ShareModal({ video, currentUserId, onClose, onShare }) {
+function ShareModal({ video, currentUserId, onClose, onShare, isOwnVideo, onReport }) {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -1850,6 +1845,20 @@ function ShareModal({ video, currentUserId, onClose, onShare }) {
             </div>
           )}
         </div>
+
+        {/* Signaler — déplacé ici depuis la colonne d'actions, où il occupait
+            une place permanente pour une action rare. La feuille de partage
+            regroupe déjà ce qui n'est pas de l'engagement. */}
+        {!isOwnVideo && onReport && (
+          <div className="px-4 pt-1 pb-2">
+            <button onClick={() => { onClose?.(); onReport('video', video.id, video.title); }}
+              className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold"
+              style={{ backgroundColor: 'transparent', color: C.textDim, border: `1px solid ${C.border}` }}>
+              <Flag size={13} strokeWidth={2.2} />
+              Signaler cette vidéo
+            </button>
+          </div>
+        )}
 
         <div className="px-4 mt-2">
           <div className="text-[10px] font-semibold mb-2" style={{ color: C.gold }}>
@@ -2019,7 +2028,6 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
                 onAddShortlist={(vid) => onAddToShortlist?.(vid)}
                 isOwnVideo={v.user_id === currentUserId}
                 onSelectProfile={onSelectProfile}
-                onReport={onReport}
                 onView={onView}
                 isSaved={savedVideoIds?.has(v.id)}
                 onToggleSave={onToggleSaveVideo} />
@@ -2092,7 +2100,9 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
       {shareVideo && (
         <ShareModal video={shareVideo} currentUserId={currentUserId}
           onClose={() => setShareVideo(null)}
-          onShare={onShare} />
+          onShare={onShare}
+          isOwnVideo={shareVideo.user_id === currentUserId}
+          onReport={onReport} />
       )}
     </>
   );
