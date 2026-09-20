@@ -1437,6 +1437,10 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               const items = [];
               if (authorAge) items.push(`${authorAge} ans`);
               if (data.age_category) items.push(data.age_category);
+              // Le championnat descend ici plutôt que d'occuper sa propre
+              // ligne en doré : c'est du texte libre, souvent vide, et la
+              // couleur d'accent lui donnait un poids qu'il n'a pas.
+              if (data.championship) items.push(data.championship);
               if (items.length === 0) return null;
               return (
                 <div className="text-xs mb-1" style={{ color: C.textDim }}>
@@ -1444,13 +1448,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 </div>
               );
             })()}
-
-            {/* Championnat (mise en avant gold) */}
-            {data.championship && (
-              <div className="text-xs font-semibold mb-1" style={{ color: C.gold }}>
-                🏆 {data.championship}
-              </div>
-            )}
 
             {/* Contexte du match — ce qui permet au recruteur de situer
                 la performance : contre qui, quand, à quel poste. */}
