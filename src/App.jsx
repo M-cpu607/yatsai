@@ -14254,8 +14254,13 @@ export default function App() {
         />
       )}
 
-      {/* Rappel saisonnier (août/septembre) — championnat à mettre à jour */}
-      {userProfile && shouldShowSeasonReminder(userProfile) && (
+      {/* Rappel saisonnier (août/septembre) — championnat à mettre à jour.
+          Restreint à l'écran Profil. Il était auparavant en `fixed top-0`
+          par-dessus TOUS les écrans, deux mois durant jusqu'à ce qu'on le
+          ferme : sur le fil, il mangeait le sixième haut de l'image avant
+          même la première vidéo. Il reste là où son action a un sens —
+          l'écran depuis lequel on modifie justement son profil. */}
+      {userProfile && tab === 'profile' && shouldShowSeasonReminder(userProfile) && (
         <SeasonReminderBanner
           onEdit={async () => {
             const now = new Date().toISOString();
