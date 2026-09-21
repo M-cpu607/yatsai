@@ -839,77 +839,6 @@ function getYouTubeIdFromUrl(url) {
 function isUploadedVideo(data) {
   return !!data?.video_url && !data?.youtube_url;
 }
-
-// ─── Lecture YouTube hors du navigateur ───────────────────────────
-// Sur iOS, l'application tourne sous le schéma `capacitor://localhost` :
-// WKWebView réserve http et https, et Capacitor interdit donc de les
-// utiliser comme `iosScheme`. L'intégration YouTube ne reçoit alors aucun
-// référent http(s) valide et refuse de jouer — c'est l'« erreur 153 ».
-//
-// On tente malgré tout la lecture intégrée (nocookie + aucun référent
-// transmis, qui passent dans une partie des cas), et on garde à portée de
-// pouce un repli qui, lui, marche partout : ouvrir la vidéo hors de
-// l'application, dans l'app YouTube si elle est installée, sinon Safari.
-function urlEmbedYouTube(id, extra = '') {
-  return `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0${extra}`;
-}
-
-// Dans l'app empaquetée, l'intégration directe échoue : la page n'a pas
-// d'origine http(s), YouTube répond « erreur 153 ». On passe alors par une
-// fonction Edge du projet Supabase, servie en https, qui héberge le lecteur
-// et présente donc à YouTube un référent qu'il accepte. Un saut de plus,
-// mais la vidéo reste dans le fil au lieu d'ouvrir une autre application.
-function urlLecteurRelaye(id) {
-  const base = import.meta.env.VITE_SUPABASE_URL;
-  if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube?v=${encodeURIComponent(id)}`;
-}
-
-// « Sommes-nous dans l'app empaquetée ? », utilisable pendant le rendu.
-// Première réponse : le pont natif que Capacitor injecte dans la WebView
-// avant le code de l'application. Il est ensuite remplacé par le module
-// @capacitor/core, chargé plus tard — d'où la confirmation asynchrone par
-// isNativeApp(), qui interroge le module lui-même.
-function useEstAppNative() {
-  const [natif, setNatif] = useState(() => {
-    try { return !!window.Capacitor?.isNativePlatform?.(); } catch { return false; }
-  });
-  useEffect(() => {
-    let vivant = true;
-    isNativeApp().then(v => { if (vivant) setNatif(v); });
-    return () => { vivant = false; };
-  }, []);
-  return natif;
-}
-
-function ouvrirSurYouTube(id) {
-  const url = `https://www.youtube.com/watch?v=${id}`;
-  // Deux voies, parce qu'aucune n'est garantie partout : `window.open` dans
-  // la WebView de Capacitor, qui passe la main au navigateur du système, et
-  // à défaut une navigation directe, que Capacitor intercepte pour ouvrir
-  // le lien à l'extérieur sans déplacer l'application.
-  try {
-    const f = window.open(url, '_blank', 'noopener');
-    if (f) return;
-  } catch { /* on tente l'autre voie */ }
-  try { window.location.href = url; } catch { /* rien de plus à faire */ }
-}
-
-// Le bouton de repli, posé par-dessus le lecteur intégré.
-function BoutonOuvrirYouTube({ youtubeId, className = '' }) {
-  if (!youtubeId) return null;
-  return (
-    <button type="button"
-      onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
-      className={`absolute z-20 px-3 py-1.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1.5 ${className}`}
-      style={{
-        backgroundColor: 'rgba(8,15,32,0.78)', color: C.text,
-        border: '1px solid rgba(255,255,255,0.18)', backdropFilter: 'blur(8px)',
-      }}>
-      <Play size={11} strokeWidth={2.6} /> Ouvrir sur YouTube
-    </button>
-  );
-}
 function getVideoThumb(data) {
   // Priorité : thumbnail_url explicite > YouTube hqdefault > null (le composant gérera le fallback)
   if (data?.thumbnail_url) return data.thumbnail_url;
@@ -1266,7 +1195,6 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   const isUpload = !youtubeId && !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
-  const estAppNative = useEstAppNative();
   const [fsOpen, setFsOpen] = useState(false);   // lecteur plein écran paysage ouvert ?
   const [fsStart, setFsStart] = useState(0);      // instant de reprise en plein écran
 
@@ -1361,22 +1289,15 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           </>
         ) : ytOpen && youtubeId ? (
           // Vidéo YouTube : iframe intégré DANS la carte (pas d'overlay plein écran)
-          <>
-            <iframe
-              src={(estAppNative && urlLecteurRelaye(youtubeId)) || urlEmbedYouTube(youtubeId, '&autoplay=1')}
-              title={data.title}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              className="absolute inset-0 w-full h-full"
-              style={{ border: 0 }} />
-            {/* Sous la loupe (top-12, 40 px de haut) et sous les chips de
-                filtre, pour ne recouvrir ni l'une ni les autres. */}
-            <BoutonOuvrirYouTube youtubeId={youtubeId} className="top-28 left-4" />
-          </>
+          <iframe
+            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`}
+            title={data.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            className="absolute inset-0 w-full h-full"
+            style={{ border: 0 }} />
         ) : (
-          // Miniature YouTube : le tap lance le lecteur dans la carte,
-          // directement sur le web, via le relais https en natif.
-          <button onClick={() => { setYtOpen(true); markViewed(); }}
-            className="absolute inset-0 w-full h-full">
+          // Miniature YouTube : tap = lecture intégrée dans la carte
+          <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
             {thumbnailUrl ? (
               <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
                 className="absolute inset-0 w-full h-full object-cover" />
@@ -1588,8 +1509,6 @@ function YouTubePlayer({ video, onClose }) {
   const isUpload = !youtubeId && !!video.video_url;
   const vidRef = useRef(null);
 
-  const estAppNative = useEstAppNative();
-
   return (
     <div className="fixed inset-0 z-[60] flex flex-col"
       style={{ backgroundColor: '#000' }}>
@@ -1611,18 +1530,15 @@ function YouTubePlayer({ video, onClose }) {
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
         {youtubeId ? (
-          <>
-            <iframe
-              width="100%"
-              height="100%"
-              src={(estAppNative && urlLecteurRelaye(youtubeId)) || urlEmbedYouTube(youtubeId, '&autoplay=1')}
-              title={video.title}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              style={{ border: 0 }}
-            />
-            <BoutonOuvrirYouTube youtubeId={youtubeId} className="bottom-6 left-1/2 -translate-x-1/2" />
-          </>
+          <iframe
+            width="100%"
+            height="100%"
+            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
+            title={video.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            style={{ border: 0 }}
+          />
         ) : isUpload ? (
           <video
             ref={vidRef}

@@ -263,29 +263,3 @@ npx supabase db pull          # écrit une nouvelle migration
 Dans l'autre sens, une migration écrite et testée en local se pousse avec
 `npx supabase db push`. **Testez toujours en local d'abord** : c'est
 précisément ce que ce dossier vous permet.
-
----
-
-## Fonctions Edge
-
-| Fonction | JWT | Rôle |
-|---|---|---|
-| `scout-chatbot` | exigé | assistant de recrutement |
-| `delete-account` | exigé | suppression de compte |
-| `lecteur-youtube` | **non exigé** | page HTML qui héberge le lecteur YouTube |
-
-`lecteur-youtube` est la seule sans JWT, et c'est délibéré. Elle est chargée
-dans une balise `<iframe>`, qui ne peut pas porter d'en-tête `Authorization` ;
-et elle ne touche à aucune donnée : elle renvoie une page construite à partir
-d'un identifiant de vidéo YouTube — public par nature — validé contre
-`^[A-Za-z0-9_-]{11}$` avant d'entrer dans le HTML. Tout autre paramètre
-reçoit un 400 sans jamais être réinjecté dans la réponse.
-
-Elle existe parce que l'application iOS tourne sous `capacitor://localhost` :
-WKWebView réserve `http` et `https`, Capacitor interdit donc de les donner à
-`iosScheme`, et YouTube refuse les intégrations sans référent http(s) valide
-(« erreur 153 »). Servie en https, cette fonction fournit ce référent.
-
-```bash
-npx supabase functions deploy lecteur-youtube --no-verify-jwt
-```
