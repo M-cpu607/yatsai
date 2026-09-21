@@ -11,6 +11,12 @@ import {
   Mic, MicOff, Bell, Video, Users, Settings, Lock,
   Folder, FolderOpen, Upload, FileCheck2,
   Calendar, Clock,
+  // Remplacent les emoji des pastilles : un emoji change de dessin, de
+  // couleur et de taille selon l'appareil, et aucun n'est alignable avec
+  // le texte. Ceux-ci sont monochromes et suivent la couleur du libellé.
+  Trophy, Dumbbell, Swords, Target, Sprout, Rocket, CircleSlash,
+  Hourglass, CircleCheck, CircleX, Ban, CalendarDays, Download,
+  Globe, Tag, Cake, FileText, Shield,
 } from 'lucide-react';
 import { supabase } from './supabase';
 import { useReferentiels, normaliserPoste } from './referentiels';
@@ -1392,7 +1398,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 border: `1px solid rgba(255,255,255,0.15)`, backdropFilter: 'blur(6px)',
                 textShadow: '0 1px 2px rgba(0,0,0,0.5)',
               }}>
-              🎯 {data.position}
+              <Target size={11} strokeWidth={2.4} /> {data.position}
             </span>
           )}
         </div>
@@ -1434,17 +1440,20 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 la performance : contre qui, quand, à quel poste. */}
             {(() => {
               const chips = [];
-              if (data.opponent_level) chips.push(`🥊 ${data.opponent_level}`);
+              if (data.opponent_level) chips.push({ Icon: Swords, texte: data.opponent_level });
               if (data.match_date) {
-                chips.push(`🗓️ ${new Date(data.match_date + 'T00:00:00').toLocaleDateString('fr-FR')}`);
+                chips.push({
+                  Icon: CalendarDays,
+                  texte: new Date(data.match_date + 'T00:00:00').toLocaleDateString('fr-FR'),
+                });
               }
               if (chips.length === 0) return null;
               return (
                 <div className="flex flex-wrap gap-1.5 mb-1.5">
                   {chips.map(c => (
-                    <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                    <span key={c.texte} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
                       style={{ backgroundColor: C.surface, color: C.textDim, border: `1px solid ${C.border}` }}>
-                      {c}
+                      <c.Icon size={10} strokeWidth={2.4} /> {c.texte}
                     </span>
                   ))}
                 </div>
@@ -1954,21 +1963,21 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
       {/* Chips de filtre type (Tout / Matchs / Entraînements) — flottants en haut */}
       <div className="fixed top-12 left-28 right-4 z-20 flex gap-1.5 overflow-x-auto scrollbar-none">
         {[
-          { id: null,       label: 'Tout',           icon: null },
-          { id: 'match',    label: 'Matchs',         icon: '🏆' },
-          { id: 'training', label: 'Entraînements',  icon: '🏋️' },
+          { id: null,       label: 'Tout',           Icon: null },
+          { id: 'match',    label: 'Matchs',         Icon: Trophy },
+          { id: 'training', label: 'Entraînements',  Icon: Dumbbell },
         ].map(f => {
           const active = (typeFilter ?? null) === f.id;
           return (
             <button key={String(f.id)} onClick={() => onChangeTypeFilter?.(f.id)}
-              className="px-2.5 py-1 rounded-full text-[10px] font-bold flex-shrink-0 whitespace-nowrap"
+              className="px-2.5 py-1 rounded-full text-[10px] font-bold flex-shrink-0 whitespace-nowrap inline-flex items-center gap-1"
               style={{
-                backgroundColor: active ? C.gold : 'rgba(8,15,32,0.6)',
+                backgroundColor: active ? C.text : 'rgba(8,15,32,0.6)',
                 color: active ? C.bg : C.text,
                 backdropFilter: 'blur(10px)',
-                border: `1px solid ${active ? C.gold : 'rgba(255,255,255,0.15)'}`,
+                border: `1px solid ${active ? C.text : 'rgba(255,255,255,0.15)'}`,
               }}>
-              {f.icon ? `${f.icon} ` : ''}{f.label}
+              {f.Icon && <f.Icon size={11} strokeWidth={2.4} />}{f.label}
             </button>
           );
         })}
@@ -3008,20 +3017,20 @@ function PublishView({ userProfile, setTab }) {
           </label>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { id: 'match',    label: 'Match',    icon: '🏆', desc: 'Compétition officielle' },
-              { id: 'training', label: 'Entraînement', icon: '🏋️', desc: 'Entraînement / divertissement' },
+              { id: 'match',    label: 'Match',    Icon: Trophy, desc: 'Compétition officielle' },
+              { id: 'training', label: 'Entraînement', Icon: Dumbbell, desc: 'Entraînement / divertissement' },
             ].map(opt => {
               const active = videoType === opt.id;
               return (
                 <button key={opt.id} type="button" onClick={() => setVideoType(opt.id)}
                   className="px-3 py-3 rounded-xl text-left transition-colors"
                   style={{
-                    backgroundColor: active ? C.goldSoft : C.surface,
-                    color: active ? C.gold : C.text,
-                    border: `1px solid ${active ? C.gold : C.border}`,
+                    backgroundColor: active ? C.surface2 : C.surface,
+                    color: C.text,
+                    border: `1px solid ${active ? C.text : C.border}`,
                   }}>
                   <div className="flex items-center gap-2">
-                    <span className="text-base">{opt.icon}</span>
+                    <opt.Icon size={16} strokeWidth={2.4} />
                     <span className="text-sm font-bold">{opt.label}</span>
                   </div>
                   <div className="text-[10px] mt-0.5" style={{ color: C.textMute }}>{opt.desc}</div>
@@ -3233,11 +3242,11 @@ function NotificationsPanel({ notifications: allNotifs, onClose, onMarkAllRead, 
   });
 
   const ICONS = {
-    comment: '💬',
-    video_published: '🎬',
-    message: '📩',
-    follow: '➕',
-    like: '❤️',
+    comment: MessageCircle,
+    video_published: Video,
+    message: Mail,
+    follow: Plus,
+    like: Heart,
   };
 
   return (
@@ -3286,7 +3295,7 @@ function NotificationsPanel({ notifications: allNotifs, onClose, onMarkAllRead, 
                     </button>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start gap-1.5">
-                        <span className="text-base flex-shrink-0">{ICONS[n.type] || '🔔'}</span>
+                        {(() => { const I = ICONS[n.type] || Bell; return <I size={15} strokeWidth={2.2} className="flex-shrink-0" style={{ color: C.textDim }} />; })()}
                         <p className="text-xs leading-relaxed flex-1" style={{ color: C.text }}>
                           {n.body}
                         </p>
@@ -3650,20 +3659,20 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
           {/* Onglets Tout / Vidéos / Utilisateurs */}
           <div className="flex gap-1.5 mb-4 sticky top-0 z-10 fade-in">
             {[
-              { id: 'all',    label: 'Tout',         icon: '✨' },
-              { id: 'videos', label: `Vidéos (${filteredVideos.length})`,    icon: '🎬' },
-              { id: 'users',  label: `Utilisateurs (${filteredProfiles.length})`, icon: '👤' },
+              { id: 'all',    label: 'Tout',         Icon: Sparkles },
+              { id: 'videos', label: `Vidéos (${filteredVideos.length})`,    Icon: Video },
+              { id: 'users',  label: `Utilisateurs (${filteredProfiles.length})`, Icon: User },
             ].map(tab => {
               const active = searchTab === tab.id;
               return (
                 <button key={tab.id} onClick={() => setSearchTab(tab.id)}
                   className="flex-1 py-2 rounded-full text-[11px] font-bold flex items-center justify-center gap-1"
                   style={{
-                    backgroundColor: active ? C.gold : C.surface,
+                    backgroundColor: active ? C.text : C.surface,
                     color: active ? C.bg : C.text,
-                    border: `1px solid ${active ? C.gold : C.border}`,
+                    border: `1px solid ${active ? C.text : C.border}`,
                   }}>
-                  <span>{tab.icon}</span> {tab.label}
+                  <tab.Icon size={12} strokeWidth={2.4} /> {tab.label}
                 </button>
               );
             })}
@@ -3679,7 +3688,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               {searchTab !== 'users' && (
               <>
               <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
-                🎬 VIDÉOS · {filteredVideos.length}
+                <Video size={10} strokeWidth={2.6} className="inline align-[-1px] mr-1" />VIDÉOS · {filteredVideos.length}
               </div>
               {filteredVideos.length === 0 ? (
                 <div className="rounded-2xl py-6 px-4 text-center mb-5"
@@ -3720,19 +3729,20 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                           </div>
                           {(v.video_type || v.profiles?.level || v.age_category) && (
                             <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                              {v.video_type === 'match' ? '🏆 Match' : v.video_type === 'training' ? '🏋️ Entraînement' : ''}
+                              {v.video_type === 'match' ? <><Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Match</>
+                               : v.video_type === 'training' ? <><Dumbbell size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Entraînement</> : ''}
                               {v.profiles?.level && ` · ${v.profiles.level.replace('_', ' ')}`}
                               {v.age_category && ` · ${v.age_category}`}
                             </div>
                           )}
                           {v.championship && (
                             <div className="text-[10px] truncate" style={{ color: C.gold }}>
-                              🏆 {v.championship}
+                              <Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{v.championship}
                             </div>
                           )}
                           {(v.city || v.country) && (
                             <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                              📍 {[v.city, v.region, v.country].filter(Boolean).join(', ')}
+                              <PinIcon size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[v.city, v.region, v.country].filter(Boolean).join(", ")}
                             </div>
                           )}
                         </div>
@@ -3749,7 +3759,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               {searchTab !== 'videos' && (
               <>
               <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
-                👤 UTILISATEURS · {filteredProfiles.length}
+                <User size={10} strokeWidth={2.6} className="inline align-[-1px] mr-1" />UTILISATEURS · {filteredProfiles.length}
               </div>
               {filteredProfiles.length === 0 ? (
                 <div className="rounded-2xl py-6 px-4 text-center"
@@ -3846,7 +3856,7 @@ function ProfileCard({ profile, onSelect, onToggleShortlist, shortlistStatus }) 
         )}
         {(profile.city || profile.country) && (
           <span className="text-[9px] truncate" style={{ color: C.textMute }}>
-            📍 {[profile.city, profile.country].filter(Boolean).join(', ')}
+            <PinIcon size={9} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[profile.city, profile.country].filter(Boolean).join(', ')}
           </span>
         )}
       </div>
@@ -5399,19 +5409,20 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                     </div>
                     {(v.video_type || v.profiles?.level || v.age_category) && (
                       <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                        {v.video_type === 'match' ? '🏆 Match' : v.video_type === 'training' ? '🏋️ Entraînement' : ''}
+                        {v.video_type === 'match' ? <><Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Match</>
+                               : v.video_type === 'training' ? <><Dumbbell size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Entraînement</> : ''}
                         {v.profiles?.level && ` · ${v.profiles.level.replace('_', ' ')}`}
                         {v.age_category && ` · ${v.age_category}`}
                       </div>
                     )}
                     {v.championship && (
                       <div className="text-[10px] truncate" style={{ color: C.gold }}>
-                        🏆 {v.championship}
+                        <Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{v.championship}
                       </div>
                     )}
                     {(v.city || v.country) && (
                       <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                        📍 {[v.city, v.region, v.country].filter(Boolean).join(', ')}
+                        <PinIcon size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[v.city, v.region, v.country].filter(Boolean).join(", ")}
                       </div>
                     )}
                   </div>
@@ -5662,7 +5673,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
           <div className="flex items-center gap-2">
-            <span className="text-base">📨</span>
+            <Send size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
             <div className="text-base font-extrabold" style={{ color: C.text }}>Envoyer ma candidature</div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -5827,7 +5838,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
                             {r.organization || 'Organisation —'}
                           </div>
                           {loc && (
-                            <div className="text-[10px] truncate" style={{ color: C.textMute }}>📍 {loc}</div>
+                            <div className="text-[10px] truncate" style={{ color: C.textMute }}><PinIcon size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{loc}</div>
                           )}
                         </div>
                         {isApplied ? (
@@ -6173,10 +6184,10 @@ function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile, o
   const timeStr = dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const isPast = dt.getTime() < Date.now();
   const stMap = {
-    proposed:  { label: '⏳ En attente', fg: C.gold },
-    accepted:  { label: '✅ Confirmé',   fg: C.green },
-    declined:  { label: '❌ Décliné',    fg: C.red },
-    cancelled: { label: '🚫 Annulé',     fg: C.textDim },
+    proposed:  { label: 'En attente', Icon: Hourglass,   fg: C.gold },
+    accepted:  { label: 'Confirmé',   Icon: CircleCheck, fg: C.green },
+    declined:  { label: 'Décliné',    Icon: CircleX,     fg: C.red },
+    cancelled: { label: 'Annulé',     Icon: Ban,         fg: C.textDim },
   };
   const st = stMap[status] || stMap.proposed;
   const faded = status === 'cancelled' || status === 'declined' || isPast;
@@ -6192,12 +6203,14 @@ function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile, o
           <div className="text-sm font-bold truncate" style={{ color: C.text }}>{p?.full_name || 'Utilisateur'}</div>
           <div className="text-[11px] capitalize" style={{ color: C.textDim }}>🗓️ {dateStr} · {timeStr}</div>
         </button>
-        <span className="text-[10px] font-bold flex-shrink-0" style={{ color: st.fg }}>{st.label}</span>
+        <span className="text-[10px] font-bold flex-shrink-0 inline-flex items-center gap-1" style={{ color: st.fg }}>
+          <st.Icon size={11} strokeWidth={2.4} /> {st.label}
+        </span>
       </div>
       {(item.location || item.note) && (
         <div className="mt-2 text-[11px] space-y-0.5" style={{ color: C.textDim }}>
-          {item.location && <div>📍 {item.location}</div>}
-          {item.note && <div>📝 {item.note}</div>}
+          {item.location && <div className="flex items-center gap-1"><PinIcon size={11} strokeWidth={2.4} />{item.location}</div>}
+          {item.note && <div className="flex items-center gap-1"><FileText size={11} strokeWidth={2.4} />{item.note}</div>}
         </div>
       )}
       {!isRecruiterViewer && status === 'proposed' && onDecide && (
@@ -6227,15 +6240,17 @@ function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile, o
 // Badge de statut réutilisable (candidatures + propositions) : en attente / accepté / refusé.
 function DecisionBadge({ status }) {
   const map = {
-    sent:     { label: '⏳ En attente', bg: C.goldSoft, fg: C.gold },
-    pending:  { label: '⏳ En attente', bg: C.goldSoft, fg: C.gold },
-    accepted: { label: '✅ Acceptée',   bg: 'rgba(34,197,94,0.15)', fg: C.green },
-    refused:  { label: '❌ Refusée',    bg: 'rgba(255,71,87,0.15)', fg: C.red },
+    sent:     { label: 'En attente', Icon: Hourglass,   bg: C.surface2, fg: C.textDim },
+    pending:  { label: 'En attente', Icon: Hourglass,   bg: C.surface2, fg: C.textDim },
+    accepted: { label: 'Acceptée',   Icon: CircleCheck, bg: 'rgba(34,197,94,0.15)', fg: C.green },
+    refused:  { label: 'Refusée',    Icon: CircleX,     bg: 'rgba(255,71,87,0.15)', fg: C.red },
   };
   const s = map[status] || map.sent;
   return (
-    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0"
-      style={{ backgroundColor: s.bg, color: s.fg }}>{s.label}</span>
+    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 inline-flex items-center gap-1"
+      style={{ backgroundColor: s.bg, color: s.fg }}>
+      <s.Icon size={11} strokeWidth={2.4} /> {s.label}
+    </span>
   );
 }
 
@@ -6272,7 +6287,7 @@ function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile,
         </div>
       )}
       <div className="mt-1.5 flex items-center gap-2 text-[10px]" style={{ color: C.textDim }}>
-        {nVid > 0 && <span>🎬 {nVid} vidéo{nVid > 1 ? 's' : ''} jointe{nVid > 1 ? 's' : ''}</span>}
+        {nVid > 0 && <span className="inline-flex items-center gap-1"><Video size={11} strokeWidth={2.4} />{nVid} vidéo{nVid > 1 ? 's' : ''} jointe{nVid > 1 ? 's' : ''}</span>}
         <span>· {timeAgo(item.created_at)}</span>
       </div>
       {canDecide && (
@@ -6318,7 +6333,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
     return rel[0].status || 'sent';
   };
 
-  const TabBtn = ({ id, label, badge }) => (
+  const TabBtn = ({ id, label, badge, icon: Icon }) => (
     <button onClick={() => setTab(id)}
       className="px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap flex-shrink-0"
       style={{
@@ -6326,6 +6341,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
         color: tab === id ? C.bg : C.textDim,
         border: `1px solid ${tab === id ? C.text : C.border}`,
       }}>
+      {Icon && <Icon size={13} strokeWidth={2.4} />}
       {label}
       {badge > 0 && (
         <span className="min-w-[16px] h-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center"
@@ -6350,10 +6366,12 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
       {/* Onglets : visibles pour athlètes et recruteurs (scroll horizontal) */}
       {hasApps && (
         <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar" style={{ scrollbarWidth: 'none' }}>
-          <TabBtn id="messages" label="💬 Messages" />
-          <TabBtn id="apps" label={isRecruiter ? '📥 Candidatures' : '📤 Candidatures'} badge={pendingCount} />
-          <TabBtn id="props" label={isRecruiter ? '📤 Propositions' : '📥 Propositions'} badge={propPendingCount} />
-          <TabBtn id="agenda" label={isRecruiter ? '📅 Emploi du temps' : '📅 Essais'} badge={apptPendingCount} />
+          {/* Le sens de la flèche dit qui reçoit : le recruteur reçoit les
+              candidatures et envoie les propositions, l'athlète l'inverse. */}
+          <TabBtn id="messages" icon={MessageCircle} label="Messages" />
+          <TabBtn id="apps" icon={isRecruiter ? Download : Send} label="Candidatures" badge={pendingCount} />
+          <TabBtn id="props" icon={isRecruiter ? Send : Download} label="Propositions" badge={propPendingCount} />
+          <TabBtn id="agenda" icon={Calendar} label={isRecruiter ? 'Emploi du temps' : 'Essais'} badge={apptPendingCount} />
         </div>
       )}
 
@@ -6848,7 +6866,7 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
           <div className="rounded-xl p-3"
             style={{ backgroundColor: 'rgba(255,184,0,0.1)', border: `1px solid ${C.borderGold}` }}>
             <div className="flex items-start gap-2">
-              <span className="text-base">🏆</span>
+              <Trophy size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-extrabold mb-1" style={{ color: C.text }}>
                   Demande de confirmation de signature
@@ -7075,10 +7093,10 @@ function ShortlistRow({ athlete, notes, onSelectAthlete, onOpenChat, onRemove, o
 
 // ─── SHORTLIST SUPABASE (recruteur) ─────────────────────────────
 const SHORTLIST_TABS = [
-  { id: 'en_attente', label: 'En attente', icon: '⏳', color: 'rgba(255,255,255,0.6)' },
-  { id: 'essai_en_cours', label: 'Essai en cours', icon: '🏃', color: '#FFB800' },
-  { id: 'essai_termine', label: 'Essai terminé', icon: '✅', color: '#3B82F6' },
-  { id: 'signe', label: 'Signés', icon: '🏆', color: '#22C55E' },
+  { id: 'en_attente', label: 'En attente', Icon: Hourglass, color: 'rgba(255,255,255,0.6)' },
+  { id: 'essai_en_cours', label: 'Essai en cours', Icon: Clock, color: '#FFB800' },
+  { id: 'essai_termine', label: 'Essai terminé', Icon: CircleCheck, color: '#3B82F6' },
+  { id: 'signe', label: 'Signés', Icon: Trophy, color: '#22C55E' },
 ];
 
 // ─── SIGN REQUEST MODAL (recruteur déclare une signature) ────────
@@ -7102,7 +7120,7 @@ function SignRequestModal({ athlete, onClose, onConfirm }) {
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
           <div className="flex items-center gap-2">
-            <span className="text-base">🏆</span>
+            <Trophy size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
             <div className="text-base font-extrabold" style={{ color: C.text }}>Déclarer la signature</div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -7248,7 +7266,7 @@ function ShortlistView({ dbShortlist, onUpdateStatus, onRemove, onSelectProfile,
                   color: active ? C.bg : C.text,
                   border: `1px solid ${active ? tab.color : C.border}`,
                 }}>
-                <span>{tab.icon}</span>
+                <tab.Icon size={13} strokeWidth={2.4} />
                 <span>{tab.label}</span>
                 {/* Trois points qui sautent pour "Essai en cours" (visuel d'activité) */}
                 {tab.id === 'essai_en_cours' && counts[tab.id] > 0 && (
@@ -8101,9 +8119,9 @@ function ShortlistDbRow({ athlete, currentStatus, actualStatus, onUpdateStatus, 
             </div>
             {athlete.verified && <BadgeCheck size={12} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
             {isPendingSign && (
-              <span className="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono"
-                style={{ backgroundColor: 'rgba(255,184,0,0.18)', color: C.gold, border: `1px solid ${C.borderGold}` }}>
-                ⏳ EN ATTENTE
+              <span className="px-1.5 py-0.5 rounded text-[8px] font-bold font-mono inline-flex items-center gap-1"
+                style={{ backgroundColor: C.surface2, color: C.textDim, border: `1px solid ${C.border}` }}>
+                <Hourglass size={8} strokeWidth={2.6} /> EN ATTENTE
               </span>
             )}
           </div>
@@ -8234,7 +8252,7 @@ function SignedPostModal({ currentUserId, onClose, onCreate, onLoadSignedAthlete
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
           <div className="flex items-center gap-2">
-            <span className="text-base">🏆</span>
+            <Trophy size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
             <div className="text-base font-extrabold" style={{ color: C.text }}>Publier une photo</div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -8269,7 +8287,7 @@ function SignedPostModal({ currentUserId, onClose, onCreate, onLoadSignedAthlete
           {/* Tag athlète signé */}
           <div>
             <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              🏷 Tag un joueur signé (facultatif)
+              <Tag size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Tag un joueur signé (facultatif)
             </label>
             {athletes.length === 0 ? (
               <p className="text-[11px]" style={{ color: C.textMute }}>
@@ -8410,14 +8428,14 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
                   <button onClick={() => onSelectAthlete?.(p.athlete)}
                     className="flex items-center gap-1.5 text-[10px] font-semibold mb-1 text-left"
                     style={{ color: C.gold }}>
-                    🏷 {p.athlete.full_name || 'Athlète'}
+                    <Tag size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{p.athlete.full_name || 'Athlète'}
                   </button>
                 )}
                 {p.caption && (
                   <p className="text-[11px] line-clamp-2" style={{ color: C.text }}>{p.caption}</p>
                 )}
                 <div className="text-[10px] mt-1 flex items-center gap-1" style={{ color: C.gold }}>
-                  <span>📅</span>
+                  <Calendar size={10} strokeWidth={2.4} />
                   <span>Signé le {new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}</span>
                 </div>
               </div>
@@ -8454,7 +8472,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
           onClick={() => setPreviewPost(null)}>
           <div className="flex items-center justify-between px-4 py-3">
             <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
-              {previewPost.athlete?.full_name ? `🏷 ${previewPost.athlete.full_name}` : 'Signature'}
+              {previewPost.athlete?.full_name ? <><Tag size={12} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{previewPost.athlete.full_name}</> : 'Signature'}
             </div>
             <button onClick={() => setPreviewPost(null)} aria-label="Fermer"
               className="w-10 h-10 rounded-full flex items-center justify-center"
@@ -8475,7 +8493,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
             </div>
           )}
           <div className="px-6 pb-6 text-center text-[11px]" style={{ color: C.textDim }}>
-            📅 Signé le {new Date(previewPost.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
+            <Calendar size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Signé le {new Date(previewPost.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
           </div>
         </div>
       )}
@@ -8487,12 +8505,12 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
 // Couleurs travaillées pour un rendu chaleureux (palette pastel + accents),
 // pas le look "console / code" que donnait l'ancienne version mono.
 const LEVEL_LABELS = {
-  amateur:         { label: 'Amateur',         icon: '🌱', color: '#86EFAC' }, // vert tendre
-  young_pro:       { label: 'Young Pro',       icon: '🚀', color: '#60A5FA' }, // bleu lumineux
-  senior_amateur:  { label: 'Senior Amateur',  icon: '✨', color: '#FCD34D' }, // ambre doux
-  senior_semi_pro: { label: 'Senior Semi-Pro', icon: '⭐', color: '#FB923C' }, // orange
-  senior_pro:      { label: 'Senior Pro',      icon: '🏆', color: '#F472B6' }, // rose élite
-  no_club:         { label: 'Sans club',       icon: '🆓', color: '#CBD5E1' }, // gris perle
+  amateur:         { label: 'Amateur',         Icon: Sprout,       color: '#86EFAC' }, // vert tendre
+  young_pro:       { label: 'Young Pro',       Icon: Rocket,       color: '#60A5FA' }, // bleu lumineux
+  senior_amateur:  { label: 'Senior Amateur',  Icon: Sparkles,     color: '#FCD34D' }, // ambre doux
+  senior_semi_pro: { label: 'Senior Semi-Pro', Icon: Star,         color: '#FB923C' }, // orange
+  senior_pro:      { label: 'Senior Pro',      Icon: Trophy,       color: '#F472B6' }, // rose élite
+  no_club:         { label: 'Sans club',       Icon: CircleSlash,  color: '#CBD5E1' }, // gris perle
 };
 
 // Convertit un hex en RGBA avec opacité donnée
@@ -8516,7 +8534,7 @@ function LevelChip({ level, size = 'sm' }) {
         letterSpacing: '0.01em',
         textShadow: '0 1px 2px rgba(0,0,0,0.4)',
       }}>
-      <span style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.3))' }}>{info.icon}</span>
+      <info.Icon size={size === 'lg' ? 13 : 11} strokeWidth={2.4} />
       <span>{info.label}</span>
     </span>
   );
@@ -8524,8 +8542,8 @@ function LevelChip({ level, size = 'sm' }) {
 
 // ─── Labels type vidéo ────────────────────────────────────────────
 const VIDEO_TYPE_LABELS = {
-  match:    { label: 'Match',         icon: '🏆', color: '#FCD34D' },
-  training: { label: 'Entraînement', icon: '🏋️', color: '#60A5FA' },
+  match:    { label: 'Match',         Icon: Trophy,   color: '#FCD34D' },
+  training: { label: 'Entraînement',  Icon: Dumbbell, color: '#60A5FA' },
 };
 function VideoTypeBadge({ type, size = 'sm' }) {
   const info = VIDEO_TYPE_LABELS[type];
@@ -8541,7 +8559,7 @@ function VideoTypeBadge({ type, size = 'sm' }) {
         letterSpacing: '0.01em',
         textShadow: '0 1px 2px rgba(0,0,0,0.4)',
       }}>
-      <span style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.3))' }}>{info.icon}</span>
+      <info.Icon size={size === 'lg' ? 13 : 11} strokeWidth={2.4} />
       <span>{info.label}</span>
     </span>
   );
@@ -8590,7 +8608,7 @@ function SeasonReminderBanner({ onEdit, onDismiss }) {
         }}>
         <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ backgroundColor: C.goldSoft }}>
-          <span className="text-base">🏆</span>
+          <Trophy size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-extrabold mb-0.5" style={{ color: C.text }}>
@@ -8634,7 +8652,7 @@ function AgeReminderBanner({ userProfile, onEdit, onDismiss }) {
         }}>
         <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ backgroundColor: C.goldSoft }}>
-          <span className="text-base">🎂</span>
+          <Cake size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-extrabold mb-0.5" style={{ color: C.text }}>
@@ -9106,7 +9124,7 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModerat
           <button onClick={onOpenModeration}
             className="w-full rounded-xl px-4 py-3 flex items-center gap-3 text-left"
             style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
-            <span className="text-lg">🛡️</span>
+            <Shield size={17} strokeWidth={2.2} style={{ color: C.textDim }} />
             <div className="flex-1">
               <div className="text-sm font-bold" style={{ color: C.text }}>Modération</div>
               <div className="text-[11px]" style={{ color: C.textDim }}>Vidéos « à vérifier » (publiées malgré l'IA)</div>
@@ -9861,7 +9879,7 @@ function SignedAthletesListModal({ recruiterId, onClose, onLoadSignedAthletes, o
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
           <div className="flex items-center gap-2">
-            <span className="text-base">🏆</span>
+            <Trophy size={15} strokeWidth={2.2} style={{ color: C.textDim }} />
             <div className="text-base font-extrabold" style={{ color: C.text }}>Athlètes signés</div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -10105,7 +10123,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
           {profile.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
           {profile.nationality && (
             <span className="text-xs" style={{ color: C.textDim }}>
-              🌐 {profile.nationality}
+              <Globe size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{profile.nationality}
             </span>
           )}
           {/* Âge — masqué si le réglage de confidentialité « Masquer mon âge » est actif */}
@@ -10166,7 +10184,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
             {/* Localisation — masquée si le réglage « Masquer ma localisation » est actif */}
             {!profile.hide_location && (profile.city || profile.region || profile.country) && (
               <div className="text-xs mt-0.5" style={{ color: C.textDim }}>
-                📍 {[profile.city, profile.region, profile.country].filter(Boolean).join(' · ')}
+                <PinIcon size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[profile.city, profile.region, profile.country].filter(Boolean).join(' · ')}
               </div>
             )}
           </>
@@ -10627,7 +10645,7 @@ function ProfileSeasonReminder({ userProfile, onEdit }) {
   return (
     <div className="mx-4 mb-3 rounded-xl p-3 flex items-start gap-2 fade-in"
       style={{ backgroundColor: 'rgba(255,184,0,0.1)', border: `1px solid ${C.borderGold}` }}>
-      <span className="text-base flex-shrink-0">📅</span>
+      <Calendar size={15} strokeWidth={2.2} className="flex-shrink-0" style={{ color: C.textDim }} />
       <div className="flex-1 min-w-0">
         <div className="text-xs font-extrabold mb-0.5" style={{ color: C.text }}>
           Saison {season} : pense à confirmer ta rentrée
@@ -11735,7 +11753,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
           {userProfile?.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
           {userProfile?.nationality && (
             <span className="text-xs" style={{ color: C.textDim }}>
-              🌐 {userProfile.nationality}
+              <Globe size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{userProfile.nationality}
             </span>
           )}
           {(computeAge(userProfile?.birthdate) ?? userProfile?.age) && (
@@ -11782,7 +11800,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         {/* Localisation (ville · région · pays) — sous poste/club */}
         {(userProfile?.city || userProfile?.region || userProfile?.country) && (
           <div className="text-xs mt-0.5" style={{ color: C.textDim }}>
-            📍 {[userProfile?.city, userProfile?.region, userProfile?.country].filter(Boolean).join(' · ')}
+            <PinIcon size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[userProfile?.city, userProfile?.region, userProfile?.country].filter(Boolean).join(' · ')}
           </div>
         )}
 
