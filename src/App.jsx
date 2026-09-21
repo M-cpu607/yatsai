@@ -2582,6 +2582,40 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
   );
 }
 
+// ─── Bloc du formulaire de publication ────────────────────────────
+// Douze champs à la file demandaient de tout lire avant de comprendre
+// lesquels étaient obligatoires. Ils sont regroupés en trois blocs, dont
+// le dernier — tout l'optionnel — reste fermé tant qu'on ne l'ouvre pas.
+function BlocPublication({ titre, resume, repliable, defautOuvert = true, children }) {
+  const [ouvert, setOuvert] = useState(defautOuvert);
+  const entete = (
+    <div className="min-w-0 text-left">
+      <div className="text-sm font-bold" style={{ color: C.text }}>{titre}</div>
+      {resume && <div className="text-[11px] mt-0.5" style={{ color: C.textDim }}>{resume}</div>}
+    </div>
+  );
+  return (
+    <section className="rounded-2xl" style={{ border: `1px solid ${C.border}` }}>
+      {repliable ? (
+        <button type="button" onClick={() => setOuvert(o => !o)}
+          aria-expanded={ouvert}
+          className="w-full px-4 py-3 flex items-center justify-between gap-3">
+          {entete}
+          <ChevronDown size={18} strokeWidth={2.4} className="flex-shrink-0"
+            style={{
+              color: C.textMute,
+              transform: ouvert ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.2s ease',
+            }} />
+        </button>
+      ) : (
+        <div className="px-4 pt-3 pb-1">{entete}</div>
+      )}
+      {ouvert && <div className="px-4 pt-2 pb-4 space-y-4">{children}</div>}
+    </section>
+  );
+}
+
 function PublishView({ userProfile, setTab }) {
   const [mode, setMode] = useState('upload'); // 'upload' | 'youtube'
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -2857,18 +2891,19 @@ function PublishView({ userProfile, setTab }) {
       </div>
 
       <form onSubmit={handlePublish} className="px-5 space-y-4">
+        <BlocPublication titre="La vidéo" resume="Le fichier à envoyer, ou le lien YouTube.">
         {/* Sélecteur de mode : Uploader / YouTube */}
         <div className="grid grid-cols-2 gap-2 p-1 rounded-xl"
           style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
           {[
             { id: 'upload', label: 'Filmer / Uploader', icon: <Video size={14} /> },
-            { id: 'youtube', label: '▶ Lien YouTube', icon: null },
+            { id: 'youtube', label: 'Lien YouTube', icon: <Play size={14} /> },
           ].map(opt => (
             <button key={opt.id} type="button"
               onClick={() => { setMode(opt.id); setError(''); }}
               className="py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
               style={{
-                backgroundColor: mode === opt.id ? C.gold : 'transparent',
+                backgroundColor: mode === opt.id ? C.text : 'transparent',
                 color: mode === opt.id ? C.bg : C.textDim,
               }}>
               {opt.icon}
@@ -2880,9 +2915,7 @@ function PublishView({ userProfile, setTab }) {
         {/* MODE UPLOAD */}
         {mode === 'upload' && (
           <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              Vidéo (max 200 Mo) *
-            </label>
+            <LibelleChamp icon={Video} obligatoire>Vidéo (max 200 Mo)</LibelleChamp>
 
             {/* Inputs cachés */}
             <input ref={fileInputRef} type="file" accept="video/*" className="hidden"
@@ -2893,7 +2926,7 @@ function PublishView({ userProfile, setTab }) {
             {!videoFile ? (
               <div className="rounded-xl py-8 px-4 text-center"
                 style={{ backgroundColor: C.surface, border: `1.5px dashed ${C.border}` }}>
-                <Video size={32} style={{ color: C.gold }} className="mx-auto mb-3" />
+                <Video size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
                 <p className="text-xs mb-3" style={{ color: C.textDim }}>
                   Filme directement avec ta caméra, ou choisis un fichier sur ton appareil.
                 </p>
@@ -2992,9 +3025,7 @@ function PublishView({ userProfile, setTab }) {
         {/* MODE YOUTUBE */}
         {mode === 'youtube' && (
           <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              Lien YouTube *
-            </label>
+            <LibelleChamp icon={Play} obligatoire>Lien YouTube</LibelleChamp>
             <input type="url" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)}
               placeholder="https://youtube.com/watch?v=..."
               className="w-full px-4 py-3 rounded-xl text-sm outline-none"
@@ -3002,11 +3033,12 @@ function PublishView({ userProfile, setTab }) {
           </div>
         )}
 
+        </BlocPublication>
+
+        <BlocPublication titre="L'essentiel" resume="Les trois champs obligatoires.">
         {/* Titre */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Titre *
-          </label>
+          <LibelleChamp icon={Edit3} obligatoire>Titre</LibelleChamp>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)}
             placeholder="Ex : Mes 5 meilleurs buts saison 2025" required maxLength={80}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
@@ -3053,6 +3085,13 @@ function PublishView({ userProfile, setTab }) {
           </div>
         </div>
 
+        </BlocPublication>
+
+        {/* Tout ce qui suit est facultatif : le bloc reste fermé par défaut,
+            mais c'est là que se trouve ce qui fait la différence pour un
+            recruteur — contre qui, quand, à quel niveau. */}
+        <BlocPublication titre="Le contexte" repliable defautOuvert={false}
+          resume="Facultatif — c'est pourtant ce que regardent les recruteurs.">
         {/* Poste — proposé selon le sport choisi */}
         <ChampSelect
           label="Poste" icon={Target} optionnel
@@ -3202,6 +3241,8 @@ function PublishView({ userProfile, setTab }) {
             </div>
           </div>
         </div>
+
+        </BlocPublication>
 
         {/* Erreur */}
         {error && (

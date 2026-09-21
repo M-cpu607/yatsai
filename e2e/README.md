@@ -27,16 +27,23 @@ rm .env.local                                            # revenir au vrai backe
 
 ## Ce qui est vérifié
 
-1. L'écran de connexion s'affiche.
-2. La connexion fait basculer sur le feed.
-3. `author_name` s'affiche — le champ **à plat** renvoyé par `get_feed`,
+1. La page d'accueil, puis l'écran de connexion, s'affichent.
+2. Le lien « mot de passe oublié » mène bien à l'écran de réinitialisation.
+3. La connexion fait basculer sur le feed, sans état vide à tort.
+4. `author_name` s'affiche — le champ **à plat** renvoyé par `get_feed`,
    là où l'ancien code lisait un objet imbriqué `profiles.full_name`.
-4. L'état vide « Aucune vidéo encore » n'apparaît pas à tort.
-5. Les miniatures YouTube sont construites depuis `youtube_url`.
-6. Le défilement infini charge bien la page suivante (20 → 60 cartes),
-   ce qui valide la pagination par curseur de bout en bout.
-7. Aucune requête applicative en échec.
-8. Aucune erreur JavaScript.
+5. La carte montre le niveau de l'adversaire et la date du match, et **pas**
+   la saison : la date la contient déjà.
+6. La première page est bien limitée à 20 cartes, et le défilement infini
+   charge la suivante (20 → 60), ce qui valide la pagination par curseur
+   de bout en bout.
+7. Le formulaire de publication ouvre avec le bloc « Le contexte » replié,
+   et son ouverture révèle les cinq listes alimentées par les référentiels :
+   postes restreints au sport choisi, saisons avec la courante en tête.
+8. La recherche rend des résultats et annonce un nombre « affichés », pas
+   « trouvés » — la liste est paginée.
+9. Aucune requête applicative en échec.
+10. Aucune erreur JavaScript.
 
 Les échecs réseau vers `img.youtube.com` et Google Fonts sont comptés à
 part : ce sont des hôtes externes, et ils échouent normalement derrière

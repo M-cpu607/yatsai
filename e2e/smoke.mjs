@@ -96,6 +96,12 @@ await page.screenshot({ path: `${SHOT}/3-scroll.png` });
 // ── 6. Les référentiels alimentent le formulaire de publication ──
 await page.locator('nav button').nth(2).evaluate(e => e.click());
 await page.waitForTimeout(1500);
+// Le bloc « Le contexte » arrive replié : seul « Sport » est visible avant.
+const avantOuverture = await page.locator('select').count();
+ok('Bloc « Le contexte » replié à l\'ouverture', avantOuverture < 3,
+   `${avantOuverture} liste${avantOuverture > 1 ? 's' : ''} visible${avantOuverture > 1 ? 's' : ''} sur 5`);
+await page.getByText('Le contexte').first().evaluate(e => e.click());
+await page.waitForTimeout(500);
 const listes = page.locator('select');
 const nbListes = await listes.count();
 ok('Formulaire de publication : listes déroulantes', nbListes >= 5, `${nbListes} listes`);
