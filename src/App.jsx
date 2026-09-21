@@ -854,10 +854,34 @@ function urlEmbedYouTube(id, extra = '') {
   return `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0${extra}`;
 }
 
+// « Sommes-nous dans l'app empaquetée ? », utilisable pendant le rendu.
+// Première réponse : le pont natif que Capacitor injecte dans la WebView
+// avant le code de l'application. Il est ensuite remplacé par le module
+// @capacitor/core, chargé plus tard — d'où la confirmation asynchrone par
+// isNativeApp(), qui interroge le module lui-même.
+function useEstAppNative() {
+  const [natif, setNatif] = useState(() => {
+    try { return !!window.Capacitor?.isNativePlatform?.(); } catch { return false; }
+  });
+  useEffect(() => {
+    let vivant = true;
+    isNativeApp().then(v => { if (vivant) setNatif(v); });
+    return () => { vivant = false; };
+  }, []);
+  return natif;
+}
+
 function ouvrirSurYouTube(id) {
   const url = `https://www.youtube.com/watch?v=${id}`;
-  try { window.open(url, '_blank', 'noopener'); }
-  catch { window.location.href = url; }
+  // Deux voies, parce qu'aucune n'est garantie partout : `window.open` dans
+  // la WebView de Capacitor, qui passe la main au navigateur du système, et
+  // à défaut une navigation directe, que Capacitor intercepte pour ouvrir
+  // le lien à l'extérieur sans déplacer l'application.
+  try {
+    const f = window.open(url, '_blank', 'noopener');
+    if (f) return;
+  } catch { /* on tente l'autre voie */ }
+  try { window.location.href = url; } catch { /* rien de plus à faire */ }
 }
 
 // Le bouton de repli, posé par-dessus le lecteur intégré.
@@ -1231,6 +1255,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   const isUpload = !youtubeId && !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
+  const estAppNative = useEstAppNative();
   const [fsOpen, setFsOpen] = useState(false);   // lecteur plein écran paysage ouvert ?
   const [fsStart, setFsStart] = useState(0);      // instant de reprise en plein écran
 
@@ -1338,8 +1363,17 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             <BoutonOuvrirYouTube youtubeId={youtubeId} className="top-28 left-4" />
           </>
         ) : (
-          // Miniature YouTube : tap = lecture intégrée dans la carte
-          <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
+          // Miniature YouTube. Sur le web, le tap lance le lecteur intégré.
+          // Dans l'application native, ce lecteur affiche l'erreur 153 — la
+          // page n'a pas d'origine http(s) — donc on ouvre directement la
+          // vidéo à l'extérieur plutôt que de montrer un écran d'erreur.
+          <button
+            onClick={() => {
+              markViewed();
+              if (estAppNative) ouvrirSurYouTube(youtubeId);
+              else setYtOpen(true);
+            }}
+            className="absolute inset-0 w-full h-full">
             {thumbnailUrl ? (
               <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
                 className="absolute inset-0 w-full h-full object-cover" />
@@ -1349,11 +1383,22 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 <span style={{ color: C.textDim }}>Vidéo</span>
               </div>
             )}
-            <div className="absolute inset-0 flex items-center justify-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
               <div className="w-20 h-20 rounded-full flex items-center justify-center"
                 style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                 <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
               </div>
+              {/* On annonce qu'on va sortir de l'application : un tap qui
+                  bascule ailleurs sans prévenir se vit comme un bug. */}
+              {estAppNative && (
+                <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full"
+                  style={{
+                    backgroundColor: 'rgba(8,15,32,0.7)', color: C.text,
+                    border: '1px solid rgba(255,255,255,0.18)',
+                  }}>
+                  Ouvrir sur YouTube
+                </span>
+              )}
             </div>
           </button>
         )}
@@ -1551,6 +1596,17 @@ function YouTubePlayer({ video, onClose }) {
   const isUpload = !youtubeId && !!video.video_url;
   const vidRef = useRef(null);
 
+  // Dans l'application native, l'intégration YouTube n'affiche que l'erreur
+  // 153 : on bascule directement à l'extérieur. Le drapeau évite de rouvrir
+  // la vidéo à chaque rendu.
+  const estAppNative = useEstAppNative();
+  const sortieFaite = useRef(false);
+  useEffect(() => {
+    if (!estAppNative || !youtubeId || sortieFaite.current) return;
+    sortieFaite.current = true;
+    ouvrirSurYouTube(youtubeId);
+  }, [estAppNative, youtubeId]);
+
   return (
     <div className="fixed inset-0 z-[60] flex flex-col"
       style={{ backgroundColor: '#000' }}>
@@ -1571,7 +1627,22 @@ function YouTubePlayer({ video, onClose }) {
 
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
-        {youtubeId ? (
+        {youtubeId && estAppNative ? (
+          // La vidéo vient de partir vers YouTube. On laisse de quoi
+          // recommencer si l'ouverture n'a pas abouti — plutôt qu'un écran
+          // noir sans issue.
+          <div className="flex flex-col items-center gap-4 px-8 text-center">
+            <Play size={40} strokeWidth={2} style={{ color: C.textMute }} />
+            <p className="text-sm" style={{ color: C.textDim }}>
+              Cette vidéo s'ouvre dans YouTube.
+            </p>
+            <button type="button" onClick={() => ouvrirSurYouTube(youtubeId)}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+              style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
+              <Play size={13} strokeWidth={2.6} /> Ouvrir sur YouTube
+            </button>
+          </div>
+        ) : youtubeId ? (
           <>
             <iframe
               width="100%"
