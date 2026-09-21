@@ -6400,9 +6400,13 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
     <div className="pt-12 pb-32 px-4 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-3xl font-extrabold" style={{ color: C.text }}>Messages</h1>
+        {/* Même glyphe que le « + » de la barre du bas, à dix centimètres
+            de lui, et doré comme lui : deux actions différentes portant le
+            même signal. Celui-ci, propre à l'écran, reste en contour. */}
         <button onClick={onNewConversation}
           className="w-10 h-10 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: C.gold, color: C.bg }} aria-label="Nouvelle conversation">
+          style={{ backgroundColor: 'transparent', color: C.text, border: `1px solid ${C.border}` }}
+          aria-label="Nouvelle conversation">
           <Plus size={18} strokeWidth={2.6} />
         </button>
       </div>
