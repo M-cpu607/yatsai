@@ -6316,14 +6316,14 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
     <button onClick={() => setTab(id)}
       className="px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap flex-shrink-0"
       style={{
-        backgroundColor: tab === id ? C.gold : C.surface,
+        backgroundColor: tab === id ? C.text : 'transparent',
         color: tab === id ? C.bg : C.textDim,
-        border: `1px solid ${tab === id ? C.gold : C.border}`,
+        border: `1px solid ${tab === id ? C.text : C.border}`,
       }}>
       {label}
       {badge > 0 && (
         <span className="min-w-[16px] h-4 px-1 rounded-full text-[9px] font-extrabold flex items-center justify-center"
-          style={{ backgroundColor: tab === id ? C.bg : C.gold, color: tab === id ? C.gold : C.bg }}>
+          style={{ backgroundColor: C.red, color: C.text }}>
           {badge}
         </span>
       )}
@@ -12440,15 +12440,19 @@ function BottomNav({ tab, setTab, mode }) {
                 <item.icon size={22} strokeWidth={3} style={{ color: C.bg }} />
               </div>
             ) : (
+              /* L'onglet courant se lit au contraste — blanc plein contre gris —
+                 et non à la couleur : quatre libellés dorés en bas de chaque
+                 écran, c'était le doré le plus présent de l'application.
+                 Il ne reste qu'un point de 4 px sous l'onglet actif. */
               <>
                 <item.icon size={20} strokeWidth={active ? 2.5 : 2}
-                  style={{ color: active ? C.gold : C.textDim }} />
-                <span className="text-[9px] font-medium"
-                  style={{ color: active ? C.gold : C.textDim }}>
+                  style={{ color: active ? C.text : C.textDim }} />
+                <span className="text-[9px]"
+                  style={{ color: active ? C.text : C.textDim, fontWeight: active ? 700 : 500 }}>
                   {item.label}
                 </span>
                 {active && (
-                  <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
+                  <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full"
                     style={{ backgroundColor: C.gold }} />
                 )}
               </>
