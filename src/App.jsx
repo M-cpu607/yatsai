@@ -839,6 +839,42 @@ function getYouTubeIdFromUrl(url) {
 function isUploadedVideo(data) {
   return !!data?.video_url && !data?.youtube_url;
 }
+
+// ─── Lecture YouTube hors du navigateur ───────────────────────────
+// Sur iOS, l'application tourne sous le schéma `capacitor://localhost` :
+// WKWebView réserve http et https, et Capacitor interdit donc de les
+// utiliser comme `iosScheme`. L'intégration YouTube ne reçoit alors aucun
+// référent http(s) valide et refuse de jouer — c'est l'« erreur 153 ».
+//
+// On tente malgré tout la lecture intégrée (nocookie + aucun référent
+// transmis, qui passent dans une partie des cas), et on garde à portée de
+// pouce un repli qui, lui, marche partout : ouvrir la vidéo hors de
+// l'application, dans l'app YouTube si elle est installée, sinon Safari.
+function urlEmbedYouTube(id, extra = '') {
+  return `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0${extra}`;
+}
+
+function ouvrirSurYouTube(id) {
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  try { window.open(url, '_blank', 'noopener'); }
+  catch { window.location.href = url; }
+}
+
+// Le bouton de repli, posé par-dessus le lecteur intégré.
+function BoutonOuvrirYouTube({ youtubeId, className = '' }) {
+  if (!youtubeId) return null;
+  return (
+    <button type="button"
+      onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
+      className={`absolute z-20 px-3 py-1.5 rounded-full text-[11px] font-bold inline-flex items-center gap-1.5 ${className}`}
+      style={{
+        backgroundColor: 'rgba(8,15,32,0.78)', color: C.text,
+        border: '1px solid rgba(255,255,255,0.18)', backdropFilter: 'blur(8px)',
+      }}>
+      <Play size={11} strokeWidth={2.6} /> Ouvrir sur YouTube
+    </button>
+  );
+}
 function getVideoThumb(data) {
   // Priorité : thumbnail_url explicite > YouTube hqdefault > null (le composant gérera le fallback)
   if (data?.thumbnail_url) return data.thumbnail_url;
@@ -1289,12 +1325,18 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           </>
         ) : ytOpen && youtubeId ? (
           // Vidéo YouTube : iframe intégré DANS la carte (pas d'overlay plein écran)
-          <iframe
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`}
-            title={data.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            className="absolute inset-0 w-full h-full"
-            style={{ border: 0 }} />
+          <>
+            <iframe
+              src={urlEmbedYouTube(youtubeId, '&autoplay=1')}
+              title={data.title}
+              referrerPolicy="no-referrer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              className="absolute inset-0 w-full h-full"
+              style={{ border: 0 }} />
+            {/* Sous la loupe (top-12, 40 px de haut) et sous les chips de
+                filtre, pour ne recouvrir ni l'une ni les autres. */}
+            <BoutonOuvrirYouTube youtubeId={youtubeId} className="top-28 left-4" />
+          </>
         ) : (
           // Miniature YouTube : tap = lecture intégrée dans la carte
           <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
@@ -1530,15 +1572,19 @@ function YouTubePlayer({ video, onClose }) {
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
         {youtubeId ? (
-          <iframe
-            width="100%"
-            height="100%"
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
-            title={video.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            style={{ border: 0 }}
-          />
+          <>
+            <iframe
+              width="100%"
+              height="100%"
+              src={urlEmbedYouTube(youtubeId, '&autoplay=1')}
+              title={video.title}
+              referrerPolicy="no-referrer"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              style={{ border: 0 }}
+            />
+            <BoutonOuvrirYouTube youtubeId={youtubeId} className="bottom-6 left-1/2 -translate-x-1/2" />
+          </>
         ) : isUpload ? (
           <video
             ref={vidRef}
