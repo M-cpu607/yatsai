@@ -32,6 +32,9 @@ const C = {
   bg: '#080F20', bgDeep: '#040812',
   surface: '#0F172A', surface2: '#16213A',
   border: 'rgba(255,255,255,0.06)',
+  // Contour d'avatar : neutre. Il était doré partout, ce qui faisait de
+  // l'accent la couleur la plus répétée des listes et des cartes.
+  ring: 'rgba(255,255,255,0.18)',
   borderGold: 'rgba(255,184,0,0.25)',
   gold: '#FFB800', goldDeep: '#E0A100',
   goldSoft: 'rgba(255,184,0,0.12)',
@@ -642,8 +645,8 @@ function Avatar({ profile, size = 48, ringColor, ringWidth = 2, className = '' }
   const style = {
     width: size, height: size,
     borderRadius: '50%',
-    backgroundColor: C.surface,
-    color: C.gold,
+    backgroundColor: C.surface2,
+    color: C.text,
     fontWeight: 800,
     fontSize,
     border: ringColor ? `${ringWidth}px solid ${ringColor}` : 'none',
@@ -669,17 +672,20 @@ function Avatar({ profile, size = 48, ringColor, ringWidth = 2, className = '' }
 
 function IconButton({ icon: Icon, label, onClick, active, count }) {
   // Style nu (sans cercle) — l'icône respire directement sur la vidéo,
-  // l'état actif = icône remplie + couleur, plus l'ombre portée pour la lisibilité.
-  const iconColor = active ? C.gold : C.text;
+  // l'état actif = icône remplie, plus l'ombre portée pour la lisibilité.
+  // Le cœur aimé passe au rouge, les autres à l'icône pleine blanche : sur
+  // la carte, le doré ne sert plus qu'à la coche « vérifié ».
+  const activeColor = Icon === Heart ? C.red : C.text;
+  const iconColor = active ? activeColor : C.text;
   return (
     <button onClick={onClick} className="flex flex-col items-center gap-1 gold-tap" aria-label={label}>
       <Icon size={32} strokeWidth={2}
-        fill={active ? C.gold : 'transparent'}
+        fill={active ? activeColor : 'transparent'}
         style={{ color: iconColor, filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.7))' }}
         className={active && Icon === Heart ? 'heart-pop' : ''} />
       {count !== undefined && (
         <span className="text-[11px] font-mono font-bold"
-          style={{ color: active ? C.gold : C.text, textShadow: '0 1px 3px rgba(0,0,0,0.85)' }}>
+          style={{ color: C.text, textShadow: '0 1px 3px rgba(0,0,0,0.85)' }}>
           {count}
         </span>
       )}
@@ -1349,16 +1355,16 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             className="flex flex-col items-center gap-1 gold-tap">
             <div className="w-11 h-11 rounded-full flex items-center justify-center"
               style={{
-                backgroundColor: isShortlisted ? C.gold : 'rgba(8,15,32,0.5)',
+                backgroundColor: isShortlisted ? C.text : 'rgba(8,15,32,0.5)',
                 backdropFilter: 'blur(10px)',
-                border: `1px solid ${isShortlisted ? C.gold : 'rgba(255,255,255,0.15)'}`,
+                border: `1px solid ${isShortlisted ? C.text : 'rgba(255,255,255,0.15)'}`,
               }}>
               <Star size={20} strokeWidth={2.2}
                 fill={isShortlisted ? C.bg : 'transparent'}
                 style={{ color: isShortlisted ? C.bg : C.text }} />
             </div>
             <span className="text-[10px] font-mono font-bold inline-flex items-center gap-1"
-              style={{ color: isShortlisted ? C.gold : C.text, textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>
+              style={{ color: C.text, textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>
               {isShortlisted ? statusInfo?.label : 'Shortlist'}
               {shortlistStatus === 'essai_en_cours' && (
                 <span className="dot-jump" aria-hidden="true"><span /><span /><span /></span>
@@ -1375,7 +1381,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           <button onClick={(e) => { e.stopPropagation(); data.profiles && onSelectProfile?.(data.profiles); }}
             aria-label="Voir le profil"
             className="flex-shrink-0">
-            <Avatar profile={data.profiles} size={48} ringColor={C.gold} />
+            <Avatar profile={data.profiles} size={48} ringColor={C.ring} />
           </button>
           {data.profiles?.level && <LevelChip level={data.profiles.level} />}
           {data.video_type && <VideoTypeBadge type={data.video_type} />}
@@ -1623,7 +1629,7 @@ function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete, onRepor
                 const author = c.profiles?.full_name || 'Utilisateur';
                 return (
                   <div key={c.id} className="flex gap-2.5">
-                    <Avatar profile={c.profiles} size={36} ringColor={C.gold} />
+                    <Avatar profile={c.profiles} size={36} ringColor={C.ring} />
                     <div className="flex-1 min-w-0">
                       <div className="rounded-xl px-3 py-2"
                         style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
@@ -1631,7 +1637,7 @@ function CommentsModal({ video, currentUserId, onClose, onAdd, onDelete, onRepor
                           <span className="text-xs font-bold" style={{ color: C.text }}>{author}</span>
                           {c.profiles?.is_recruiter && (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
-                              style={{ backgroundColor: C.goldSoft, color: C.gold }}>Recruteur</span>
+                              style={{ backgroundColor: C.surface2, color: C.textDim }}>Recruteur</span>
                           )}
                         </div>
                         <p className="text-sm leading-relaxed" style={{ color: C.text }}>{c.body}</p>
@@ -1870,13 +1876,13 @@ function ShareModal({ video, currentUserId, onClose, onShare, isOwnVideo, onRepo
                   <button key={c.id} onClick={() => sendToContact(c.id)} disabled={sent}
                     className="flex items-center gap-3 p-2 rounded-lg text-left"
                     style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, opacity: sent ? 0.6 : 1 }}>
-                    <Avatar profile={c} size={40} ringColor={C.gold} />
+                    <Avatar profile={c} size={40} ringColor={C.ring} />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
                         {c.full_name || 'Utilisateur'}
                       </div>
                       {c.is_recruiter && (
-                        <div className="text-[10px]" style={{ color: C.gold }}>Recruteur</div>
+                        <div className="text-[10px]" style={{ color: C.textDim }}>Recruteur</div>
                       )}
                     </div>
                     <span className="text-xs font-bold" style={{ color: sent ? C.green : C.gold }}>
@@ -2536,7 +2542,7 @@ function PlayerTrackingEditor({ src, points, onChange, color, onColorChange, sha
             🤖 Auto
           </button>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: C.goldSoft, color: C.gold }}>{nb} pt{nb > 1 ? 's' : ''}</span>
+            style={{ backgroundColor: C.surface2, color: C.textDim }}>{nb} pt{nb > 1 ? 's' : ''}</span>
           {nb > 0 && (
             <button type="button" onClick={() => { stopTrack(); pointsRef.current = []; onChange([]); }}
               className="text-[10px] font-bold px-2 py-0.5 rounded"
@@ -3276,7 +3282,7 @@ function NotificationsPanel({ notifications: allNotifs, onClose, onMarkAllRead, 
                       backgroundColor: n.read ? 'transparent' : 'rgba(255,184,0,0.04)',
                     }}>
                     <button onClick={() => n.actor && onSelectProfile?.(n.actor)} className="flex-shrink-0">
-                      <Avatar profile={n.actor} size={40} ringColor={n.read ? C.border : C.gold} ringWidth={1.5} />
+                      <Avatar profile={n.actor} size={40} ringColor={n.read ? C.border : C.red} ringWidth={1.5} />
                     </button>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start gap-1.5">
@@ -3789,11 +3795,11 @@ function ProfileCard({ profile, onSelect, onToggleShortlist, shortlistStatus }) 
       style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
       <div className="relative flex items-center justify-center"
         style={{ aspectRatio: '1', backgroundColor: C.surface2 }}>
-        <Avatar profile={profile} size={80} ringColor={C.gold} />
+        <Avatar profile={profile} size={80} ringColor={C.ring} />
 
         {profile.is_recruiter && (
           <div className="absolute top-2 left-2 px-2 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: 'rgba(8,15,32,0.85)', color: C.gold, backdropFilter: 'blur(8px)' }}>
+            style={{ backgroundColor: 'rgba(8,15,32,0.85)', color: C.text, backdropFilter: 'blur(8px)' }}>
             <Briefcase size={10} strokeWidth={2.4} />
             Recruteur
           </div>
@@ -3804,8 +3810,8 @@ function ProfileCard({ profile, onSelect, onToggleShortlist, shortlistStatus }) 
             aria-label={isShortlisted ? 'Retirer de la shortlist' : 'Ajouter à la shortlist'}
             className="absolute top-2 right-2 px-2 h-8 rounded-full flex items-center gap-1"
             style={{
-              backgroundColor: isShortlisted ? C.gold : 'rgba(8,15,32,0.7)',
-              border: `1px solid ${isShortlisted ? C.gold : 'rgba(255,255,255,0.2)'}`,
+              backgroundColor: isShortlisted ? C.text : 'rgba(8,15,32,0.7)',
+              border: `1px solid ${isShortlisted ? C.text : 'rgba(255,255,255,0.2)'}`,
               backdropFilter: 'blur(10px)',
               color: isShortlisted ? C.bg : '#fff',
             }}>
@@ -4629,7 +4635,7 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
                       <div key={a.id} className="rounded-xl p-2.5 flex items-center gap-3"
                         style={{ backgroundColor: C.surface, border: '1px solid ' + C.border }}>
                         <button onClick={() => onSelectProfile?.(a)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
-                          <Avatar profile={a} size={42} ringColor={C.gold} />
+                          <Avatar profile={a} size={42} ringColor={C.ring} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1 min-w-0">
                               <span className="text-sm font-bold truncate" style={{ color: C.text }}>
@@ -4987,9 +4993,9 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
           <div className="flex items-center justify-between mb-3">
             <Logo />
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
-              style={{ backgroundColor: C.goldSoft }}>
-              <Briefcase size={12} style={{ color: C.gold }} />
-              <span className="text-xs font-semibold" style={{ color: C.gold }}>Recruteur</span>
+              style={{ backgroundColor: C.surface2 }}>
+              <Briefcase size={12} style={{ color: C.textDim }} />
+              <span className="text-xs font-semibold" style={{ color: C.textDim }}>Recruteur</span>
             </div>
           </div>
         )}
@@ -5506,7 +5512,7 @@ function NewConversationModal({ currentUserId, onClose, onSelect, onSelectProfil
                   {/* Tap sur l'utilisateur → voir son profil complet (avec bannière) */}
                   <button onClick={() => onSelectProfile?.(u)}
                     className="flex items-center gap-3 flex-1 min-w-0 text-left">
-                    <Avatar profile={u} size={44} ringColor={C.gold} />
+                    <Avatar profile={u} size={44} ringColor={C.ring} />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
                         {u.full_name || 'Utilisateur'}
@@ -5811,7 +5817,7 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
                           border: `1px solid ${isSel ? C.gold : C.border}`,
                           opacity: isApplied ? 0.5 : 1,
                         }}>
-                        <Avatar profile={r} size={40} ringColor={C.gold} ringWidth={1.5} />
+                        <Avatar profile={r} size={40} ringColor={C.ring} ringWidth={1.5} />
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-semibold truncate flex items-center gap-1" style={{ color: C.text }}>
                             {r.full_name || 'Recruteur'}
@@ -6023,7 +6029,7 @@ function ProposalModal({ athlete, onClose, onSend }) {
           ) : (
             <>
               <div className="flex items-center gap-3">
-                <Avatar profile={athlete} size={44} ringColor={C.gold} />
+                <Avatar profile={athlete} size={44} ringColor={C.ring} />
                 <div className="min-w-0">
                   <div className="text-sm font-bold truncate" style={{ color: C.text }}>{athlete?.full_name || 'Athlète'}</div>
                   <div className="text-[11px] truncate" style={{ color: C.textDim }}>
@@ -6105,7 +6111,7 @@ function AppointmentModal({ athlete, onClose, onCreate }) {
           ) : (
             <>
               <div className="flex items-center gap-3">
-                <Avatar profile={athlete} size={44} ringColor={C.gold} />
+                <Avatar profile={athlete} size={44} ringColor={C.ring} />
                 <div className="min-w-0">
                   <div className="text-sm font-bold truncate" style={{ color: C.text }}>{athlete?.full_name || 'Athlète'}</div>
                   <div className="text-[11px] truncate" style={{ color: C.textDim }}>
@@ -6178,7 +6184,7 @@ function AppointmentCard({ item, isRecruiterViewer, onDecide, onSelectProfile, o
     <div className="rounded-xl p-3 fade-in" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, opacity: faded ? 0.65 : 1 }}>
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+          style={{ backgroundColor: C.surface2, color: C.textDim }}>
           <span className="text-[8px] font-bold uppercase leading-none">{dt.toLocaleDateString('fr-FR', { month: 'short' })}</span>
           <span className="text-lg font-extrabold leading-none">{dt.getDate()}</span>
         </div>
@@ -6244,7 +6250,7 @@ function RequestCard({ item, isRecruiterViewer, kind, onDecide, onSelectProfile,
     <div className="rounded-xl p-3 fade-in" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
       <div className="flex items-center gap-3">
         <button onClick={() => p && onSelectProfile?.(p)} className="flex-shrink-0" aria-label="Voir le profil">
-          <Avatar profile={p} size={44} ringColor={C.gold} />
+          <Avatar profile={p} size={44} ringColor={C.ring} />
         </button>
         <button onClick={() => p && onOpenChat?.(p)} className="flex-1 min-w-0 text-left" aria-label="Ouvrir la conversation">
           <div className="flex items-center gap-1.5 min-w-0">
@@ -6382,7 +6388,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
                   style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
                   <button onClick={(e) => { e.stopPropagation(); onSelectProfile?.(c.otherProfile); }}
                     className="flex-shrink-0">
-                    <Avatar profile={c.otherProfile} size={48} ringColor={C.gold} />
+                    <Avatar profile={c.otherProfile} size={48} ringColor={C.ring} />
                   </button>
                   <button onClick={() => onOpenChat(c)} className="flex-1 min-w-0 text-left">
                     <div className="flex items-center justify-between gap-2">
@@ -6390,7 +6396,7 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
                         {c.otherProfile.full_name || 'Utilisateur'}
                         {c.otherProfile.is_recruiter && (
                           <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
-                            style={{ backgroundColor: C.goldSoft, color: C.gold }}>Recruteur</span>
+                            style={{ backgroundColor: C.surface2, color: C.textDim }}>Recruteur</span>
                         )}
                       </span>
                       <span className="text-[10px] flex-shrink-0" style={{ color: C.textDim }}>
@@ -6721,13 +6727,13 @@ function ChatView({ otherProfile: otherProfileProp, currentUserId, onBack, onSen
         </button>
         <button onClick={() => onSelectProfile?.(otherProfile)}
           className="flex items-center gap-3 flex-1 min-w-0 text-left">
-          <Avatar profile={otherProfile} size={40} ringColor={C.gold} />
+          <Avatar profile={otherProfile} size={40} ringColor={C.ring} />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: C.text }}>
               {otherProfile.full_name || 'Utilisateur'}
               {otherProfile.is_recruiter && (
                 <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
-                  style={{ backgroundColor: C.goldSoft, color: C.gold }}>Recruteur</span>
+                  style={{ backgroundColor: C.surface2, color: C.textDim }}>Recruteur</span>
               )}
             </div>
             <div className="text-[11px]" style={{ color: C.textDim }}>{subtitle}</div>
@@ -7922,7 +7928,7 @@ function NoteShareModal({ noteId, currentSharedWith, currentUserId, onClose, onU
                       backgroundColor: isSel ? C.goldSoft : C.surface,
                       border: `1px solid ${isSel ? C.gold : C.border}`,
                     }}>
-                    <Avatar profile={u} size={40} ringColor={C.gold} ringWidth={1.5} />
+                    <Avatar profile={u} size={40} ringColor={C.ring} ringWidth={1.5} />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
                         {u.full_name || 'Utilisateur'}
@@ -8085,7 +8091,7 @@ function ShortlistDbRow({ athlete, currentStatus, actualStatus, onUpdateStatus, 
       style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
       <div className="flex items-center gap-3 p-3">
         <button onClick={() => onSelectProfile?.(athlete)} className="flex-shrink-0">
-          <Avatar profile={athlete} size={48} ringColor={C.gold} />
+          <Avatar profile={athlete} size={48} ringColor={C.ring} />
         </button>
 
         <button onClick={() => onSelectProfile?.(athlete)} className="flex-1 min-w-0 text-left">
@@ -9540,7 +9546,7 @@ function PermissionsModal({ onFinish }) {
                   opacity: disabled && s !== 'granted' ? 0.7 : 1,
                 }}>
                 <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+                  style={{ backgroundColor: C.surface2, color: C.textDim }}>
                   <Icon size={18} strokeWidth={2.2} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -9652,7 +9658,7 @@ function FollowsListModal({ userId, kind, currentUserId, myFollowing,
                     style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
                     <button onClick={() => { onSelectProfile(p); onClose(); }}
                       className="flex items-center gap-3 flex-1 min-w-0 text-left">
-                      <Avatar profile={p} size={44} ringColor={C.gold} />
+                      <Avatar profile={p} size={44} ringColor={C.ring} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold truncate flex items-center gap-1.5" style={{ color: C.text }}>
                           {p.full_name || 'Utilisateur'}
@@ -9880,7 +9886,7 @@ function SignedAthletesListModal({ recruiterId, onClose, onLoadSignedAthletes, o
                 <button key={p.id} onClick={() => { onSelectProfile(p); onClose(); }}
                   className="flex items-center gap-3 p-2.5 rounded-xl text-left"
                   style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
-                  <Avatar profile={p} size={44} ringColor={C.gold} ringWidth={1.5} />
+                  <Avatar profile={p} size={44} ringColor={C.ring} ringWidth={1.5} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold truncate flex items-center gap-1.5" style={{ color: C.text }}>
                       {p.full_name || 'Athlète'}
@@ -10114,20 +10120,20 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
           {isObserverRole(profile) ? (
             <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-              style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+              style={{ backgroundColor: C.surface2, color: C.textDim }}>
               <Eye size={10} strokeWidth={2.4} />
               Observateur
             </span>
           ) : profile.is_recruiter ? (
             <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-              style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+              style={{ backgroundColor: C.surface2, color: C.textDim }}>
               <Briefcase size={10} strokeWidth={2.4} />
               Recruteur
             </span>
           ) : (
             <>
               <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-                style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+                style={{ backgroundColor: C.surface2, color: C.textDim }}>
                 <Star size={10} strokeWidth={2.4} />
                 Athlète
               </span>
@@ -11741,7 +11747,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
 
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
           <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+            style={{ backgroundColor: C.surface2, color: C.textDim }}>
             <Star size={10} strokeWidth={2.4} />
             Athlète
           </span>
@@ -12121,7 +12127,7 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
 
         <div className="flex items-center gap-2 flex-wrap mb-3">
           <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+            style={{ backgroundColor: C.surface2, color: C.textDim }}>
             <Eye size={10} strokeWidth={2.4} />
             Observateur
           </span>
@@ -12292,7 +12298,7 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
 
         <div className="flex items-center gap-2 flex-wrap mb-1.5">
           <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.goldSoft, color: C.gold }}>
+            style={{ backgroundColor: C.surface2, color: C.textDim }}>
             <Briefcase size={10} strokeWidth={2.4} />
             Recruteur
           </span>
