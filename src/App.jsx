@@ -52,8 +52,11 @@ const FontStyles = () => (
     /* Labels de section : nouvelle classe douce qui remplace 'font-semibold uppercase' */
     .label-soft { font-weight: 600; font-size: 12px; letter-spacing: 0; text-transform: none; }
     body { margin: 0; background: ${C.bg}; }
-    @keyframes goldTap { 0% { box-shadow: 0 0 0 0 rgba(255,184,0,0.5); } 100% { box-shadow: 0 0 0 12px rgba(255,184,0,0); } }
-    .gold-tap:active { animation: goldTap 0.4s ease-out; }
+    /* Retour au toucher : l'élément s'affaisse. Avant, un halo doré débordait
+       de chaque bouton à chaque appui — beaucoup de doré pour rien. */
+    .gold-tap:active { opacity: 0.72; }
+    /* Pulsation d'enregistrement (micro en écoute) : rouge, comme un point REC. */
+    @keyframes recPulse { 0% { box-shadow: 0 0 0 0 rgba(255,71,87,0.45); } 100% { box-shadow: 0 0 0 10px rgba(255,71,87,0); } }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .fade-in { animation: fadeIn 0.3s ease-out both; }
     @keyframes heartPop { 0% { transform: scale(1); } 50% { transform: scale(1.4); } 100% { transform: scale(1); } }
@@ -72,7 +75,7 @@ const FontStyles = () => (
     @keyframes playerCirclePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.82; } }
     .player-circle-pulse { animation: playerCirclePulse 1.4s ease-in-out infinite; transform-origin: center; }
     input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; width: 100%; }
-    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: ${C.gold}; box-shadow: 0 0 8px rgba(255,184,0,0.5); cursor: pointer; margin-top: -7px; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: ${C.gold}; cursor: pointer; margin-top: -7px; }
     input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: rgba(255,255,255,0.12); border-radius: 2px; }
     button { -webkit-tap-highlight-color: transparent; }
     .scrollbar-none::-webkit-scrollbar { display: none; }
@@ -393,11 +396,6 @@ function LandingPage({ onStart }) {
       <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
         {/* Halo doré derrière le logo */}
         <div className="relative mb-6">
-          <div className="absolute inset-0 -m-12 rounded-full"
-            style={{
-              background: 'radial-gradient(circle, rgba(255,184,0,0.20) 0%, transparent 70%)',
-              filter: 'blur(20px)',
-            }} />
           <div className="relative text-7xl font-extrabold" style={{ color: '#FFFFFF', letterSpacing: '-0.04em' }}>
             Yat<span style={{ color: '#FFB800' }}>sai</span>
           </div>
@@ -415,7 +413,6 @@ function LandingPage({ onStart }) {
           className="w-full max-w-sm py-4 rounded-full font-extrabold text-base mb-4"
           style={{
             backgroundColor: '#FFB800', color: '#080F20',
-            boxShadow: '0 8px 24px -8px rgba(255,184,0,0.5)',
             letterSpacing: '0.01em',
           }}>
           Commencer gratuitement
@@ -630,7 +627,7 @@ function MicButton({ onTranscript, lang = 'fr-FR', size = 38, title = 'Dictée v
         backgroundColor: listening ? C.red : C.surface,
         border: `1px solid ${listening ? C.red : C.border}`,
         color: listening ? C.text : C.gold,
-        animation: listening ? 'goldTap 1s ease-out infinite' : 'none',
+        animation: listening ? 'recPulse 1s ease-out infinite' : 'none',
       }}>
       {listening ? <MicOff size={size * 0.45} strokeWidth={2.4} /> : <Mic size={size * 0.45} strokeWidth={2.4} />}
     </button>
@@ -2039,7 +2036,7 @@ function FeedView({ videos, onView, periodFilter, onChangePeriodFilter,
       {nouvellesVideos > 0 && (
         <button onClick={() => { onRechargerFeed?.(); window.scrollTo?.({ top: 0 }); }}
           className="fixed top-24 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold shadow-lg"
-          style={{ backgroundColor: C.gold, color: C.bg }}>
+          style={{ backgroundColor: 'rgba(255,255,255,0.94)', color: C.bg }}>
           ↑ {nouvellesVideos} nouvelle{nouvellesVideos > 1 ? 's' : ''} vidéo{nouvellesVideos > 1 ? 's' : ''}
         </button>
       )}
@@ -2870,14 +2867,16 @@ function PublishView({ userProfile, setTab }) {
                   Filme directement avec ta caméra, ou choisis un fichier sur ton appareil.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
+                  {/* Le doré de cet écran est réservé au bouton « Publier ma
+                      vidéo » en bas : ces deux-là restent neutres. */}
                   <button type="button" onClick={() => captureInputRef.current?.click()}
                     className="py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5"
-                    style={{ backgroundColor: C.gold, color: C.bg }}>
+                    style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
                     <Camera size={14} /> Filmer
                   </button>
                   <button type="button" onClick={() => fileInputRef.current?.click()}
                     className="py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5"
-                    style={{ backgroundColor: 'transparent', color: C.gold, border: `1px solid ${C.borderGold}` }}>
+                    style={{ backgroundColor: 'transparent', color: C.text, border: `1px solid ${C.border}` }}>
                     <Plus size={14} /> Choisir un fichier
                   </button>
                 </div>
@@ -6362,9 +6361,11 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
             <p className="text-xs mb-4" style={{ color: C.textDim }}>
               Démarre une nouvelle conversation pour commencer.
             </p>
+            {/* Le « + » de l'en-tête est déjà le bouton doré de cet écran :
+                celui-ci répète la même action, il reste donc en contour. */}
             <button onClick={onNewConversation}
               className="px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-              style={{ backgroundColor: C.gold, color: C.bg }}>
+              style={{ backgroundColor: 'transparent', color: C.text, border: `1px solid ${C.border}` }}>
               <Plus size={14} strokeWidth={2.6} />
               Nouvelle conversation
             </button>
@@ -6402,10 +6403,13 @@ function MessagesView({ conversations, currentUserId, onOpenChat, onNewConversat
                   </button>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     {reqStatus && <DecisionBadge status={reqStatus} />}
+                    {/* Pastille de non-lus : rouge, comme partout ailleurs.
+                        En doré, elle se répétait à chaque ligne de la liste
+                        et entrait en concurrence avec le bouton d'action. */}
                     {c.unreadCount > 0 && (
                       <button onClick={() => onOpenChat(c)}
                         className="min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold px-1.5"
-                        style={{ backgroundColor: C.gold, color: C.bg }}>
+                        style={{ backgroundColor: C.red, color: C.text }}>
                         {c.unreadCount}
                       </button>
                     )}
@@ -8355,7 +8359,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
         {isOwn && onAdd && (
           <button onClick={() => onAdd(() => setReloadKey(k => k + 1))}
             className="px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1"
-            style={{ backgroundColor: C.gold, color: C.bg }}>
+            style={{ backgroundColor: 'transparent', color: C.text, border: `1px solid ${C.border}` }}>
             <Plus size={11} strokeWidth={2.6} /> Publier
           </button>
         )}
@@ -10715,8 +10719,8 @@ function AccountSecuritySection() {
           <button onClick={handleChangeEmail} disabled={emailStatus === 'pending' || !newEmail.trim()}
             className="px-3 py-2.5 rounded-lg text-xs font-bold"
             style={{
-              backgroundColor: emailStatus === 'pending' || !newEmail.trim() ? 'rgba(255,184,0,0.4)' : C.gold,
-              color: C.bg,
+              backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}`,
+              opacity: emailStatus === 'pending' || !newEmail.trim() ? 0.5 : 1,
             }}>
             {emailStatus === 'pending' ? '...' : 'Changer'}
           </button>
@@ -10743,8 +10747,8 @@ function AccountSecuritySection() {
         <button onClick={handleChangePassword} disabled={pwStatus === 'pending' || !newPassword || !confirmPassword}
           className="w-full mt-2 py-2.5 rounded-lg text-xs font-bold"
           style={{
-            backgroundColor: pwStatus === 'pending' || !newPassword ? 'rgba(255,184,0,0.4)' : C.gold,
-            color: C.bg,
+            backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}`,
+            opacity: pwStatus === 'pending' || !newPassword ? 0.5 : 1,
           }}>
           {pwStatus === 'pending' ? '...' : 'Changer le mot de passe'}
         </button>
@@ -12432,7 +12436,7 @@ function BottomNav({ tab, setTab, mode }) {
             className="flex flex-col items-center gap-0.5 py-1 px-2 gold-tap relative">
             {isPublish ? (
               <div className="w-11 h-11 rounded-xl flex items-center justify-center -mt-3"
-                style={{ backgroundColor: C.gold, boxShadow: `0 0 14px rgba(255,184,0,0.5)` }}>
+                style={{ backgroundColor: C.gold }}>
                 <item.icon size={22} strokeWidth={3} style={{ color: C.bg }} />
               </div>
             ) : (
