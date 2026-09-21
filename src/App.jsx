@@ -16,7 +16,7 @@ import {
   // le texte. Ceux-ci sont monochromes et suivent la couleur du libellé.
   Trophy, Dumbbell, Swords, Target, Sprout, Rocket, CircleSlash,
   Hourglass, CircleCheck, CircleX, Ban, CalendarDays, Download,
-  Globe, Tag, Cake, FileText, Shield,
+  Globe, Tag, Cake, FileText, Shield, Shirt, Medal,
 } from 'lucide-react';
 import { supabase } from './supabase';
 import { useReferentiels, normaliserPoste } from './referentiels';
@@ -199,13 +199,29 @@ const SPORTS = [
 ];
 
 // Liste déroulante commune aux formulaires et aux filtres.
-function ChampSelect({ label, value, onChange, options, placeholder = 'Indifférent', disabled, compact }) {
+// ─── Libellé de champ ─────────────────────────────────────────────
+// Trois choses tenaient sur la même ligne au même poids : un emoji, le nom
+// du champ, et « (optionnel) » entre parenthèses. On lisait donc « (optionnel) »
+// aussi fort que le nom du champ, sur presque tous les champs du formulaire.
+// L'icône passe en gris, et « optionnel » en retrait à droite.
+function LibelleChamp({ icon: Icon, children, optionnel, obligatoire, compact }) {
+  return (
+    <label className="text-xs font-semibold mb-2 flex items-center gap-1.5"
+      style={{ color: compact ? C.text : C.textDim }}>
+      {Icon && <Icon size={12} strokeWidth={2.4} style={{ color: C.textMute }} />}
+      <span>{children}{obligatoire ? ' *' : ''}</span>
+      {optionnel && (
+        <span className="text-[10px] font-normal" style={{ color: C.textMute }}>optionnel</span>
+      )}
+    </label>
+  );
+}
+
+function ChampSelect({ label, icon, optionnel, value, onChange, options, placeholder = 'Indifférent', disabled, compact }) {
   return (
     <div>
       {label && (
-        <label className="text-xs font-semibold mb-2 block" style={{ color: compact ? C.text : C.textDim }}>
-          {label}
-        </label>
+        <LibelleChamp icon={icon} optionnel={optionnel} compact={compact}>{label}</LibelleChamp>
       )}
       <select
         value={value ?? ''}
@@ -2845,7 +2861,7 @@ function PublishView({ userProfile, setTab }) {
         <div className="grid grid-cols-2 gap-2 p-1 rounded-xl"
           style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
           {[
-            { id: 'upload', label: '📱 Filmer / Uploader', icon: <Video size={14} /> },
+            { id: 'upload', label: 'Filmer / Uploader', icon: <Video size={14} /> },
             { id: 'youtube', label: '▶ Lien YouTube', icon: null },
           ].map(opt => (
             <button key={opt.id} type="button"
@@ -2940,8 +2956,9 @@ function PublishView({ userProfile, setTab }) {
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-xs font-bold flex items-center gap-1.5" style={{ color: C.text }}>
-                  🎯 Flèche de suivi
-                  <span style={{ color: C.textMute, fontWeight: 400 }}>(optionnel)</span>
+                  <Target size={12} strokeWidth={2.4} style={{ color: C.textMute }} />
+                  Flèche de suivi
+                  <span className="text-[10px]" style={{ color: C.textMute, fontWeight: 400 }}>optionnel</span>
                 </div>
                 <div className="text-[11px] mt-0.5" style={{ color: C.textDim }}>
                   Affiche une flèche au-dessus de toi tout au long de la vidéo pour qu'on te suive.
@@ -2998,9 +3015,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Sport */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Sport *
-          </label>
+          <LibelleChamp icon={Trophy} obligatoire>Sport</LibelleChamp>
           <select value={sport} onChange={(e) => setSport(e.target.value)}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
             style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
@@ -3012,9 +3027,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Type de vidéo : Match / Entraînement */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Type de vidéo *
-          </label>
+          <LibelleChamp icon={Video} obligatoire>Type de vidéo</LibelleChamp>
           <div className="grid grid-cols-2 gap-2">
             {[
               { id: 'match',    label: 'Match',    Icon: Trophy, desc: 'Compétition officielle' },
@@ -3042,7 +3055,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Poste — proposé selon le sport choisi */}
         <ChampSelect
-          label="Poste (optionnel)"
+          label="Poste" icon={Target} optionnel
           value={posteChoisi}
           onChange={setPositionId}
           options={postesDuSport}
@@ -3051,9 +3064,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Description */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            Description (optionnel)
-          </label>
+          <LibelleChamp icon={FileText} optionnel>Description</LibelleChamp>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)}
             placeholder="Quelques mots sur cette vidéo..." rows={3} maxLength={300}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none"
@@ -3065,9 +3076,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Championnat */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            🏆 Championnat (optionnel)
-          </label>
+          <LibelleChamp icon={Trophy} optionnel>Championnat</LibelleChamp>
           <input type="text" value={championship} onChange={(e) => setChampionship(e.target.value)}
             placeholder="Ex : National 2, Championnat de France, Ligue 1…" maxLength={80}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
@@ -3076,7 +3085,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Catégorie d'âge */}
         <ChampSelect
-          label="🎂 Catégorie d'âge (optionnel)"
+          label="Catégorie d'âge" icon={Cake} optionnel
           value={ageCategoryId}
           onChange={setAgeCategoryId}
           options={refs.categoriesAge}
@@ -3084,7 +3093,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Saison */}
         <ChampSelect
-          label="📅 Saison (optionnel)"
+          label="Saison" icon={Calendar} optionnel
           value={seasonId}
           onChange={setSeasonId}
           options={refs.saisons}
@@ -3092,9 +3101,7 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Date du match */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            🗓️ Date du match (optionnel)
-          </label>
+          <LibelleChamp icon={CalendarDays} optionnel>Date du match</LibelleChamp>
           <input type="date" value={matchDate} max={new Date().toISOString().slice(0, 10)}
             onChange={(e) => setMatchDate(e.target.value)}
             className="w-full px-4 py-3 rounded-xl text-sm outline-none"
@@ -3104,7 +3111,7 @@ function PublishView({ userProfile, setTab }) {
         {/* Niveau de l'adversaire — ce qui donne sa valeur à la performance */}
         <div>
           <ChampSelect
-            label="🥊 Niveau de l'adversaire (optionnel)"
+            label="Niveau de l'adversaire" icon={Swords} optionnel
             value={opponentLevelId}
             onChange={setOpponentLevelId}
             options={refs.niveauxCompetition}
@@ -3118,9 +3125,7 @@ function PublishView({ userProfile, setTab }) {
         {/* Numéro de maillot — seulement pour les sports qui en portent */}
         {refs.sportsAvecMaillot.has(sport) && (
           <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              👕 Numéro de maillot (optionnel)
-            </label>
+            <LibelleChamp icon={Shirt} optionnel>Numéro de maillot</LibelleChamp>
             <input type="number" inputMode="numeric" min={0} max={99}
               value={jerseyNumber}
               onChange={(e) => {
@@ -3140,15 +3145,13 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Niveau de la vidéo */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            🏅 Niveau de la vidéo (optionnel)
-          </label>
+          <LibelleChamp icon={Medal} optionnel>Niveau de la vidéo</LibelleChamp>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { id: 'amateur', label: '🌱 Amateur' },
-              { id: 'semi_pro', label: '⭐ Semi-pro' },
-              { id: 'pro', label: '🏆 Pro' },
-              { id: 'entrainement', label: '🏋️ Entraînement' },
+              { id: 'amateur', label: 'Amateur' },
+              { id: 'semi_pro', label: 'Semi-pro' },
+              { id: 'pro', label: 'Pro' },
+              { id: 'entrainement', label: 'Entraînement' },
             ].map(opt => {
               const active = videoLevel === opt.id;
               return (
@@ -3169,12 +3172,12 @@ function PublishView({ userProfile, setTab }) {
 
         {/* Localisation (pré-remplie depuis le profil) */}
         <div>
-          <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-            📍 Localisation
-            <span className="ml-1.5 font-normal" style={{ color: C.textMute }}>
-              (pré-remplie depuis tes paramètres)
+          <LibelleChamp icon={PinIcon}>
+            Localisation
+            <span className="text-[10px] font-normal ml-1.5" style={{ color: C.textMute }}>
+              pré-remplie depuis tes paramètres
             </span>
-          </label>
+          </LibelleChamp>
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="text-[10px] mb-1 block" style={{ color: C.textMute }}>Pays</label>
@@ -3526,7 +3529,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
               {/* Sport */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Sport</label>
+                <LibelleChamp icon={Trophy} compact>Sport</LibelleChamp>
                 <div className="flex flex-wrap gap-1.5">
                   <button onClick={() => setFilters(f => ({ ...f, sport: null }))}
                     className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
@@ -3554,14 +3557,14 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
 
               {/* Niveaux de l'auteur */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏅 Niveau de l'auteur</label>
+                <LibelleChamp icon={Medal} compact>Niveau de l'auteur</LibelleChamp>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { id: 'amateur',         label: '🌱 Amateur' },
-                    { id: 'young_pro',       label: '🚀 Young Pro' },
-                    { id: 'senior_amateur',  label: '✨ Senior Am.' },
-                    { id: 'senior_semi_pro', label: '⭐ Semi-Pro' },
-                    { id: 'senior_pro',      label: '🏆 Pro' },
+                    { id: 'amateur',         label: 'Amateur' },
+                    { id: 'young_pro',       label: 'Young Pro' },
+                    { id: 'senior_amateur',  label: 'Senior Am.' },
+                    { id: 'senior_semi_pro', label: 'Semi-Pro' },
+                    { id: 'senior_pro',      label: 'Pro' },
                   ].map(lv => {
                     const active = filters.levels.includes(lv.id);
                     return (
@@ -3579,7 +3582,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
 
               {/* Poste — dépend du sport choisi juste au-dessus */}
               <ChampSelect compact
-                label="🎯 Poste"
+                label="Poste" icon={Target}
                 value={posteFiltre}
                 onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
                 options={postesDuSport}
@@ -3588,7 +3591,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
 
               {/* Période */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📹 Vidéo publiée dans</label>
+                <LibelleChamp icon={Video} compact>Vidéo publiée dans</LibelleChamp>
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     { id: null,  label: 'Tout' },
@@ -3614,7 +3617,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
 
               {/* Catégorie d'âge */}
               <ChampSelect compact
-                label="🎂 Catégorie d'âge"
+                label="Catégorie d'âge" icon={Cake}
                 value={filters.ageCategoryId}
                 onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
                 options={refs.categoriesAge} />
@@ -3622,7 +3625,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               {/* Niveau de l'adversaire, à partir de… */}
               <div>
                 <ChampSelect compact
-                  label="🥊 Adversaire d'au moins"
+                  label="Adversaire d'au moins" icon={Swords}
                   value={filters.opponentLevelId}
                   onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
                   options={refs.niveauxCompetition} />
@@ -3637,7 +3640,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
                   cherche « Bordeaux » n'a pas à décider si c'est une ville,
                   une région ou un pays : la saisie est comparée aux trois. */}
               <div>
-                <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📍 Lieu</label>
+                <LibelleChamp icon={PinIcon} compact>Lieu</LibelleChamp>
                 <input type="text" value={filters.lieu}
                   onChange={(e) => setFilters(f => ({ ...f, lieu: e.target.value }))}
                   placeholder="Ville, région ou pays"
@@ -5037,16 +5040,16 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         <div className="grid grid-cols-2 gap-1 p-1 rounded-xl"
           style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
           {[
-            { id: 'profiles', label: '👤 Profils' },
-            { id: 'videos', label: '🎬 Vidéos' },
+            { id: 'profiles', label: 'Profils', Icon: User },
+            { id: 'videos', label: 'Vidéos', Icon: Video },
           ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className="py-2.5 rounded-lg text-xs font-bold transition-colors"
+              className="py-2.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
               style={{
-                backgroundColor: activeTab === tab.id ? C.gold : 'transparent',
+                backgroundColor: activeTab === tab.id ? C.text : 'transparent',
                 color: activeTab === tab.id ? C.bg : C.textDim,
               }}>
-              {tab.label}
+              <tab.Icon size={12} strokeWidth={2.4} /> {tab.label}
             </button>
           ))}
         </div>
@@ -5171,7 +5174,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
             {/* Localisation */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📍 Localisation</label>
+              <LibelleChamp icon={PinIcon} compact>Localisation</LibelleChamp>
               <div className="grid grid-cols-3 gap-2">
                 <input type="text" value={filters.country}
                   onChange={(e) => setFilters(f => ({ ...f, country: e.target.value }))}
@@ -5193,7 +5196,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
             {/* Nationalité */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🌐 Nationalité</label>
+              <LibelleChamp icon={Globe} compact>Nationalité</LibelleChamp>
               <input type="text" value={filters.nationality}
                 onChange={(e) => setFilters(f => ({ ...f, nationality: e.target.value }))}
                 placeholder="Ex : Française, Sénégalaise…"
@@ -5207,9 +5210,9 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
               <div className="grid grid-cols-4 gap-2">
                 {[
                   { id: null, label: 'Tous' },
-                  { id: 'M', label: '♂ H' },
-                  { id: 'F', label: '♀ F' },
-                  { id: 'O', label: '⚧ Autre' },
+                  { id: 'M', label: 'H' },
+                  { id: 'F', label: 'F' },
+                  { id: 'O', label: 'Autre' },
                 ].map(g => {
                   const active = (filters.gender ?? null) === g.id;
                   return (
@@ -5225,7 +5228,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
             {/* Championnat (texte libre — remplace le niveau) */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>🏆 Championnat</label>
+              <LibelleChamp icon={Trophy} compact>Championnat</LibelleChamp>
               <input type="text" value={filters.championship}
                 onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
                 placeholder="Ex : National 2, Ligue 1, Régional 1…"
@@ -5235,7 +5238,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
 
             {/* Délai de publication des vidéos */}
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>📅 Vidéos publiées depuis</label>
+              <LibelleChamp icon={Calendar} compact>Vidéos publiées depuis</LibelleChamp>
               <div className="flex flex-wrap gap-1.5">
                 {[
                   { id: null,  label: 'Tout' },
@@ -5261,7 +5264,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             {/* Poste — liste du sport choisi */}
             <div>
               <ChampSelect compact
-                label="🎯 Poste"
+                label="Poste" icon={Target}
                 value={posteFiltre}
                 onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
                 options={postesDuSport}
@@ -5278,14 +5281,14 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             {activeTab === 'videos' && (
               <>
                 <ChampSelect compact
-                  label="🎂 Catégorie d'âge"
+                  label="Catégorie d'âge" icon={Cake}
                   value={filters.ageCategoryId}
                   onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
                   options={refs.categoriesAge} />
 
                 <div>
                   <ChampSelect compact
-                    label="🥊 Adversaire d'au moins"
+                    label="Adversaire d'au moins" icon={Swords}
                     value={filters.opponentLevelId}
                     onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
                     options={refs.niveauxCompetition} />
@@ -5748,12 +5751,12 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
               </div>
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {[
-                  { id: 'amateur',         label: '🌱 Amateur' },
-                  { id: 'young_pro',       label: '🚀 Young Pro' },
-                  { id: 'senior_amateur',  label: '⭐ Senior Am.' },
-                  { id: 'senior_semi_pro', label: '⭐⭐ Semi-Pro' },
-                  { id: 'senior_pro',      label: '⭐⭐⭐ Pro' },
-                  { id: 'no_club',         label: '🆓 Sans club' },
+                  { id: 'amateur',         label: 'Amateur' },
+                  { id: 'young_pro',       label: 'Young Pro' },
+                  { id: 'senior_amateur',  label: 'Senior Am.' },
+                  { id: 'senior_semi_pro', label: 'Semi-Pro' },
+                  { id: 'senior_pro',      label: 'Pro' },
+                  { id: 'no_club',         label: 'Sans club' },
                 ].map(lv => {
                   const active = filterRecruitingLevels.includes(lv.id);
                   return (
@@ -11075,9 +11078,7 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
           {/* Début de saison sportive — athlètes uniquement (catégories d'âge U17/U18…) */}
           {isAthleteEditor && (
             <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                📅 Début de la saison sportive
-              </label>
+              <LibelleChamp icon={Calendar}>Début de la saison sportive</LibelleChamp>
               <select value={seasonStartMonth} onChange={(e) => setSeasonStartMonth(Number(e.target.value))}
                 className="w-full px-4 py-3 rounded-xl text-sm outline-none"
                 style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
@@ -11141,9 +11142,9 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                 <div className="grid grid-cols-4 gap-2">
                   {[
                     { id: 'all', label: 'Tous' },
-                    { id: 'M',   label: '♂ H' },
-                    { id: 'F',   label: '♀ F' },
-                    { id: 'O',   label: '⚧ Autre' },
+                    { id: 'M',   label: 'H' },
+                    { id: 'F',   label: 'F' },
+                    { id: 'O',   label: 'Autre' },
                   ].map(opt => {
                     const active = recruitingGender === opt.id;
                     return (
@@ -11167,12 +11168,12 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { id: 'amateur',         label: '🌱 Amateur' },
-                    { id: 'young_pro',       label: '🚀 Young Pro' },
-                    { id: 'senior_amateur',  label: '⭐ Senior Am.' },
-                    { id: 'senior_semi_pro', label: '⭐⭐ Semi-Pro' },
-                    { id: 'senior_pro',      label: '⭐⭐⭐ Pro' },
-                    { id: 'no_club',         label: '🆓 Sans club' },
+                    { id: 'amateur',         label: 'Amateur' },
+                    { id: 'young_pro',       label: 'Young Pro' },
+                    { id: 'senior_amateur',  label: 'Senior Am.' },
+                    { id: 'senior_semi_pro', label: 'Semi-Pro' },
+                    { id: 'senior_pro',      label: 'Pro' },
+                    { id: 'no_club',         label: 'Sans club' },
                   ].map(lv => {
                     const active = recruitingLevels.includes(lv.id);
                     return (
@@ -11388,9 +11389,10 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
           {/* Localisation */}
           <div>
-            <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-              📍 Localisation (pour le matching recruteurs)
-            </label>
+            <LibelleChamp icon={PinIcon}>
+              Localisation
+              <span className="text-[10px] font-normal ml-1.5" style={{ color: C.textMute }}>pour le matching recruteurs</span>
+            </LibelleChamp>
             <div className="grid grid-cols-3 gap-2">
               <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
                 placeholder="Pays" maxLength={60}
