@@ -1131,7 +1131,7 @@ function LandscapePlayerOverlay({ src, poster, points, color, shape, sizeScale, 
         <button onClick={togglePlay} aria-label="Lecture"
           className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 5 }}>
           <div className="w-20 h-20 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+            style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
             <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
           </div>
         </button>
@@ -1281,7 +1281,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               <button onClick={togglePlay} aria-label="Lecture"
                 className="absolute inset-0 flex items-center justify-center">
                 <div className="w-20 h-20 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+                  style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                   <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
                 </div>
               </button>
@@ -1309,7 +1309,7 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             )}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-20 h-20 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: 'rgba(255,184,0,0.95)' }}>
+                style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                 <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
               </div>
             </div>
@@ -8551,7 +8551,7 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
 const LEVEL_LABELS = {
   amateur:         { label: 'Amateur',         Icon: Sprout,       color: '#86EFAC' }, // vert tendre
   young_pro:       { label: 'Young Pro',       Icon: Rocket,       color: '#60A5FA' }, // bleu lumineux
-  senior_amateur:  { label: 'Senior Amateur',  Icon: Sparkles,     color: '#FCD34D' }, // ambre doux
+  senior_amateur:  { label: 'Senior Amateur',  Icon: Sparkles,     color: '#A78BFA' }, // violet doux
   senior_semi_pro: { label: 'Senior Semi-Pro', Icon: Star,         color: '#FB923C' }, // orange
   senior_pro:      { label: 'Senior Pro',      Icon: Trophy,       color: '#F472B6' }, // rose élite
   no_club:         { label: 'Sans club',       Icon: CircleSlash,  color: '#CBD5E1' }, // gris perle
@@ -8586,7 +8586,7 @@ function LevelChip({ level, size = 'sm' }) {
 
 // ─── Labels type vidéo ────────────────────────────────────────────
 const VIDEO_TYPE_LABELS = {
-  match:    { label: 'Match',         Icon: Trophy,   color: '#FCD34D' },
+  match:    { label: 'Match',         Icon: Trophy,   color: '#C4B5FD' },
   training: { label: 'Entraînement',  Icon: Dumbbell, color: '#60A5FA' },
 };
 function VideoTypeBadge({ type, size = 'sm' }) {
