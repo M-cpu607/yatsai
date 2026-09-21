@@ -854,6 +854,17 @@ function urlEmbedYouTube(id, extra = '') {
   return `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0${extra}`;
 }
 
+// Dans l'app empaquetée, l'intégration directe échoue : la page n'a pas
+// d'origine http(s), YouTube répond « erreur 153 ». On passe alors par une
+// fonction Edge du projet Supabase, servie en https, qui héberge le lecteur
+// et présente donc à YouTube un référent qu'il accepte. Un saut de plus,
+// mais la vidéo reste dans le fil au lieu d'ouvrir une autre application.
+function urlLecteurRelaye(id) {
+  const base = import.meta.env.VITE_SUPABASE_URL;
+  if (!base) return null;
+  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube?v=${encodeURIComponent(id)}`;
+}
+
 // « Sommes-nous dans l'app empaquetée ? », utilisable pendant le rendu.
 // Première réponse : le pont natif que Capacitor injecte dans la WebView
 // avant le code de l'application. Il est ensuite remplacé par le module
@@ -1352,9 +1363,8 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
           // Vidéo YouTube : iframe intégré DANS la carte (pas d'overlay plein écran)
           <>
             <iframe
-              src={urlEmbedYouTube(youtubeId, '&autoplay=1')}
+              src={(estAppNative && urlLecteurRelaye(youtubeId)) || urlEmbedYouTube(youtubeId, '&autoplay=1')}
               title={data.title}
-              referrerPolicy="no-referrer"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               className="absolute inset-0 w-full h-full"
               style={{ border: 0 }} />
@@ -1363,16 +1373,9 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             <BoutonOuvrirYouTube youtubeId={youtubeId} className="top-28 left-4" />
           </>
         ) : (
-          // Miniature YouTube. Sur le web, le tap lance le lecteur intégré.
-          // Dans l'application native, ce lecteur affiche l'erreur 153 — la
-          // page n'a pas d'origine http(s) — donc on ouvre directement la
-          // vidéo à l'extérieur plutôt que de montrer un écran d'erreur.
-          <button
-            onClick={() => {
-              markViewed();
-              if (estAppNative) ouvrirSurYouTube(youtubeId);
-              else setYtOpen(true);
-            }}
+          // Miniature YouTube : le tap lance le lecteur dans la carte,
+          // directement sur le web, via le relais https en natif.
+          <button onClick={() => { setYtOpen(true); markViewed(); }}
             className="absolute inset-0 w-full h-full">
             {thumbnailUrl ? (
               <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
@@ -1383,22 +1386,11 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
                 <span style={{ color: C.textDim }}>Vidéo</span>
               </div>
             )}
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-20 h-20 rounded-full flex items-center justify-center"
                 style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                 <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
               </div>
-              {/* On annonce qu'on va sortir de l'application : un tap qui
-                  bascule ailleurs sans prévenir se vit comme un bug. */}
-              {estAppNative && (
-                <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full"
-                  style={{
-                    backgroundColor: 'rgba(8,15,32,0.7)', color: C.text,
-                    border: '1px solid rgba(255,255,255,0.18)',
-                  }}>
-                  Ouvrir sur YouTube
-                </span>
-              )}
             </div>
           </button>
         )}
@@ -1596,16 +1588,7 @@ function YouTubePlayer({ video, onClose }) {
   const isUpload = !youtubeId && !!video.video_url;
   const vidRef = useRef(null);
 
-  // Dans l'application native, l'intégration YouTube n'affiche que l'erreur
-  // 153 : on bascule directement à l'extérieur. Le drapeau évite de rouvrir
-  // la vidéo à chaque rendu.
   const estAppNative = useEstAppNative();
-  const sortieFaite = useRef(false);
-  useEffect(() => {
-    if (!estAppNative || !youtubeId || sortieFaite.current) return;
-    sortieFaite.current = true;
-    ouvrirSurYouTube(youtubeId);
-  }, [estAppNative, youtubeId]);
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col"
@@ -1627,29 +1610,13 @@ function YouTubePlayer({ video, onClose }) {
 
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
-        {youtubeId && estAppNative ? (
-          // La vidéo vient de partir vers YouTube. On laisse de quoi
-          // recommencer si l'ouverture n'a pas abouti — plutôt qu'un écran
-          // noir sans issue.
-          <div className="flex flex-col items-center gap-4 px-8 text-center">
-            <Play size={40} strokeWidth={2} style={{ color: C.textMute }} />
-            <p className="text-sm" style={{ color: C.textDim }}>
-              Cette vidéo s'ouvre dans YouTube.
-            </p>
-            <button type="button" onClick={() => ouvrirSurYouTube(youtubeId)}
-              className="px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-              style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
-              <Play size={13} strokeWidth={2.6} /> Ouvrir sur YouTube
-            </button>
-          </div>
-        ) : youtubeId ? (
+        {youtubeId ? (
           <>
             <iframe
               width="100%"
               height="100%"
-              src={urlEmbedYouTube(youtubeId, '&autoplay=1')}
+              src={(estAppNative && urlLecteurRelaye(youtubeId)) || urlEmbedYouTube(youtubeId, '&autoplay=1')}
               title={video.title}
-              referrerPolicy="no-referrer"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
               style={{ border: 0 }}
