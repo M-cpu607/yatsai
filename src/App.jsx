@@ -893,9 +893,7 @@ const RAISONS_YOUTUBE = {
 function LecteurYouTube({ youtubeId, titre }) {
   const relais = urlRelaisYouTube(youtubeId);
   const cadreRef = useRef(null);
-  // `null` tant que le relais joue ; sinon { pour, code } pour un refus de
-  // YouTube, ou { pour, repli: true } quand c'est le relais qui n'a pas
-  // répondu. L'identifiant voyage avec l'issue : changer de vidéo la périme
+  // L'identifiant voyage avec l'issue : changer de vidéo la périme
   // d'elle-même, sans remise à zéro dans un effet.
   const [issue, setIssue] = useState(null);
 
@@ -908,18 +906,30 @@ function LecteurYouTube({ youtubeId, titre }) {
       if (e.source !== cadreRef.current?.contentWindow) return;
       const m = e.data;
       if (!m || m.source !== 'lecteur-youtube') return;
+
+      // Rapport d'état du lecteur : informatif, il ne décide de rien. On le
+      // traite avant tout le reste, car il arrive en flux et ne doit ni
+      // désarmer le minuteur ni être pris pour un échec.
+      if (m.type === 'etat') {
+        setIssue(prec => (prec?.pour === youtubeId && prec.etat === 'pret'
+          ? { ...prec, lecture: m.valeur, aJoue: prec.aJoue || m.valeur === 1 || m.valeur === 3 }
+          : prec));
+        return;
+      }
+
       clearTimeout(secours);
-      if (m.type === 'pret') setIssue(null);
-      else if (m.type === 'erreur') setIssue({ pour: youtubeId, code: m.code ?? null });
-      // Silence de l'API, ou API injoignable : ce n'est pas la vidéo qui
-      // est en cause, on tente la voie directe.
-      else setIssue({ pour: youtubeId, repli: true });
+      if (m.type === 'pret') setIssue({ pour: youtubeId, etat: 'pret' });
+      else if (m.type === 'erreur') setIssue({ pour: youtubeId, etat: 'refus', code: m.code ?? null });
+      else if (m.type === 'silence' || m.type === 'api-injoignable') {
+        // Ce n'est pas la vidéo qui est en cause : on tente la voie directe.
+        setIssue({ pour: youtubeId, etat: 'repli', motif: m.type });
+      }
     };
 
     // La page relais ne peut pas signaler sa propre absence : si elle ne se
     // charge pas du tout, aucun message n'arrive jamais.
     const secours = setTimeout(
-      () => setIssue({ pour: youtubeId, repli: true }),
+      () => setIssue({ pour: youtubeId, etat: 'repli', motif: 'sans-reponse' }),
       DELAI_SECOURS_MS,
     );
 
@@ -930,10 +940,11 @@ function LecteurYouTube({ youtubeId, titre }) {
     };
   }, [relais, youtubeId]);
 
-  const issueActuelle = issue?.pour === youtubeId ? issue : null;
+  const courant = issue?.pour === youtubeId ? issue : null;
+  const etat = courant?.etat ?? (relais ? 'attente' : 'direct');
 
-  if (issueActuelle && !issueActuelle.repli) {
-    const raison = RAISONS_YOUTUBE[issueActuelle.code]
+  if (etat === 'refus') {
+    const raison = RAISONS_YOUTUBE[courant.code]
       || "Cette vidéo n'a pas pu être lue ici.";
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
@@ -946,26 +957,58 @@ function LecteurYouTube({ youtubeId, titre }) {
           style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
           <Play size={13} strokeWidth={2.6} /> Regarder sur YouTube
         </button>
-        {issueActuelle.code != null && (
+        {courant.code != null && (
           <span className="text-[10px] font-mono" style={{ color: C.textMute }}>
-            code {issueActuelle.code}
+            code {courant.code}
           </span>
         )}
       </div>
     );
   }
 
-  const source = (!issueActuelle && relais) ? relais : urlEmbedYouTube(youtubeId);
+  // « Prêt » ne veut pas dire « joue » : iOS peut refuser le démarrage.
+  // Tant que le lecteur n'a pas annoncé une lecture ou une mise en tampon,
+  // on considère que l'utilisateur regarde encore un rectangle noir.
+  const joue = !!courant?.aJoue;
+  const source = etat === 'attente' || etat === 'pret' ? relais : urlEmbedYouTube(youtubeId);
   return (
-    <iframe
-      ref={cadreRef}
-      key={source}
-      src={source}
-      title={titre}
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-      allowFullScreen
-      className="absolute inset-0 w-full h-full"
-      style={{ border: 0 }} />
+    <>
+      <iframe
+        ref={cadreRef}
+        key={source}
+        src={source}
+        title={titre}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        className="absolute inset-0 w-full h-full"
+        style={{ border: 0 }} />
+
+      {/* Un lecteur qui ne démarre pas laisse un rectangle noir muet. Tant
+          qu'il n'a pas confirmé qu'il joue — « prêt » ne suffit pas, iOS
+          peut refuser le démarrage — on dit où on en est et on laisse une
+          sortie. Le noir silencieux ne doit jamais être une réponse. */}
+      {!joue && (
+        // Au-dessus de la vidéo, sous la loupe et les chips de filtre : le
+        // bas de la carte est déjà pris par les infos et la barre du bas.
+        <div className="absolute left-4 right-4 top-28 z-10 flex items-center justify-between gap-3 pointer-events-none">
+          <span className="text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            {etat === 'attente' ? 'lecteur : démarrage…'
+              : etat === 'pret' ? `lecteur : prêt (état ${courant?.lecture ?? '—'})`
+                : etat === 'repli' ? `lecteur : voie directe (${courant?.motif ?? '?'})`
+                  : 'lecteur : voie directe'}
+          </span>
+          <button type="button"
+            onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
+            className="pointer-events-auto px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 flex-shrink-0"
+            style={{
+              backgroundColor: 'rgba(8,15,32,0.8)', color: C.text,
+              border: '1px solid rgba(255,255,255,0.18)',
+            }}>
+            <Play size={10} strokeWidth={2.6} /> YouTube
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 

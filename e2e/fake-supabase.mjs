@@ -213,11 +213,17 @@ createServer((req, res) => {
       // jamais, et c'est le minuteur de secours de l'application qui doit
       // reprendre la main.
       if (scenario === 'absent') { res.writeHead(404); return res.end('non'); }
-      const message = scenario === 'refus'
-        ? "{ type: 'erreur', code: 150 }"
-        : scenario === 'muet'
-          ? "{ type: 'api-injoignable' }"
-          : "{ type: 'pret' }";
+      // Chaque scénario est une suite de messages, envoyés dans l'ordre.
+      const suites = {
+        // Le lecteur démarre : prêt, puis lecture en cours.
+        pret: [{ type: 'pret' }, { type: 'etat', valeur: 1 }],
+        // Prêt mais jamais démarré : le cas « rectangle noir sans erreur »,
+        // celui que produit un iOS qui refuse le démarrage automatique.
+        noir: [{ type: 'pret' }, { type: 'etat', valeur: -1 }],
+        refus: [{ type: 'erreur', code: 150 }],
+        muet: [{ type: 'api-injoignable' }],
+      };
+      const suite = suites[scenario] || suites.pret;
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Access-Control-Allow-Origin': '*',
@@ -225,9 +231,11 @@ createServer((req, res) => {
       return res.end(`<!doctype html><meta charset="utf-8">
 <body style="margin:0;background:#000;color:#666;font:12px sans-serif">relais d'essai</body>
 <script>
-  var m = ${message};
-  m.source = 'lecteur-youtube';
-  setTimeout(function () { parent.postMessage(m, '*'); }, 120);
+  var suite = ${JSON.stringify(suite)};
+  suite.forEach(function (m, i) {
+    m.source = 'lecteur-youtube';
+    setTimeout(function () { parent.postMessage(m, '*'); }, 120 + i * 150);
+  });
 </script>`);
     }
 

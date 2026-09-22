@@ -67,12 +67,19 @@ const page = (id: string) => `<!doctype html>
       videoId: ID,
       playerVars: {
         autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1,
+        // iOS refuse le démarrage automatique d'une vidéo sonore : sans
+        // cela, le lecteur reste sur une image noire, sans erreur, sans
+        // rien. Le son se rallume depuis les commandes du lecteur.
+        mute: 1,
         // Doit désigner la page qui héberge le lecteur — donc celle-ci,
         // et non l'application qui l'englobe.
         origin: location.origin
       },
       events: {
         onReady: function () { signaler({ type: 'pret' }); },
+        // État réel du lecteur : -1 non démarré, 0 terminé, 1 lecture,
+        // 2 pause, 3 tampon, 5 en file. « Prêt » ne veut pas dire « joue ».
+        onStateChange: function (e) { versApp({ type: 'etat', valeur: e && e.data }); },
         onError: function (e) { signaler({ type: 'erreur', code: e && e.data }); }
       }
     });
