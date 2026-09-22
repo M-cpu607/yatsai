@@ -858,10 +858,17 @@ function isUploadedVideo(data) {
 
 const DELAI_SECOURS_MS = 9000;
 
+// Fixé au démarrage de l'application, pas à chaque rendu : l'adresse du
+// relais doit rester stable tant que l'app tourne, sinon l'iframe se
+// rechargerait en pleine lecture. Il change d'un lancement à l'autre, ce
+// qui suffit à écarter une page gardée en cache par la WebView.
+const SESSION = Date.now().toString(36);
+
 function urlRelaisYouTube(id) {
   const base = import.meta.env.VITE_SUPABASE_URL;
   if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube?v=${encodeURIComponent(id)}`;
+  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube`
+    + `?v=${encodeURIComponent(id)}&s=${SESSION}`;
 }
 
 function urlEmbedYouTube(id) {

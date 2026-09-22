@@ -47,8 +47,20 @@ const page = (id: string) => `<!doctype html>
   var ID = ${JSON.stringify(id)};
   var repondu = false;
 
+  function journaliser(etiquette) {
+    var u = location.pathname + '?v=' + encodeURIComponent(ID)
+          + '&journal=' + encodeURIComponent(etiquette);
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon(u)) return;
+    } catch (e) { /* on tente l'image */ }
+    try { new Image().src = u; } catch (e) { /* tant pis */ }
+  }
+
   function versApp(message) {
     message.source = 'lecteur-youtube';
+    journaliser(message.type
+      + (message.code != null ? '-' + message.code : '')
+      + (message.valeur != null ? '-' + message.valeur : ''));
     try { parent.postMessage(message, '*'); } catch (e) { /* sans parent */ }
   }
 
@@ -57,6 +69,8 @@ const page = (id: string) => `<!doctype html>
     repondu = true;
     versApp(message);
   }
+
+  journaliser('page-chargee');
 
   // L'API n'émet aucun événement quand elle n'arrive pas à se charger :
   // sans ce délai, l'application attendrait indéfiniment.
@@ -87,6 +101,7 @@ const page = (id: string) => `<!doctype html>
 
   var s = document.createElement('script');
   s.src = 'https://www.youtube.com/iframe_api';
+  s.onload = function () { journaliser('api-chargee'); };
   s.onerror = function () { signaler({ type: 'api-injoignable' }); };
   document.head.appendChild(s);
 })();
@@ -95,7 +110,17 @@ const page = (id: string) => `<!doctype html>
 </html>`;
 
 Deno.serve((req: Request) => {
-  const id = new URL(req.url).searchParams.get("v") ?? "";
+  const url = new URL(req.url);
+
+  // Balise de diagnostic : la page se signale à elle-même pour que ses
+  // étapes apparaissent dans les journaux du projet. Sans cela, ce qui se
+  // passe dans la WebView d'un téléphone distant est invisible — et on en
+  // est réduit à demander à l'utilisateur de recopier ce qu'il voit.
+  if (url.searchParams.has("journal")) {
+    return new Response(null, { status: 204 });
+  }
+
+  const id = url.searchParams.get("v") ?? "";
 
   // On ne réinjecte jamais la valeur reçue dans la réponse : elle
   // atterrirait dans du HTML.
@@ -109,7 +134,10 @@ Deno.serve((req: Request) => {
   return new Response(page(id), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=3600",
+      // Pas de cache pendant le diagnostic : une page gardée une heure dans
+      // la WebView ferait tester une version qui n'est plus celle déployée.
+      // À remettre en `public, max-age=3600` une fois la lecture stabilisée.
+      "Cache-Control": "no-store",
       // Autorise explicitement l'inclusion dans une iframe. Quand cette
       // directive est présente, les navigateurs ignorent X-Frame-Options.
       "Content-Security-Policy": "frame-ancestors *",
