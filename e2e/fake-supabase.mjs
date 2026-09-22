@@ -201,6 +201,36 @@ createServer((req, res) => {
     };
     if (req.method === 'OPTIONS') return envoyer(200, {});
 
+    // ── Relais du lecteur YouTube (fonction Edge) ──
+    // Reproduit le contrat de la vraie fonction : une page qui renvoie à son
+    // parent, par postMessage, l'issue de la lecture. Ici l'API de YouTube
+    // est hors d'atteinte, alors on rejoue le scénario demandé par
+    // `?essai=` — ce qui permet de vérifier chaque branche de l'application
+    // sans dépendre du réseau.
+    if (u.pathname === '/functions/v1/lecteur-youtube') {
+      const scenario = process.env.ESSAI_LECTEUR || u.searchParams.get('essai') || 'pret';
+      // « absent » : la fonction n'est pas déployée. Aucun message ne part
+      // jamais, et c'est le minuteur de secours de l'application qui doit
+      // reprendre la main.
+      if (scenario === 'absent') { res.writeHead(404); return res.end('non'); }
+      const message = scenario === 'refus'
+        ? "{ type: 'erreur', code: 150 }"
+        : scenario === 'muet'
+          ? "{ type: 'api-injoignable' }"
+          : "{ type: 'pret' }";
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      });
+      return res.end(`<!doctype html><meta charset="utf-8">
+<body style="margin:0;background:#000;color:#666;font:12px sans-serif">relais d'essai</body>
+<script>
+  var m = ${message};
+  m.source = 'lecteur-youtube';
+  setTimeout(function () { parent.postMessage(m, '*'); }, 120);
+</script>`);
+    }
+
     // ── Auth ──
     if (u.pathname.startsWith('/auth/v1/token')) return envoyer(200, session);
     if (u.pathname === '/auth/v1/signup') return envoyer(200, session);

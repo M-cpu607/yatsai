@@ -263,3 +263,46 @@ npx supabase db pull          # écrit une nouvelle migration
 Dans l'autre sens, une migration écrite et testée en local se pousse avec
 `npx supabase db push`. **Testez toujours en local d'abord** : c'est
 précisément ce que ce dossier vous permet.
+
+---
+
+## Fonctions Edge
+
+| Fonction | JWT | Rôle |
+|---|---|---|
+| `scout-chatbot` | exigé | assistant de recrutement |
+| `delete-account` | exigé | suppression de compte |
+| `lecteur-youtube` | **non exigé** | page https qui héberge le lecteur YouTube |
+
+### `lecteur-youtube`
+
+Une iframe YouTube qui refuse de jouer **reste noire sans rien dire**. Deux
+causes très différentes produisent cet écran et appellent deux réponses
+opposées : la vidéo interdit l'intégration (rien à corriger côté code), ou
+c'est la page qui l'héberge que YouTube rejette.
+
+Cette fonction renvoie une page qui monte le lecteur via l'**API officielle**
+— seule voie qui remonte un code d'erreur — et transmet l'issue à
+l'application par `postMessage` :
+
+| Message | Ce que fait l'application |
+|---|---|
+| `{type:'pret'}` | rien, la vidéo joue |
+| `{type:'erreur', code}` | affiche la raison en clair et un bouton vers YouTube |
+| `{type:'silence'}` · `{type:'api-injoignable'}` | retombe sur l'iframe directe |
+
+Servie en https, elle donne en prime au lecteur un référent valide, ce que
+`capacitor://localhost` ne peut pas fournir dans l'application empaquetée.
+
+C'est la seule fonction sans JWT, et c'est délibéré : une balise `<iframe>`
+ne peut pas porter d'en-tête `Authorization`. En contrepartie elle ne touche
+à aucune donnée, et l'identifiant reçu est validé contre
+`^[A-Za-z0-9_-]{11}$` avant d'entrer dans le HTML — tout le reste reçoit un
+400 sans jamais être réinjecté dans la réponse.
+
+```bash
+npx supabase functions deploy lecteur-youtube --no-verify-jwt
+```
+
+Le faux backend d'`e2e/` rejoue ce contrat : `ESSAI_LECTEUR=pret|refus|muet|absent`
+force chacun des quatre scénarios sans dépendre du réseau.

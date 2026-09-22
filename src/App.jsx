@@ -839,6 +839,136 @@ function getYouTubeIdFromUrl(url) {
 function isUploadedVideo(data) {
   return !!data?.video_url && !data?.youtube_url;
 }
+
+// ═══ LECTURE YOUTUBE ═══════════════════════════════════════════════
+// Une iframe YouTube qui refuse de jouer reste noire sans rien dire : ni
+// l'application ni l'utilisateur n'apprennent pourquoi. Deux causes très
+// différentes produisent ce même écran et appellent deux réponses
+// opposées — la vidéo interdit l'intégration (rien à corriger chez nous),
+// ou c'est la page qui l'héberge que YouTube rejette.
+//
+// D'où le relais : une page servie en https par une fonction Edge du
+// projet, qui monte le lecteur via l'API officielle — la seule voie qui
+// remonte un code d'erreur — et nous le renvoie par postMessage.
+//
+// Il sert sur toutes les plateformes, et pas seulement dans l'application
+// empaquetée : une seule voie à raisonner, et le message clair profite
+// aussi au web. S'il ne répond pas du tout, on retombe sur l'iframe
+// directe — le diagnostic ne doit jamais rendre la lecture pire.
+
+const DELAI_SECOURS_MS = 9000;
+
+function urlRelaisYouTube(id) {
+  const base = import.meta.env.VITE_SUPABASE_URL;
+  if (!base) return null;
+  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube?v=${encodeURIComponent(id)}`;
+}
+
+function urlEmbedYouTube(id) {
+  return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+}
+
+function ouvrirSurYouTube(id) {
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  // Deux voies, parce qu'aucune n'est garantie partout : `window.open` dans
+  // la WebView de Capacitor, qui passe la main au navigateur du système, et
+  // à défaut une navigation directe, que Capacitor intercepte pour ouvrir
+  // le lien à l'extérieur sans déplacer l'application.
+  try {
+    if (window.open(url, '_blank', 'noopener')) return;
+  } catch { /* on tente l'autre voie */ }
+  try { window.location.href = url; } catch { /* rien de plus à faire */ }
+}
+
+// Les codes de l'API YouTube, traduits en ce que l'utilisateur peut en faire.
+const RAISONS_YOUTUBE = {
+  2: "Le lien de cette vidéo n'est pas valide.",
+  5: "Le lecteur YouTube n'a pas pu démarrer sur cet appareil.",
+  100: 'Cette vidéo a été supprimée, ou elle est privée.',
+  101: "Le propriétaire de cette vidéo n'autorise pas sa lecture en dehors de YouTube.",
+  150: "Le propriétaire de cette vidéo n'autorise pas sa lecture en dehors de YouTube.",
+  153: "YouTube a refusé la page qui héberge le lecteur.",
+};
+
+function LecteurYouTube({ youtubeId, titre }) {
+  const relais = urlRelaisYouTube(youtubeId);
+  const cadreRef = useRef(null);
+  // `null` tant que le relais joue ; sinon { pour, code } pour un refus de
+  // YouTube, ou { pour, repli: true } quand c'est le relais qui n'a pas
+  // répondu. L'identifiant voyage avec l'issue : changer de vidéo la périme
+  // d'elle-même, sans remise à zéro dans un effet.
+  const [issue, setIssue] = useState(null);
+
+  useEffect(() => {
+    if (!relais) return undefined;
+
+    const ecouter = (e) => {
+      // Plusieurs cartes peuvent être montées en même temps : on ne retient
+      // que les messages venus de NOTRE iframe.
+      if (e.source !== cadreRef.current?.contentWindow) return;
+      const m = e.data;
+      if (!m || m.source !== 'lecteur-youtube') return;
+      clearTimeout(secours);
+      if (m.type === 'pret') setIssue(null);
+      else if (m.type === 'erreur') setIssue({ pour: youtubeId, code: m.code ?? null });
+      // Silence de l'API, ou API injoignable : ce n'est pas la vidéo qui
+      // est en cause, on tente la voie directe.
+      else setIssue({ pour: youtubeId, repli: true });
+    };
+
+    // La page relais ne peut pas signaler sa propre absence : si elle ne se
+    // charge pas du tout, aucun message n'arrive jamais.
+    const secours = setTimeout(
+      () => setIssue({ pour: youtubeId, repli: true }),
+      DELAI_SECOURS_MS,
+    );
+
+    window.addEventListener('message', ecouter);
+    return () => {
+      clearTimeout(secours);
+      window.removeEventListener('message', ecouter);
+    };
+  }, [relais, youtubeId]);
+
+  const issueActuelle = issue?.pour === youtubeId ? issue : null;
+
+  if (issueActuelle && !issueActuelle.repli) {
+    const raison = RAISONS_YOUTUBE[issueActuelle.code]
+      || "Cette vidéo n'a pas pu être lue ici.";
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
+        style={{ backgroundColor: '#000' }}>
+        <AlertTriangle size={28} strokeWidth={2} style={{ color: C.textMute }} />
+        <p className="text-sm" style={{ color: C.textDim }}>{raison}</p>
+        <button type="button"
+          onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
+          className="px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+          style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
+          <Play size={13} strokeWidth={2.6} /> Regarder sur YouTube
+        </button>
+        {issueActuelle.code != null && (
+          <span className="text-[10px] font-mono" style={{ color: C.textMute }}>
+            code {issueActuelle.code}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const source = (!issueActuelle && relais) ? relais : urlEmbedYouTube(youtubeId);
+  return (
+    <iframe
+      ref={cadreRef}
+      key={source}
+      src={source}
+      title={titre}
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allowFullScreen
+      className="absolute inset-0 w-full h-full"
+      style={{ border: 0 }} />
+  );
+}
+
 function getVideoThumb(data) {
   // Priorité : thumbnail_url explicite > YouTube hqdefault > null (le composant gérera le fallback)
   if (data?.thumbnail_url) return data.thumbnail_url;
@@ -1288,13 +1418,8 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
             )}
           </>
         ) : ytOpen && youtubeId ? (
-          // Vidéo YouTube : iframe intégré DANS la carte (pas d'overlay plein écran)
-          <iframe
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`}
-            title={data.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            className="absolute inset-0 w-full h-full"
-            style={{ border: 0 }} />
+          // Vidéo YouTube : lecteur intégré DANS la carte (pas d'overlay plein écran)
+          <LecteurYouTube youtubeId={youtubeId} titre={data.title} />
         ) : (
           // Miniature YouTube : tap = lecture intégrée dans la carte
           <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
@@ -1530,15 +1655,7 @@ function YouTubePlayer({ video, onClose }) {
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
         {youtubeId ? (
-          <iframe
-            width="100%"
-            height="100%"
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
-            title={video.title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            style={{ border: 0 }}
-          />
+          <LecteurYouTube youtubeId={youtubeId} titre={video.title} />
         ) : isUpload ? (
           <video
             ref={vidRef}

@@ -93,6 +93,26 @@ const apres = await compter();
 ok('Défilement infini charge une page suivante', apres > avant, `${avant} → ${apres} cartes`);
 await page.screenshot({ path: `${SHOT}/3-scroll.png` });
 
+// ── 5 bis. Une vidéo YouTube passe par le relais https ──
+// L'iframe directe ne peut pas dire pourquoi elle reste noire ; le relais,
+// lui, renvoie l'issue de la lecture. On vérifie que c'est bien lui qui est
+// chargé — le faux backend joue le rôle de la fonction Edge.
+{
+  const vignette = page.locator('img[src*="img.youtube.com"]').first();
+  if (await vignette.count()) {
+    await vignette.evaluate(e => e.closest('div.snap-start')?.scrollIntoView());
+    await page.waitForTimeout(400);
+    await vignette.evaluate(e => e.closest('button')?.click());
+    await page.waitForTimeout(1200);
+    const sources = await page.locator('iframe').evaluateAll(l => l.map(f => f.getAttribute('src') || ''));
+    ok('Lecture YouTube passée par le relais https',
+       sources.some(s => s.includes('/functions/v1/lecteur-youtube')),
+       'le relais remonte le code d\'erreur, l\'iframe directe ne le peut pas');
+    await page.reload();
+    await page.waitForTimeout(3000);
+  }
+}
+
 // ── 6. Les référentiels alimentent le formulaire de publication ──
 await page.locator('nav button').nth(2).evaluate(e => e.click());
 await page.waitForTimeout(1500);
