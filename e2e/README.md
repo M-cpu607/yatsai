@@ -16,7 +16,7 @@ Utile pour deux choses :
 npm i -D playwright && npx playwright install chromium   # une seule fois
 
 node e2e/fake-supabase.mjs &                             # faux backend, port 8901
-printf 'VITE_SUPABASE_URL=http://127.0.0.1:8901\nVITE_SUPABASE_ANON_KEY=faux\n' > .env.local
+printf 'VITE_SUPABASE_URL=http://127.0.0.1:8901\nVITE_SUPABASE_ANON_KEY=faux\nVITE_LECTEUR_YOUTUBE_URL=http://127.0.0.1:8901/lecteur/\n' > .env.local
 npm run build && npx vite preview --port 4173 &
 node e2e/smoke.mjs
 rm .env.local                                            # revenir au vrai backend

@@ -847,9 +847,16 @@ function isUploadedVideo(data) {
 // opposées — la vidéo interdit l'intégration (rien à corriger chez nous),
 // ou c'est la page qui l'héberge que YouTube rejette.
 //
-// D'où le relais : une page servie en https par une fonction Edge du
-// projet, qui monte le lecteur via l'API officielle — la seule voie qui
-// remonte un code d'erreur — et nous le renvoie par postMessage.
+// D'où le relais : une page servie en https (hebergement/lecteur-youtube/),
+// qui monte le lecteur via l'API officielle — la seule voie qui remonte un
+// code d'erreur — et nous le renvoie par postMessage. Servie en https, elle
+// donne aussi au lecteur le référent que capacitor://localhost ne fournit
+// pas, faute de quoi YouTube répond « erreur 153 » dans l'app iOS.
+//
+// Elle vit sur un hébergeur statique, pas chez Supabase : fonctions Edge et
+// Storage y réécrivent tout HTML en text/plain, et le script ne tourne pas.
+// Son adresse se règle par VITE_LECTEUR_YOUTUBE_URL ; sans elle, on garde
+// l'iframe directe d'avant.
 //
 // Il sert sur toutes les plateformes, et pas seulement dans l'application
 // empaquetée : une seule voie à raisonner, et le message clair profite
@@ -865,10 +872,10 @@ const DELAI_SECOURS_MS = 9000;
 const SESSION = Date.now().toString(36);
 
 function urlRelaisYouTube(id) {
-  const base = import.meta.env.VITE_SUPABASE_URL;
+  const base = import.meta.env.VITE_LECTEUR_YOUTUBE_URL;
   if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/functions/v1/lecteur-youtube`
-    + `?v=${encodeURIComponent(id)}&s=${SESSION}`;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}v=${encodeURIComponent(id)}&s=${SESSION}`;
 }
 
 function urlEmbedYouTube(id) {
@@ -994,7 +1001,7 @@ function LecteurYouTube({ youtubeId, titre }) {
           qu'il n'a pas confirmé qu'il joue — « prêt » ne suffit pas, iOS
           peut refuser le démarrage — on dit où on en est et on laisse une
           sortie. Le noir silencieux ne doit jamais être une réponse. */}
-      {!joue && (
+      {relais && !joue && (
         // Au-dessus de la vidéo, sous la loupe et les chips de filtre : le
         // bas de la carte est déjà pris par les infos et la barre du bas.
         <div className="absolute left-4 right-4 top-28 z-10 flex items-center justify-between gap-3 pointer-events-none">

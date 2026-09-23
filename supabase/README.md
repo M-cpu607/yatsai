@@ -272,37 +272,31 @@ précisément ce que ce dossier vous permet.
 |---|---|---|
 | `scout-chatbot` | exigé | assistant de recrutement |
 | `delete-account` | exigé | suppression de compte |
-| `lecteur-youtube` | **non exigé** | page https qui héberge le lecteur YouTube |
+| `lecteur-youtube` | **non exigé** | collecteur des balises du lecteur YouTube |
 
 ### `lecteur-youtube`
 
-Une iframe YouTube qui refuse de jouer **reste noire sans rien dire**. Deux
-causes très différentes produisent cet écran et appellent deux réponses
-opposées : la vidéo interdit l'intégration (rien à corriger côté code), ou
-c'est la page qui l'héberge que YouTube rejette.
+**Collecteur de balises**, rien d'autre. La page relais du lecteur YouTube
+vit sur un hébergeur statique (voir `hebergement/`) et signale ici chacune
+de ses étapes — `page-chargee`, `api-chargee`, `pret`, `etat-<n>`,
+`erreur-<code>`… — par `?v=<id>&journal=<étape>`. La fonction répond 204 ;
+l'intérêt est que chaque appel apparaît dans les journaux du projet, ce qui
+permet de voir à distance ce qui se passe dans la WebView d'un téléphone.
 
-Cette fonction renvoie une page qui monte le lecteur via l'**API officielle**
-— seule voie qui remonte un code d'erreur — et transmet l'issue à
-l'application par `postMessage` :
+Elle a d'abord servi la page elle-même, et c'était une impasse : **Supabase
+réécrit en `text/plain` tout HTML servi par une fonction Edge** (et son
+Storage fait de même). La page arrivait bien — 200 dans les journaux — mais
+son script ne s'exécutait jamais. C'est l'absence totale de balises qui l'a
+montré.
 
-| Message | Ce que fait l'application |
-|---|---|
-| `{type:'pret'}` | rien, la vidéo joue |
-| `{type:'erreur', code}` | affiche la raison en clair et un bouton vers YouTube |
-| `{type:'silence'}` · `{type:'api-injoignable'}` | retombe sur l'iframe directe |
-
-Servie en https, elle donne en prime au lecteur un référent valide, ce que
-`capacitor://localhost` ne peut pas fournir dans l'application empaquetée.
-
-C'est la seule fonction sans JWT, et c'est délibéré : une balise `<iframe>`
-ne peut pas porter d'en-tête `Authorization`. En contrepartie elle ne touche
-à aucune donnée, et l'identifiant reçu est validé contre
-`^[A-Za-z0-9_-]{11}$` avant d'entrer dans le HTML — tout le reste reçoit un
-400 sans jamais être réinjecté dans la réponse.
+Sans JWT, parce que `navigator.sendBeacon` ne peut pas porter d'en-tête
+`Authorization`. En contrepartie elle ne lit ni n'écrit aucune donnée et ne
+renvoie jamais de contenu.
 
 ```bash
 npx supabase functions deploy lecteur-youtube --no-verify-jwt
 ```
 
-Le faux backend d'`e2e/` rejoue ce contrat : `ESSAI_LECTEUR=pret|refus|muet|absent`
-force chacun des quatre scénarios sans dépendre du réseau.
+Le faux backend d'`e2e/` sert la vraie page sous `/lecteur-reel/` et un
+relais d'essai sous `/lecteur/`, où `ESSAI_LECTEUR=pret|noir|refus|muet|absent`
+force chacun des scénarios sans dépendre du réseau.

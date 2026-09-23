@@ -1,0 +1,5 @@
+# Lu par Netlify et Cloudflare Pages.
+/*
+  Content-Security-Policy: frame-ancestors *
+  Cache-Control: public, max-age=300
+  Referrer-Policy: strict-origin-when-cross-origin

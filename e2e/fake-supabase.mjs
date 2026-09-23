@@ -5,6 +5,7 @@
 // sinon le test de fumée valide une application qui ne correspond plus
 // à sa base.
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const SPORTS = ['foot', 'basket', 'tennis', 'rugby', 'nat'];
@@ -201,13 +202,21 @@ createServer((req, res) => {
     };
     if (req.method === 'OPTIONS') return envoyer(200, {});
 
-    // ── Relais du lecteur YouTube (fonction Edge) ──
-    // Reproduit le contrat de la vraie fonction : une page qui renvoie à son
-    // parent, par postMessage, l'issue de la lecture. Ici l'API de YouTube
-    // est hors d'atteinte, alors on rejoue le scénario demandé par
-    // `?essai=` — ce qui permet de vérifier chaque branche de l'application
-    // sans dépendre du réseau.
-    if (u.pathname === '/functions/v1/lecteur-youtube') {
+    // ── La vraie page relais, servie telle quelle ──
+    // Ici l'API YouTube est hors d'atteinte : elle doit répondre
+    // « api-injoignable », et l'application retomber sur l'iframe directe.
+    if (u.pathname === '/lecteur-reel/') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(readFileSync(new URL('../hebergement/lecteur-youtube/index.html', import.meta.url)));
+    }
+
+    // ── Relais d'essai du lecteur YouTube ──
+    // Reproduit le contrat de la page relais (hebergement/lecteur-youtube/) :
+    // une page qui renvoie à son parent, par postMessage, l'issue de la
+    // lecture. On rejoue le scénario demandé par ESSAI_LECTEUR ou `?essai=`
+    // — ce qui permet de vérifier chaque branche de l'application sans
+    // dépendre du réseau. Pointer VITE_LECTEUR_YOUTUBE_URL sur /lecteur/.
+    if (u.pathname === '/lecteur/') {
       const scenario = process.env.ESSAI_LECTEUR || u.searchParams.get('essai') || 'pret';
       // « absent » : la fonction n'est pas déployée. Aucun message ne part
       // jamais, et c'est le minuteur de secours de l'application qui doit
