@@ -1,44 +1,28 @@
-# Hébergement de la page relais du lecteur YouTube
+# Page relais du lecteur YouTube
 
-`lecteur-youtube/` contient **une page web statique** qui doit être servie en
-`https` depuis un vrai hébergeur. L'application l'affiche dans une iframe
-pour lire les vidéos YouTube dans le fil.
+`public/lecteur-youtube/index.html` est une page web statique que
+l'application affiche dans une iframe pour lire les vidéos YouTube dans le
+fil. Elle fait partie du site : Vite la copie dans le build, et Vercel la
+sert à **https://scolympia.vercel.app/lecteur-youtube/** à chaque
+déploiement de `main`. Rien à faire à la main.
 
-## Pourquoi c'est nécessaire
+## Pourquoi elle existe
 
-Dans l'application iOS, la page tourne sous `capacitor://localhost`. Une
-iframe YouTube posée là n'envoie aucun référent `http(s)`, et YouTube refuse
-de jouer : **« erreur 153 »**. Servie depuis une adresse `https`, cette page
-donne au lecteur le référent qui lui manque.
+Dans l'application iOS, la page tourne sous `capacitor://localhost`. YouTube
+exige que la page qui intègre son lecteur s'identifie par une adresse
+`https` ; faute de quoi il répond **« erreur 153 — configuration du lecteur
+vidéo »**. Le code de l'application n'avait pas changé quand l'erreur est
+apparue : c'est YouTube qui a durci la règle. Servie en `https`, cette page
+fournit l'identification qui manque.
 
 Elle ne peut pas vivre chez Supabase : fonctions Edge comme Storage
 réécrivent tout HTML en `text/plain`, et le script ne s'exécute jamais.
 
-## Mise en ligne — Netlify, gratuit, deux minutes
+## Vérifier qu'elle est en ligne
 
-1. Créer un compte gratuit sur **netlify.com** (« Sign up with GitHub »).
-2. Ouvrir **app.netlify.com/drop**.
-3. Glisser-déposer **le dossier `lecteur-youtube`** (le dossier entier, pas
-   le fichier) dans la zone.
-4. Netlify donne une adresse du type `https://nom-au-hasard.netlify.app`.
-   On peut la renommer : *Site configuration → Change site name*, par
-   exemple `yatsai-lecteur` → `https://yatsai-lecteur.netlify.app`.
-
-Vérification : `https://<adresse>/?v=dQw4w9WgXcQ` doit jouer une vidéo.
-
-## Brancher l'application
-
-Ajouter à `.env`, à la racine du projet :
-
-```
-VITE_LECTEUR_YOUTUBE_URL=https://yatsai-lecteur.netlify.app/
-```
-
-Puis reconstruire : `npm run mobile:ios`. Vite lit `.env` **au moment du
-build**, pas à l'exécution.
-
-Sans cette variable, l'application garde l'iframe directe d'avant — qui
-marche sur le web, pas dans l'app iOS.
+Ouvrir dans Safari : `https://scolympia.vercel.app/lecteur-youtube/?v=dQw4w9WgXcQ`
+— une vidéo doit se lancer (en sourdine). Chaque ouverture laisse aussi des
+traces dans les journaux Supabase (ci-dessous).
 
 ## Diagnostic à distance
 
@@ -49,8 +33,16 @@ journaux Supabase (*Edge Functions → lecteur-youtube → Logs*).
 
 Enchaînement normal : `page-chargee → api-chargee → pret → etat-1`.
 
-## Toute modification de `index.html`
+## Si Vercel ne sert plus le site
 
-… doit être re-déposée sur Netlify (même glisser-déposer, sur la page
-*Deploys* du site) : l'application pointe sur la version en ligne, pas sur
-celle du dépôt.
+L'application pointe par défaut sur l'adresse Vercel ; si la page n'y
+répond pas, son minuteur de secours rend l'iframe directe au bout de 9 s.
+Pour héberger la page ailleurs — Netlify par exemple (compte gratuit,
+glisser-déposer du dossier `public/lecteur-youtube` sur
+app.netlify.com/drop) — ajouter à `.env` :
+
+```
+VITE_LECTEUR_YOUTUBE_URL=https://<autre-adresse>/
+```
+
+puis reconstruire : Vite lit `.env` au moment du build.

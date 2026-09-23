@@ -22,9 +22,9 @@
  * depuis une vraie adresse https, cette page donne au lecteur le référent
  * qui lui manque.
  *
- * Pourquoi un hébergeur statique : Supabase réécrit en text/plain tout HTML
- * servi par ses fonctions Edge comme par son Storage. Le script ne
- * s'exécuterait jamais.
+ * Elle fait partie du site, servie par Vercel à /lecteur-youtube/ : Supabase
+ * réécrit en text/plain tout HTML servi par ses fonctions Edge comme par son
+ * Storage, le script ne s'y exécuterait jamais.
  *
  * Elle passe par l'API officielle du lecteur, seule voie qui remonte un
  * code d'erreur, et transmet l'issue à l'application par postMessage.

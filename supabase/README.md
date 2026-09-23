@@ -277,7 +277,8 @@ précisément ce que ce dossier vous permet.
 ### `lecteur-youtube`
 
 **Collecteur de balises**, rien d'autre. La page relais du lecteur YouTube
-vit sur un hébergeur statique (voir `hebergement/`) et signale ici chacune
+fait partie du site, servie par Vercel (`public/lecteur-youtube/`, voir
+`hebergement/README.md`) et signale ici chacune
 de ses étapes — `page-chargee`, `api-chargee`, `pret`, `etat-<n>`,
 `erreur-<code>`… — par `?v=<id>&journal=<étape>`. La fonction répond 204 ;
 l'intérêt est que chaque appel apparaît dans les journaux du projet, ce qui

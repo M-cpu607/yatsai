@@ -867,16 +867,15 @@ function isUploadedVideo(data) {
 // opposées — la vidéo interdit l'intégration (rien à corriger chez nous),
 // ou c'est la page qui l'héberge que YouTube rejette.
 //
-// D'où le relais : une page servie en https (hebergement/lecteur-youtube/),
+// D'où le relais : une page servie en https (public/lecteur-youtube/),
 // qui monte le lecteur via l'API officielle — la seule voie qui remonte un
 // code d'erreur — et nous le renvoie par postMessage. Servie en https, elle
 // donne aussi au lecteur le référent que capacitor://localhost ne fournit
 // pas, faute de quoi YouTube répond « erreur 153 » dans l'app iOS.
 //
-// Elle vit sur un hébergeur statique, pas chez Supabase : fonctions Edge et
+// Elle vit avec le site sur Vercel, pas chez Supabase : fonctions Edge et
 // Storage y réécrivent tout HTML en text/plain, et le script ne tourne pas.
-// Son adresse se règle par VITE_LECTEUR_YOUTUBE_URL ; sans elle, on garde
-// l'iframe directe d'avant.
+// Si elle ne répond pas, le minuteur de secours rend l'iframe directe.
 //
 // Il sert sur toutes les plateformes, et pas seulement dans l'application
 // empaquetée : une seule voie à raisonner, et le message clair profite
@@ -891,9 +890,13 @@ const DELAI_SECOURS_MS = 9000;
 // qui suffit à écarter une page gardée en cache par la WebView.
 const SESSION = Date.now().toString(36);
 
+// La page relais fait partie du site (public/lecteur-youtube/) : Vercel la
+// sert avec le reste, à chaque déploiement de main. Surchargeable par
+// VITE_LECTEUR_YOUTUBE_URL, par exemple pour la pointer ailleurs en test.
+const RELAIS_YOUTUBE_PAR_DEFAUT = 'https://scolympia.vercel.app/lecteur-youtube/';
+
 function urlRelaisYouTube(id) {
-  const base = import.meta.env.VITE_LECTEUR_YOUTUBE_URL;
-  if (!base) return null;
+  const base = import.meta.env.VITE_LECTEUR_YOUTUBE_URL || RELAIS_YOUTUBE_PAR_DEFAUT;
   const sep = base.includes('?') ? '&' : '?';
   return `${base}${sep}v=${encodeURIComponent(id)}&s=${SESSION}`;
 }

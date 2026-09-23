@@ -3,7 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // Collecteur de balises du lecteur YouTube.
 //
 // La page relais qui héberge le lecteur vit sur un hébergeur statique
-// (voir hebergement/lecteur-youtube/) : Supabase réécrit en text/plain tout
+// (voir public/lecteur-youtube/, servie par Vercel) : Supabase réécrit en text/plain tout
 // HTML servi par ses fonctions Edge comme par son Storage, le script n'y
 // s'exécuterait jamais. Cette fonction ne sert donc plus de page.
 //

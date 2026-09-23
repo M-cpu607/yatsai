@@ -213,11 +213,11 @@ createServer((req, res) => {
     // « api-injoignable », et l'application retomber sur l'iframe directe.
     if (u.pathname === '/lecteur-reel/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      return res.end(readFileSync(new URL('../hebergement/lecteur-youtube/index.html', import.meta.url)));
+      return res.end(readFileSync(new URL('../public/lecteur-youtube/index.html', import.meta.url)));
     }
 
     // ── Relais d'essai du lecteur YouTube ──
-    // Reproduit le contrat de la page relais (hebergement/lecteur-youtube/) :
+    // Reproduit le contrat de la page relais (public/lecteur-youtube/) :
     // une page qui renvoie à son parent, par postMessage, l'issue de la
     // lecture. On rejoue le scénario demandé par ESSAI_LECTEUR ou `?essai=`
     // — ce qui permet de vérifier chaque branche de l'application sans
