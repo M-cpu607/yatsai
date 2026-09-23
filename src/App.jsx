@@ -832,9 +832,29 @@ function isSeasonReminderWindow() {
 }
 
 // ─── Helpers source vidéo (YouTube OU fichier uploadé) ───────────
+// Toutes les formes de lien YouTube qu'on rencontre en pratique :
+// watch?v=, youtu.be/, shorts/, embed/, live/, v/ — sur www., m. (le
+// partage depuis le téléphone) ou music. Seule source de vérité : la
+// validation à la publication s'appuie dessus, pour qu'un lien accepté soit
+// toujours un lien qu'on sait lire. Avant, un Short passait la validation
+// puis ne se lisait jamais, faute d'identifiant extrait.
 function getYouTubeIdFromUrl(url) {
-  const m = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-  return m ? m[1] : null;
+  const brut = url?.trim();
+  if (!brut) return null;
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(brut) ? brut : `https://${brut}`); } catch { return null; }
+  const hote = u.hostname.toLowerCase().replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (hote === 'youtu.be') {
+    id = u.pathname.split('/')[1];
+  } else if (hote === 'youtube.com' || hote === 'youtube-nocookie.com') {
+    id = u.searchParams.get('v');
+    if (!id) {
+      const [, section, suite] = u.pathname.split('/');
+      if (['shorts', 'embed', 'live', 'v', 'e'].includes(section)) id = suite;
+    }
+  }
+  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
 }
 function isUploadedVideo(data) {
   return !!data?.video_url && !data?.youtube_url;
@@ -2843,10 +2863,8 @@ function PublishView({ userProfile, setTab }) {
     if (videoPreviewUrl) { try { URL.revokeObjectURL(videoPreviewUrl); } catch {} }
   }, [videoPreviewUrl]);
 
-  const isValidYouTubeUrl = (url) => {
-    const regex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
-    return regex.test(url);
-  };
+  // Valide = on sait en extraire un identifiant, rien de moins.
+  const isValidYouTubeUrl = (url) => !!getYouTubeIdFromUrl(url);
 
   // Limite 200 Mo (cohérent avec le bucket)
   const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
@@ -3023,7 +3041,7 @@ function PublishView({ userProfile, setTab }) {
       return;
     }
     if (mode === 'youtube' && !isValidYouTubeUrl(youtubeUrl)) {
-      setError('Lien YouTube invalide. Exemple : https://youtube.com/watch?v=...');
+      setError('Lien YouTube non reconnu. Formats acceptés : youtube.com/watch?v=…, youtu.be/…, youtube.com/shorts/…');
       return;
     }
     if (mode === 'upload' && !videoFile) {
@@ -3673,10 +3691,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     levels: f.levels.includes(lv) ? f.levels.filter(x => x !== lv) : [...f.levels, lv],
   }));
 
-  const getYouTubeId = (url) => {
-    const m = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-    return m ? m[1] : null;
-  };
+  const getYouTubeId = getYouTubeIdFromUrl;
 
   return (
     <>
@@ -5592,12 +5607,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         ) : (
           <div className="px-4 grid grid-cols-2 gap-2">
             {filteredVideos.map(v => {
-              const getYouTubeId = (url) => {
-                const m = url?.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/);
-                return m ? m[1] : null;
-              };
               const thumb = v.thumbnail_url || (() => {
-                const yId = getYouTubeId(v.youtube_url);
+                const yId = getYouTubeIdFromUrl(v.youtube_url);
                 return yId ? `https://img.youtube.com/vi/${yId}/hqdefault.jpg` : null;
               })();
               return (

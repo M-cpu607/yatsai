@@ -93,6 +93,15 @@ const apres = await compter();
 ok('Défilement infini charge une page suivante', apres > avant, `${avant} → ${apres} cartes`);
 await page.screenshot({ path: `${SHOT}/3-scroll.png` });
 
+// Toutes les vidéos du faux fil sont YouTube, sous trois formes de lien
+// (watch?v=, shorts/, youtu.be/) : chacune doit avoir sa miniature. Une
+// carte sans miniature est un lien que l'application n'a pas su lire.
+{
+  const miniatures = await page.locator('img[src*="img.youtube.com"]').count();
+  ok('Liens YouTube reconnus sous toutes leurs formes, Shorts compris',
+     miniatures === apres, `${miniatures} miniatures pour ${apres} cartes`);
+}
+
 // ── 5 bis. Une vidéo YouTube passe par le relais https ──
 // L'iframe directe ne peut pas dire pourquoi elle reste noire ; le relais,
 // lui, renvoie l'issue de la lecture. On vérifie que c'est bien lui qui est

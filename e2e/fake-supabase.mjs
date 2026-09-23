@@ -84,7 +84,13 @@ const feed = Array.from({ length: 60 }, (_, i) => {
     position_id: poste.id,
     level: ['amateur', 'semi_pro', 'pro', 'entrainement'][i % 4],
     video_type: i % 3 === 0 ? 'training' : 'match',
-    youtube_url: `https://www.youtube.com/watch?v=${YT[i % YT.length]}`,
+    // Les trois formes de lien qu'on reçoit en vrai, en alternance : un Short
+    // publié depuis le téléphone restait illisible faute d'être reconnu.
+    youtube_url: [
+      `https://www.youtube.com/watch?v=${YT[i % YT.length]}`,
+      `https://youtube.com/shorts/${YT[i % YT.length]}?si=partage`,
+      `https://youtu.be/${YT[i % YT.length]}`,
+    ][i % 3],
     video_url: null,
     thumbnail_url: null,
     duration_seconds: 45 + (i % 120),
