@@ -2,9 +2,13 @@
 
 `public/lecteur-youtube/index.html` est une page web statique que
 l'application affiche dans une iframe pour lire les vidéos YouTube dans le
-fil. Elle fait partie du site : Vite la copie dans le build, et Vercel la
-sert à **https://scolympia.vercel.app/lecteur-youtube/** à chaque
+fil. Elle fait partie du site : Vite la copie dans le build, et Netlify —
+relié au dépôt GitHub — la sert à
+**https://preeminent-dasik-ba7091.netlify.app/lecteur-youtube/** à chaque
 déploiement de `main`. Rien à faire à la main.
+
+La racine du site (`https://preeminent-dasik-ba7091.netlify.app/`) affiche
+l'application web entière ; la page relais n'est qu'une sous-page.
 
 ## Pourquoi elle existe
 
@@ -20,7 +24,7 @@ réécrivent tout HTML en `text/plain`, et le script ne s'exécute jamais.
 
 ## Vérifier qu'elle est en ligne
 
-Ouvrir dans Safari : `https://scolympia.vercel.app/lecteur-youtube/?v=dQw4w9WgXcQ`
+Ouvrir dans Safari : `https://preeminent-dasik-ba7091.netlify.app/lecteur-youtube/?v=dQw4w9WgXcQ`
 — une vidéo doit se lancer (en sourdine). Chaque ouverture laisse aussi des
 traces dans les journaux Supabase (ci-dessous).
 
@@ -33,13 +37,13 @@ journaux Supabase (*Edge Functions → lecteur-youtube → Logs*).
 
 Enchaînement normal : `page-chargee → api-chargee → pret → etat-1`.
 
-## Si Vercel ne sert plus le site
+## Si l'adresse du site change
 
-L'application pointe par défaut sur l'adresse Vercel ; si la page n'y
-répond pas, son minuteur de secours rend l'iframe directe au bout de 9 s.
-Pour héberger la page ailleurs — Netlify par exemple (compte gratuit,
-glisser-déposer du dossier `public/lecteur-youtube` sur
-app.netlify.com/drop) — ajouter à `.env` :
+L'application pointe par défaut sur l'adresse Netlify ci-dessus ; si la
+page n'y répond pas, son minuteur de secours rend l'iframe directe au bout
+de 9 s. Si le site est renommé (Netlify → *Site configuration → Change
+site name*) ou hébergé ailleurs, mettre à jour `RELAIS_YOUTUBE_PAR_DEFAUT`
+dans `src/App.jsx`, ou ajouter à `.env` :
 
 ```
 VITE_LECTEUR_YOUTUBE_URL=https://<autre-adresse>/

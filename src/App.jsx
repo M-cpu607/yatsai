@@ -873,7 +873,7 @@ function isUploadedVideo(data) {
 // donne aussi au lecteur le référent que capacitor://localhost ne fournit
 // pas, faute de quoi YouTube répond « erreur 153 » dans l'app iOS.
 //
-// Elle vit avec le site sur Vercel, pas chez Supabase : fonctions Edge et
+// Elle vit avec le site sur Netlify, pas chez Supabase : fonctions Edge et
 // Storage y réécrivent tout HTML en text/plain, et le script ne tourne pas.
 // Si elle ne répond pas, le minuteur de secours rend l'iframe directe.
 //
@@ -890,10 +890,10 @@ const DELAI_SECOURS_MS = 9000;
 // qui suffit à écarter une page gardée en cache par la WebView.
 const SESSION = Date.now().toString(36);
 
-// La page relais fait partie du site (public/lecteur-youtube/) : Vercel la
+// La page relais fait partie du site (public/lecteur-youtube/) : Netlify la
 // sert avec le reste, à chaque déploiement de main. Surchargeable par
 // VITE_LECTEUR_YOUTUBE_URL, par exemple pour la pointer ailleurs en test.
-const RELAIS_YOUTUBE_PAR_DEFAUT = 'https://scolympia.vercel.app/lecteur-youtube/';
+const RELAIS_YOUTUBE_PAR_DEFAUT = 'https://preeminent-dasik-ba7091.netlify.app/lecteur-youtube/';
 
 function urlRelaisYouTube(id) {
   const base = import.meta.env.VITE_LECTEUR_YOUTUBE_URL || RELAIS_YOUTUBE_PAR_DEFAUT;
