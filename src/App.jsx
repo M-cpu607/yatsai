@@ -9982,7 +9982,6 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
   }, [profile?.id]);
 
   if (!profile) return null;
-  const sport = SPORTS.find(s => s.id === profile.sport);
   const isOwn = profile.id === currentUserId;
   const isShortlisted = !!shortlistStatus;
   const STATUS_LABELS = {
@@ -9997,17 +9996,8 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
   return (
     <div className="fixed inset-0 z-[90] overflow-y-auto slide-in-right"
       style={{ backgroundColor: C.bg }}>
-      {/* Bannière (ou gradient par défaut) */}
-      <div className="relative" style={{ height: 160 }}>
-        {profile.banner_url ? (
-          <img loading="lazy" decoding="async" src={profile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
-        )}
-        <div className="absolute inset-0"
-          style={{ background: `linear-gradient(180deg, rgba(8,15,32,0.2) 0%, ${C.bg} 100%)` }} />
-      </div>
+      {/* Sans couverture, la bande ne réserve que la place des boutons fixes */}
+      <BanniereProfil bannerUrl={profile.banner_url} hauteurSansImage={100} />
 
       {/* Bouton retour fixe en haut à gauche */}
       <button onClick={onClose}
@@ -10033,23 +10023,13 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         </button>
       )}
 
-      {/* Ligne avatar + actions (style X) : l'avatar chevauche la bannière, les actions sont à droite */}
-      <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
-        <div className="rounded-full overflow-hidden fade-in"
-          style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
-          {profile.avatar_url ? (
-            <img loading="lazy" decoding="async" src={profile.avatar_url} alt={profile.full_name} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl font-extrabold"
-              style={{ color: C.gold }}>
-              {(profile.full_name || '?').charAt(0).toUpperCase()}
-            </div>
-          )}
-        </div>
+      {/* Ligne avatar + actions */}
+      <div className="px-4 flex items-end justify-between" style={{ marginTop: profile.banner_url ? -44 : 0 }}>
+        <AvatarProfil profile={profile} />
 
         {/* Actions à droite (Message + Suivre), comme sur X */}
         {!isOwn && (
-          <div className="flex items-center gap-2 mt-12">
+          <div className="flex items-center gap-2 mb-1">
             <button onClick={onContact}
               aria-label="Message"
               className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -10069,82 +10049,9 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         )}
       </div>
 
-      {/* Bloc identité aligné à gauche (style X) */}
-      <div className="px-4 mt-3 fade-in">
-        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-          <h1 className="text-xl font-extrabold" style={{ color: C.text }}>
-            {profile.full_name || 'Utilisateur'}
-          </h1>
-          {profile.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
-          {profile.nationality && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              <Globe size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{profile.nationality}
-            </span>
-          )}
-          {/* Âge — masqué si le réglage de confidentialité « Masquer mon âge » est actif */}
-          {!profile.hide_age && (computeAge(profile.birthdate) ?? profile.age) && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              · {computeAge(profile.birthdate) ?? profile.age} ans
-            </span>
-          )}
-        </div>
+      <IdentiteProfil profile={profile} />
 
-        {/* Rôle + (sport pour athlètes uniquement) */}
-        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          {isObserverRole(profile) ? (
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-              style={{ backgroundColor: C.surface2, color: C.textDim }}>
-              <Eye size={10} strokeWidth={2.4} />
-              Observateur
-            </span>
-          ) : profile.is_recruiter ? (
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-              style={{ backgroundColor: C.surface2, color: C.textDim }}>
-              <Briefcase size={10} strokeWidth={2.4} />
-              Recruteur
-            </span>
-          ) : (
-            <>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-                style={{ backgroundColor: C.surface2, color: C.textDim }}>
-                <Star size={10} strokeWidth={2.4} />
-                Athlète
-              </span>
-              {/* Niveau juste à côté de la mention Athlète, si affichable */}
-              {isLevelDisplayable(profile) && <LevelChip level={profile.level} />}
-            </>
-          )}
-          {sport && !profile.is_recruiter && !isObserverRole(profile) && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              {sport.icon} {sport.label}
-            </span>
-          )}
-        </div>
-
-        {profile.is_recruiter ? (
-          // Recruteur : juste l'organisation
-          profile.organization && (
-            <div className="text-sm font-semibold" style={{ color: C.gold }}>
-              {profile.organization}
-            </div>
-          )
-        ) : (
-          <>
-            {(profile.position || profile.club) && (
-              <div className="text-xs" style={{ color: C.textDim }}>
-                {profile.position && profile.position}
-                {profile.club && ` · ${profile.club}`}
-              </div>
-            )}
-            {/* Localisation — masquée si le réglage « Masquer ma localisation » est actif */}
-            {!profile.hide_location && (profile.city || profile.region || profile.country) && (
-              <div className="text-xs mt-0.5" style={{ color: C.textDim }}>
-                <PinIcon size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[profile.city, profile.region, profile.country].filter(Boolean).join(' · ')}
-              </div>
-            )}
-          </>
-        )}
-
+      <div className="px-4">
         {/* Stats inline style X : 115 abonnements · 17 M abonnés */}
         <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
           <button onClick={() => onShowFollowList?.(profile.id, 'following')}
@@ -11571,7 +11478,119 @@ function TrackingEditorModal({ video, onClose, onSaved }) {
 }
 
 // Avatar de l'utilisateur avec un bouton « + » pour ajouter / changer la photo de profil
-function EditableAvatar({ userProfile, onUpdateProfile, size = 96 }) {
+// ═══ EN-TÊTE DE PROFIL (commun aux quatre profils) ══════════════════
+// Sans photo de couverture, la bande de 140 px du haut restait vide : elle
+// ne garde sa hauteur que s'il y a une image à montrer.
+function BanniereProfil({ bannerUrl, hauteurSansImage = 64, children }) {
+  if (!bannerUrl) {
+    return <div className="relative" style={{ height: hauteurSansImage }}>{children}</div>;
+  }
+  return (
+    <div className="relative" style={{ height: 140 }}>
+      <img loading="lazy" decoding="async" src={bannerUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+      <div className="absolute inset-0"
+        style={{ background: `linear-gradient(180deg, transparent 50%, ${C.bg} 100%)` }} />
+      {children}
+    </div>
+  );
+}
+
+// Avatar de profil en lecture seule (l'initiale n'est plus dorée : le doré
+// de l'écran revient à son action principale).
+function AvatarProfil({ profile, size = 88 }) {
+  const initiale = (profile?.full_name || '?').charAt(0).toUpperCase();
+  return (
+    <div className="rounded-full overflow-hidden fade-in flex-shrink-0"
+      style={{ width: size, height: size, backgroundColor: C.surface2, border: `3px solid ${C.bg}` }}>
+      {profile?.avatar_url ? (
+        <img loading="lazy" decoding="async" src={profile.avatar_url} alt={profile.full_name || ''} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-3xl font-extrabold" style={{ color: C.text }}>
+          {initiale}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const normaliserTexte = (x) => (x ?? '').toString().trim().toLowerCase();
+
+// Le lieu en une expression courte — « Madrid, Espagne » — sans répéter le
+// club ni lui-même. Avant : un club « bezo » puis « bezo · paca · france ».
+function lieuCourt(profile, { ignorerMasquage = false } = {}) {
+  if (!profile || (profile.hide_location && !ignorerMasquage)) return null;
+  const dejaDits = new Set([normaliserTexte(profile.club), normaliserTexte(profile.organization)]);
+  const retenus = [];
+  for (const x of [profile.city, profile.region, profile.country]) {
+    const n = normaliserTexte(x);
+    if (!n || dejaDits.has(n)) continue;
+    dejaDits.add(n);
+    retenus.push(x.toString().trim());
+  }
+  // Ville et pays suffisent ; la région ne sert que si l'un des deux manque.
+  if (retenus.length > 2) retenus.splice(1, retenus.length - 2);
+  return retenus.join(', ') || null;
+}
+
+// Une seule ligne sous le nom. Les parties vides disparaissent avec leur
+// séparateur : un poste manquant laissait « · bezo ».
+function LigneIdentite({ parts }) {
+  const visibles = parts.map(x => (x ?? '').toString().trim()).filter(Boolean);
+  if (!visibles.length) return null;
+  return (
+    <div className="text-sm mt-1.5 leading-snug" style={{ color: C.textDim }}>
+      {visibles.join(' · ')}
+    </div>
+  );
+}
+
+function PastilleProfil({ icon: Icon, children }) {
+  return (
+    <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-1"
+      style={{ backgroundColor: C.surface2, color: C.textDim }}>
+      {Icon && <Icon size={10} strokeWidth={2.4} />}
+      {children}
+    </span>
+  );
+}
+
+// Nom, pastilles (rôle ou âge · nationalité · niveau · sport) et ligne
+// d'identité. `vuParSoi` : on voit son propre âge et son propre lieu même
+// quand on les masque aux autres.
+function IdentiteProfil({ profile, vuParSoi = false, extraPastilles = null }) {
+  if (!profile) return null;
+  const observateur = isObserverRole(profile);
+  const recruteur = !!profile.is_recruiter && !observateur;
+  const athlete = !recruteur && !observateur;
+  const sport = athlete ? SPORTS.find(s => s.id === profile.sport) : null;
+  const age = (vuParSoi || !profile.hide_age) ? (computeAge(profile.birthdate) ?? profile.age) : null;
+  const lieu = lieuCourt(profile, { ignorerMasquage: vuParSoi });
+  return (
+    <div className="px-4 mt-3 fade-in">
+      <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-extrabold leading-tight" style={{ color: C.text }}>
+          {profile.full_name || 'Utilisateur'}
+        </h1>
+        {profile.verified && <BadgeCheck size={20} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
+      </div>
+
+      <LigneIdentite parts={athlete ? [profile.position, profile.club, lieu]
+        : recruteur ? [profile.organization, lieu] : [lieu]} />
+
+      <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
+        {recruteur && <PastilleProfil icon={Briefcase}>Recruteur</PastilleProfil>}
+        {observateur && <PastilleProfil icon={Eye}>Observateur</PastilleProfil>}
+        {athlete && isLevelDisplayable(profile) && <LevelChip level={profile.level} />}
+        {sport && <PastilleProfil>{sport.icon} {sport.label}</PastilleProfil>}
+        {athlete && age && <PastilleProfil>{age} ans</PastilleProfil>}
+        {profile.nationality && <PastilleProfil icon={Globe}>{profile.nationality}</PastilleProfil>}
+        {extraPastilles}
+      </div>
+    </div>
+  );
+}
+
+function EditableAvatar({ userProfile, onUpdateProfile, size = 88 }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const handlePick = async (e) => {
@@ -11586,11 +11605,11 @@ function EditableAvatar({ userProfile, onUpdateProfile, size = 96 }) {
   return (
     <div className="relative fade-in" style={{ width: size, height: size }}>
       <div className="rounded-full overflow-hidden"
-        style={{ width: size, height: size, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
+        style={{ width: size, height: size, backgroundColor: C.surface2, border: `3px solid ${C.bg}` }}>
         {userProfile?.avatar_url ? (
           <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-3xl font-bold" style={{ color: C.gold }}>
+          <div className="w-full h-full flex items-center justify-center text-3xl font-extrabold" style={{ color: C.text }}>
             {userProfile?.full_name?.charAt(0)?.toUpperCase() || '?'}
           </div>
         )}
@@ -11600,7 +11619,7 @@ function EditableAvatar({ userProfile, onUpdateProfile, size = 96 }) {
       <button onClick={() => inputRef.current?.click()} disabled={uploading}
         aria-label="Ajouter ou changer la photo de profil"
         className="absolute bottom-0 right-0 rounded-full flex items-center justify-center active:opacity-70"
-        style={{ width: 30, height: 30, backgroundColor: C.gold, color: C.bg, border: `3px solid ${C.bg}` }}>
+        style={{ width: 28, height: 28, backgroundColor: C.text, color: C.bg, border: `3px solid ${C.bg}` }}>
         {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={16} strokeWidth={3} />}
       </button>
     </div>
@@ -11609,7 +11628,6 @@ function EditableAvatar({ userProfile, onUpdateProfile, size = 96 }) {
 
 function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowList, onLoadFollowCounts,
                        onDeleteVideo, onOpenSettings, onShareProfile, onUpdateProfile }) {
-  const sport = SPORTS.find(s => s.id === userProfile?.sport);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [myVideos, setMyVideos] = useState([]);
   const [playingVideo, setPlayingVideo] = useState(null);
@@ -11655,16 +11673,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
 
   return (
     <div className="pb-32 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
-      {/* Bannière */}
-      <div className="relative" style={{ height: 140 }}>
-        {userProfile?.banner_url ? (
-          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
-        )}
-        <div className="absolute inset-0"
-          style={{ background: `linear-gradient(180deg, transparent 50%, ${C.bg} 100%)` }} />
+      <BanniereProfil bannerUrl={userProfile?.banner_url}>
         {/* Icône Partager en haut à droite */}
         {onShareProfile && (
           <button onClick={onShareProfile} aria-label="Partager mon compte"
@@ -11674,15 +11683,15 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}
-      </div>
+      </BanniereProfil>
 
       {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
       <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
 
-      {/* Ligne avatar + actions (style X) */}
-      <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
+      {/* Ligne avatar + actions */}
+      <div className="px-4 flex items-end justify-between" style={{ marginTop: userProfile?.banner_url ? -44 : 0 }}>
         <EditableAvatar userProfile={userProfile} onUpdateProfile={onUpdateProfile} />
-        <div className="flex items-center gap-2 mt-12">
+        <div className="flex items-center gap-2 mb-1">
           {onOpenSettings && (
             <button onClick={onOpenSettings} aria-label="Paramètres"
               className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -11699,66 +11708,20 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         </div>
       </div>
 
-      {/* Identité aligné à gauche (style X) */}
-      <div className="px-4 mt-3 fade-in">
-        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-          <h1 className="text-xl font-extrabold" style={{ color: C.text }}>
-            {userProfile?.full_name || 'Nouvel utilisateur'}
-          </h1>
-          {userProfile?.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
-          {userProfile?.nationality && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              <Globe size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{userProfile.nationality}
-            </span>
-          )}
-          {(computeAge(userProfile?.birthdate) ?? userProfile?.age) && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              · {computeAge(userProfile?.birthdate) ?? userProfile?.age} ans
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.surface2, color: C.textDim }}>
-            <Star size={10} strokeWidth={2.4} />
-            Athlète
+      <IdentiteProfil profile={userProfile} vuParSoi extraPastilles={<>
+        {/* Preuve de niveau en attente / refusée : visible de soi seul */}
+        {userProfile?.level && levelRequiresProof(userProfile.level) && userProfile?.level_proof_status === 'pending' && (
+          <PastilleProfil icon={Hourglass}>Preuve en vérification</PastilleProfil>
+        )}
+        {userProfile?.level && levelRequiresProof(userProfile.level) && userProfile?.level_proof_status === 'rejected' && (
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-1"
+            style={{ backgroundColor: 'rgba(255,71,87,0.15)', color: C.red }}>
+            <CircleX size={10} strokeWidth={2.4} /> Preuve refusée
           </span>
-          {/* Niveau à côté du chip Athlète — affiché uniquement si validé */}
-          {isLevelDisplayable(userProfile) && <LevelChip level={userProfile.level} />}
-          {/* Indicateur si une preuve est en attente / refusée */}
-          {userProfile?.level && levelRequiresProof(userProfile.level) && userProfile?.level_proof_status === 'pending' && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold"
-              style={{ backgroundColor: 'rgba(255,184,0,0.15)', color: C.gold, border: `1px solid ${C.borderGold}` }}>
-              ⏳ Preuve en vérification
-            </span>
-          )}
-          {userProfile?.level && levelRequiresProof(userProfile.level) && userProfile?.level_proof_status === 'rejected' && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold"
-              style={{ backgroundColor: 'rgba(255,71,87,0.15)', color: C.red, border: `1px solid ${C.red}` }}>
-              ❌ Preuve refusée
-            </span>
-          )}
-          {sport && (
-            <span className="text-xs" style={{ color: C.textDim }}>
-              {sport.icon} {sport.label}
-            </span>
-          )}
-        </div>
-
-        {(userProfile?.position || userProfile?.club) && (
-          <div className="text-xs" style={{ color: C.textDim }}>
-            {userProfile?.position && userProfile.position}
-            {userProfile?.club && ` · ${userProfile.club}`}
-          </div>
         )}
-        {/* Localisation (ville · région · pays) — sous poste/club */}
-        {(userProfile?.city || userProfile?.region || userProfile?.country) && (
-          <div className="text-xs mt-0.5" style={{ color: C.textDim }}>
-            <PinIcon size={11} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[userProfile?.city, userProfile?.region, userProfile?.country].filter(Boolean).join(' · ')}
-          </div>
-        )}
+      </>} />
 
+      <div className="px-4">
         {/* Stats inline style X */}
         <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
           <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
@@ -12044,16 +12007,7 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
 
   return (
     <div className="pb-32 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
-      {/* Bannière */}
-      <div className="relative" style={{ height: 140 }}>
-        {userProfile?.banner_url ? (
-          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
-        )}
-        <div className="absolute inset-0"
-          style={{ background: `linear-gradient(180deg, transparent 50%, ${C.bg} 100%)` }} />
+      <BanniereProfil bannerUrl={userProfile?.banner_url}>
         {onShareProfile && (
           <button onClick={onShareProfile} aria-label="Partager mon compte"
             className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -12062,15 +12016,15 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}
-      </div>
+      </BanniereProfil>
 
       {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
       <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
 
-      {/* Ligne avatar + actions (style X) */}
-      <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
+      {/* Ligne avatar + actions */}
+      <div className="px-4 flex items-end justify-between" style={{ marginTop: userProfile?.banner_url ? -44 : 0 }}>
         <EditableAvatar userProfile={userProfile} onUpdateProfile={onUpdateProfile} />
-        <div className="flex items-center gap-2 mt-12">
+        <div className="flex items-center gap-2 mb-1">
           {onOpenSettings && (
             <button onClick={onOpenSettings} aria-label="Paramètres"
               className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -12089,25 +12043,11 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
         </div>
       </div>
 
-      {/* Identité minimaliste */}
-      <div className="px-4 mt-3 fade-in">
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <h1 className="text-xl font-extrabold" style={{ color: C.text }}>
-            {userProfile?.full_name || 'Nouvel utilisateur'}
-          </h1>
-          {userProfile?.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
-        </div>
+      <IdentiteProfil profile={userProfile} vuParSoi />
 
-        <div className="flex items-center gap-2 flex-wrap mb-3">
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.surface2, color: C.textDim }}>
-            <Eye size={10} strokeWidth={2.4} />
-            Observateur
-          </span>
-        </div>
-
+      <div className="px-4">
         {/* Stats inline */}
-        <div className="flex items-center gap-4 text-sm flex-wrap">
+        <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
           <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
             className="active:opacity-60">
             <strong style={{ color: C.text }}>{counts.following}</strong>
@@ -12147,9 +12087,6 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
                                 onLoadSignedPosts, onDeleteSignedPost, onOpenSignedPostModal, onSelectProfile,
                                 onLoadSignedCount, onShowSignedAthletes, onOpenSettings,
                                 onShareProfile, onLoadSavedVideos, onToggleSaveVideo, onPlayVideo }) {
-  const sport = SPORTS.find(s => s.id === userProfile?.sport);
-  const initials = (userProfile?.full_name || '?')
-    .split(' ').slice(0, 2).map(s => s.charAt(0).toUpperCase()).join('') || '?';
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [signedCount, setSignedCount] = useState(0);
   const [criteriaOpen, setCriteriaOpen] = useState(false);
@@ -12206,17 +12143,7 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
 
   return (
     <div className="pb-32 overflow-y-auto" style={{ height: '100dvh', backgroundColor: C.bg }}>
-      {/* Bannière */}
-      <div className="relative" style={{ height: 140 }}>
-        {userProfile?.banner_url ? (
-          <img loading="lazy" decoding="async" src={userProfile.banner_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <div className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${C.surface2} 0%, ${C.surface} 100%)` }} />
-        )}
-        <div className="absolute inset-0"
-          style={{ background: `linear-gradient(180deg, transparent 50%, ${C.bg} 100%)` }} />
-        {/* Icône Partager en haut à droite */}
+      <BanniereProfil bannerUrl={userProfile?.banner_url}>
         {onShareProfile && (
           <button onClick={onShareProfile} aria-label="Partager mon compte"
             className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -12225,25 +12152,15 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}
-      </div>
+      </BanniereProfil>
 
       {/* Rappel saison sportive (août → 15 sept, si non configuré) */}
       <ProfileSeasonReminder userProfile={userProfile} onEdit={onEdit} />
 
-      {/* Ligne avatar + actions (style X) */}
-      <div className="px-4 flex items-start justify-between" style={{ marginTop: -48 }}>
-        <div className="rounded-full overflow-hidden fade-in"
-          style={{ width: 96, height: 96, backgroundColor: C.surface, border: `4px solid ${C.bg}` }}>
-          {userProfile?.avatar_url ? (
-            <img loading="lazy" decoding="async" src={userProfile.avatar_url} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
-              style={{ color: C.gold }}>
-              {initials}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 mt-12">
+      {/* Ligne avatar + actions */}
+      <div className="px-4 flex items-end justify-between" style={{ marginTop: userProfile?.banner_url ? -44 : 0 }}>
+        <AvatarProfil profile={userProfile} />
+        <div className="flex items-center gap-2 mb-1">
           {onOpenSettings && (
             <button onClick={onOpenSettings} aria-label="Paramètres"
               className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
@@ -12260,29 +12177,9 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
         </div>
       </div>
 
-      {/* Identité aligné à gauche (style X) — épuré pour recruteur */}
-      <div className="px-4 mt-3 fade-in">
-        <div className="flex items-center gap-2 mb-0.5">
-          <h1 className="text-xl font-extrabold" style={{ color: C.text }}>
-            {userProfile?.full_name || 'Nouvel utilisateur'}
-          </h1>
-          {userProfile?.verified && <BadgeCheck size={18} fill={C.gold} stroke={C.bg} strokeWidth={2.5} />}
-        </div>
+      <IdentiteProfil profile={userProfile} vuParSoi />
 
-        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1"
-            style={{ backgroundColor: C.surface2, color: C.textDim }}>
-            <Briefcase size={10} strokeWidth={2.4} />
-            Recruteur
-          </span>
-        </div>
-
-        {userProfile?.organization && (
-          <div className="text-sm font-semibold" style={{ color: C.gold }}>
-            {userProfile.organization}
-          </div>
-        )}
-
+      <div className="px-4">
         {/* Stats inline style X */}
         <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
           <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
