@@ -195,12 +195,22 @@ createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     journal.push(`${req.method} ${u.pathname}${u.search}`);
     const envoyer = (code, data) => {
-      res.writeHead(code, {
+      const entetes = {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': '*',
         'Access-Control-Allow-Methods': '*',
-      });
+        'Access-Control-Expose-Headers': 'Content-Range',
+      };
+      // Un comptage (`{ count: 'exact', head: true }`) arrive en HEAD : le
+      // total voyage dans Content-Range, et la réponse n'a pas de corps.
+      // En renvoyer un faisait interrompre la requête par le navigateur.
+      if (req.method === 'HEAD') {
+        const total = Array.isArray(data) ? data.length : 0;
+        res.writeHead(code, { ...entetes, 'Content-Range': `*/${total}` });
+        return res.end();
+      }
+      res.writeHead(code, entetes);
       res.end(JSON.stringify(data));
     };
     if (req.method === 'OPTIONS') return envoyer(200, {});
@@ -268,6 +278,16 @@ createServer((req, res) => {
 
     // ── Tables ──
     if (u.pathname === '/rest/v1/profiles') return envoyer(200, [profil]);
+    // Vidéos d'un profil (galerie) : les lignes du fil qui ont un fichier.
+    // Le profil connecté en reçoit sept, pour que sa galerie ne soit pas vide.
+    if (u.pathname === '/rest/v1/videos') {
+      const auteur = (u.searchParams.get('user_id') || '').replace(/^eq\./, '');
+      const avecFichier = feed.filter(v => v.video_url);
+      const lignes = auteur === USER_ID
+        ? avecFichier.slice(0, 7).map(v => ({ ...v, user_id: USER_ID }))
+        : auteur ? avecFichier.filter(v => v.user_id === auteur) : avecFichier;
+      return envoyer(200, lignes);
+    }
     if (u.pathname.startsWith('/rest/v1/')) return envoyer(200, []);
 
     envoyer(404, { message: 'non gere par le mock' });

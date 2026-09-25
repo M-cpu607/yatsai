@@ -15,7 +15,13 @@ const page = await ctx.newPage();
 const erreurs = [];
 page.on('console', m => { if (m.type() === 'error') erreurs.push(m.text()); });
 const echecsReseau = [];
-page.on('requestfailed', r => echecsReseau.push(`${r.url()} :: ${r.failure()?.errorText}`));
+page.on('requestfailed', r => {
+  // Chromium signale toute requête HEAD comme « interrompue » : sans corps
+  // à lire, il coupe la lecture — même quand la réponse est arrivée et
+  // qu'elle est bonne. Les comptages de Supabase passent par HEAD.
+  if (r.method() === 'HEAD' && r.failure()?.errorText === 'net::ERR_ABORTED') return;
+  echecsReseau.push(`${r.url()} :: ${r.failure()?.errorText}`);
+});
 page.on('pageerror', e => erreurs.push('PAGEERROR: ' + e.message));
 
 // La page d'accueil pose un halo décoratif par-dessus ses boutons : un clic
@@ -138,6 +144,20 @@ ok('Recherche : résultats rendus', /utilisateur|athlète/.test(corpsRecherche))
 ok('Compte annoncé comme « affichés », pas « trouvés »', /affich/i.test(corpsRecherche),
    'la liste est paginée : annoncer un total qu\'on n\'a pas serait faux');
 await page.screenshot({ path: `${SHOT}/4-recherche.png` });
+
+// ── 7 bis. Le profil ──
+// Galerie en vignettes (le faux backend donne sept vidéos au profil
+// connecté) et ligne d'identité sans séparateur orphelin.
+await page.locator('nav button').nth(4).evaluate(e => e.click());
+await page.waitForTimeout(2000);
+await clic(/plus tard/i, 400);
+{
+  const vignettes = await page.locator('[aria-label="Options de la vidéo"]').count();
+  ok('Profil : galerie de vidéos', vignettes === 7, `${vignettes} vignettes sur 7`);
+  const lignes = (await page.locator('body').innerText()).split('\n').map(l => l.trim());
+  ok('Profil : aucune ligne qui commence par « · »', !lignes.some(l => l.startsWith('·')));
+}
+await page.screenshot({ path: `${SHOT}/5-profil.png` });
 
 // ── 8. Aucune erreur applicative ──
 // Le proxy de cet environnement bloque tout hôte externe. On distingue donc

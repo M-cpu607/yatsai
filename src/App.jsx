@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Heart, MessageCircle, Bookmark, Share2, Volume2, VolumeX,
   Plus, Search, User, Home, Inbox, Sparkles, BadgeCheck,
@@ -10165,27 +10166,9 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       {/* Liste des vidéos (athlètes uniquement — recruteurs et observateurs ne publient pas) */}
       <div className="px-4 pb-32"
         style={{ display: (profile.is_recruiter || isObserverRole(profile)) ? 'none' : undefined }}>
-        <h3 className="text-xs font-semibold mb-3" style={{ color: C.gold }}>
-          🎬 Vidéos publiées
-        </h3>
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
-          </div>
-        ) : videos.length === 0 ? (
-          <div className="rounded-xl py-10 px-6 text-center"
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-            <Camera size={28} style={{ color: C.textMute }} className="mx-auto mb-2" />
-            <p className="text-xs" style={{ color: C.textDim }}>Aucune vidéo publiée</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {videos.map(v => (
-              <OwnVideoThumb key={v.id} video={v} onPlay={setPlayingVideo}
-                onDelete={isOwn ? onDeleteVideo : null} />
-            ))}
-          </div>
-        )}
+        <GalerieVideos videos={videos} loading={loading} onPlay={setPlayingVideo}
+          onDelete={isOwn ? onDeleteVideo : null}
+          vide="Aucune vidéo publiée pour l'instant." />
       </div>
 
       {playingVideo && (
@@ -11288,6 +11271,11 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
 // ═══ PROFIL VIEWS (athlète & recruteur) ═════════════════════════════
 // ─── Card vidéo "ma vidéo" avec bouton de suppression ──────────────
+// Vignette de la galerie d'un profil : verticale, sans titre ni rond de
+// lecture, avec les vues pour seule information. Le titre se lit en
+// ouvrant la vidéo. Le menu (supprimer, modifier la flèche) monte du bas
+// de l'écran : une vignette au tiers de la largeur est trop étroite pour
+// l'accueillir.
 function OwnVideoThumb({ video, onPlay, onDelete, onEditTracking }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -11295,110 +11283,117 @@ function OwnVideoThumb({ video, onPlay, onDelete, onEditTracking }) {
 
   const thumb = getVideoThumb(video);
   const uploaded = isUploadedVideo(video);
-  const vsport = SPORTS.find(s => s.id === video.sport);
 
+  const fermer = () => { setMenuOpen(false); setConfirm(false); };
   const handleDelete = async () => {
     setDeleting(true);
     await onDelete(video.id);
     setDeleting(false);
-    setConfirm(false);
-    setMenuOpen(false);
+    fermer();
   };
 
   return (
-    <div className="rounded-xl overflow-hidden fade-in relative"
-      style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, opacity: deleting ? 0.5 : 1 }}>
-      <button onClick={() => onPlay(video)}
-        className="relative w-full text-left" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
+    <div className="relative fade-in rounded-md overflow-hidden"
+      style={{ aspectRatio: '9 / 16', backgroundColor: C.surface2, opacity: deleting ? 0.5 : 1 }}>
+      <button onClick={() => onPlay(video)} aria-label={video.title || 'Lire la vidéo'}
+        className="absolute inset-0 w-full h-full">
         {thumb ? (
-          <img loading="lazy" decoding="async" src={thumb} alt={video.title} className="w-full h-full object-cover" />
+          <img loading="lazy" decoding="async" src={thumb} alt="" className="w-full h-full object-cover" />
         ) : uploaded ? (
           <video src={`${video.video_url}#t=0.1`} preload="metadata" muted playsInline
             className="w-full h-full object-cover pointer-events-none" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: C.surface2 }}>
-            <Play size={24} style={{ color: C.gold }} />
-          </div>
-        )}
-        <div className="absolute inset-0 flex items-center justify-center"
-          style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.6) 100%)' }}>
-          <div className="w-10 h-10 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
-            <Play size={16} fill={C.bg} stroke={C.bg} />
-          </div>
-        </div>
-        {/* Nombre de vues, en bas à gauche de la vignette */}
-        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md flex items-center gap-1 text-[10px] font-bold"
-          style={{ backgroundColor: 'rgba(8,15,32,0.7)', color: '#fff', backdropFilter: 'blur(4px)' }}>
-          <Eye size={11} strokeWidth={2.4} /> {formatCount(video.views || 0)}
+        ) : null}
+        <div className="absolute inset-x-0 bottom-0 h-1/3 pointer-events-none"
+          style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.55) 100%)' }} />
+        <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1 text-[11px] font-bold"
+          style={{ color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>
+          <Play size={11} fill="#fff" strokeWidth={0} /> {formatCount(video.views || 0)}
         </div>
       </button>
 
-      {/* Bouton ... en haut à droite */}
       {onDelete && (
-        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o); }}
-          aria-label="Options"
-          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(6px)' }}>
+        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(true); }}
+          aria-label="Options de la vidéo"
+          className="absolute top-1 right-1 w-7 h-7 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(8,15,32,0.55)', backdropFilter: 'blur(6px)' }}>
           <MoreVertical size={13} style={{ color: C.text }} />
         </button>
       )}
 
-      {/* Menu actions */}
-      {menuOpen && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center p-3"
-          style={{ backgroundColor: 'rgba(8,15,32,0.92)', backdropFilter: 'blur(4px)' }}
-          onClick={() => { setMenuOpen(false); setConfirm(false); }}>
-          <div className="rounded-xl overflow-hidden w-full" onClick={(e) => e.stopPropagation()}
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+      {/* Portail vers <body> : la vignette est animée à l'apparition, et un
+          élément animé devient le repère des positions « fixed » de ses
+          enfants — sans portail, le panneau restait coincé dans la vignette. */}
+      {menuOpen && createPortal(
+        <div className="fixed inset-0 z-[95] flex items-end fade-in"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={fermer}>
+          <div className="w-full rounded-t-2xl p-4 pb-8" onClick={(e) => e.stopPropagation()}
+            style={{ backgroundColor: C.surface, borderTop: `1px solid ${C.border}` }}>
+            <div className="text-sm font-bold truncate mb-3" style={{ color: C.text }}>
+              {video.title || 'Vidéo'}
+            </div>
             {confirm ? (
-              <div className="p-3 text-center">
-                <p className="text-xs mb-3" style={{ color: C.text }}>
-                  Supprimer cette vidéo&nbsp;?
+              <>
+                <p className="text-sm mb-4" style={{ color: C.textDim }}>
+                  Supprimer cette vidéo ? C'est définitif.
                 </p>
-                <div className="flex gap-1.5">
+                <div className="flex gap-2">
                   <button onClick={() => setConfirm(false)}
-                    className="flex-1 py-1.5 rounded-lg text-[10px] font-semibold"
-                    style={{ color: C.textDim, border: `1px solid ${C.border}` }}>
+                    className="flex-1 py-3 rounded-xl text-sm font-semibold"
+                    style={{ color: C.text, border: `1px solid ${C.border}` }}>
                     Annuler
                   </button>
                   <button onClick={handleDelete} disabled={deleting}
-                    className="flex-1 py-1.5 rounded-lg text-[10px] font-bold"
+                    className="flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center"
                     style={{ backgroundColor: C.red, color: C.text }}>
-                    {deleting ? <Loader2 size={10} className="animate-spin mx-auto" /> : 'Supprimer'}
+                    {deleting ? <Loader2 size={16} className="animate-spin" /> : 'Supprimer'}
                   </button>
                 </div>
-              </div>
+              </>
             ) : (
-              <>
+              <div className="flex flex-col">
                 {onEditTracking && uploaded && (
-                  <button onClick={() => { setMenuOpen(false); onEditTracking(video); }}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold border-b"
-                    style={{ color: C.gold, borderColor: C.border }}>
-                    🎯 Modifier la flèche de suivi
+                  <button onClick={() => { fermer(); onEditTracking(video); }}
+                    className="flex items-center gap-3 py-3 text-sm font-semibold"
+                    style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
+                    <Target size={16} strokeWidth={2.2} /> Modifier la flèche de suivi
                   </button>
                 )}
                 <button onClick={() => setConfirm(true)}
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-semibold"
+                  className="flex items-center gap-3 py-3 text-sm font-semibold"
                   style={{ color: C.red }}>
-                  <Trash2 size={12} />
-                  Supprimer
+                  <Trash2 size={16} strokeWidth={2.2} /> Supprimer la vidéo
                 </button>
-              </>
+              </div>
             )}
           </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+// Galerie d'un profil : trois colonnes serrées, comme sur les réseaux
+// vidéo. Un titre neutre, et un état vide d'une ligne.
+function GalerieVideos({ videos, loading = false, vide, onPlay, onDelete, onEditTracking }) {
+  return (
+    <section className="mt-6">
+      <h3 className="text-sm font-bold mb-2" style={{ color: C.text }}>Vidéos</h3>
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 size={20} className="animate-spin" style={{ color: C.textMute }} />
+        </div>
+      ) : videos.length === 0 ? (
+        <p className="text-sm py-3" style={{ color: C.textDim }}>{vide}</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-1">
+          {videos.map(v => (
+            <OwnVideoThumb key={v.id} video={v} onPlay={onPlay} onDelete={onDelete}
+              onEditTracking={onEditTracking} />
+          ))}
         </div>
       )}
-
-      <div className="p-2">
-        <div className="text-xs font-bold truncate" style={{ color: C.text }}>{video.title}</div>
-        {vsport && (
-          <div className="text-[10px] mt-0.5" style={{ color: C.textDim }}>
-            {vsport.icon} {vsport.label}
-          </div>
-        )}
-      </div>
-    </div>
+    </section>
   );
 }
 
@@ -11736,32 +11731,11 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
         ]} />
       </div>
 
-      <div className="px-4 mt-4">
-
-      {/* Mes vidéos publiées */}
-      <div className="mb-6">
-        <h3 className="text-xs font-semibold mb-3" style={{ color: C.gold }}>
-          🎬 Mes vidéos ({videosCount})
-        </h3>
-        {myVideos.length === 0 ? (
-          <div className="rounded-xl py-8 px-6 text-center"
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-            <Camera size={24} style={{ color: C.textMute }} className="mx-auto mb-2" />
-            <p className="text-xs" style={{ color: C.textDim }}>
-              Publie ta première vidéo depuis l'onglet "+"
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {myVideos.map(v => (
-              <OwnVideoThumb key={v.id} video={v} onPlay={setPlayingVideo} onDelete={onDeleteVideo}
-                onEditTracking={setTrackingEditVideo} />
-            ))}
-          </div>
-        )}
+      <div className="px-4 mb-6">
+        <GalerieVideos videos={myVideos} onPlay={setPlayingVideo} onDelete={onDeleteVideo}
+          onEditTracking={setTrackingEditVideo}
+          vide="Pas encore de vidéo. Publie ta première avec le bouton +." />
       </div>
-
-      </div>{/* fin px-4 */}
 
       {playingVideo && (
         <LecteurVideo video={playingVideo} onClose={() => setPlayingVideo(null)} />
@@ -11931,7 +11905,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
                         <div className="absolute inset-0 flex items-center justify-center"
                           style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.6) 100%)' }}>
                           <div className="w-10 h-10 rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
+                            style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                             <Play size={16} fill={C.bg} stroke={C.bg} />
                           </div>
                         </div>
