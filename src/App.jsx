@@ -9898,6 +9898,8 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
   const [signedCount, setSignedCount] = useState(0);
   const [criteriaOpen, setCriteriaOpen] = useState(false); // critères de recrutement masqués par défaut
   const [playingVideo, setPlayingVideo] = useState(null); // vidéo en lecture depuis le profil visité
+  const [menuOuvert, setMenuOuvert] = useState(false);     // menu « ⋯ » : partager, signaler
+  const [partageOuvert, setPartageOuvert] = useState(false);
   // Copie live du profil visité — patchée en temps réel via Realtime
   const [liveProfile, setLiveProfile] = useState(profileProp);
   // Se resynchronise dès que le profil reçu change (y compris quand openProfile
@@ -10007,21 +10009,59 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         <ArrowLeft size={18} style={{ color: C.text }} />
       </button>
 
-      {/* Bouton Shortlist (recruteur regardant un athlète) — top-right fixe */}
-      {canShortlist && (
-        <button onClick={() => isShortlisted ? onRemoveFromShortlist?.(profile.id) : onAddToShortlist?.(profile.id)}
-          className="fixed top-12 right-4 z-[91] px-3 h-10 rounded-full flex items-center gap-1.5"
-          style={{
-            backgroundColor: isShortlisted ? C.gold : 'rgba(8,15,32,0.7)',
-            backdropFilter: 'blur(10px)',
-            border: `1px solid ${isShortlisted ? C.gold : C.border}`,
-            color: isShortlisted ? C.bg : C.text,
-          }}>
-          <Star size={16} fill={isShortlisted ? C.bg : 'transparent'} strokeWidth={2.2} />
-          <span className="text-xs font-bold">
-            {isShortlisted ? STATUS_LABELS[shortlistStatus] : 'Shortlist'}
-          </span>
-        </button>
+      {/* En haut à droite : Shortlist (recruteur regardant un athlète) et le
+          menu « ⋯ » qui range partage et signalement. Le drapeau de
+          signalement flottait seul au milieu du profil. */}
+      {!isOwn && (
+        <div className="fixed top-12 right-4 z-[91] flex items-center gap-2">
+          {canShortlist && (
+            <button onClick={() => isShortlisted ? onRemoveFromShortlist?.(profile.id) : onAddToShortlist?.(profile.id)}
+              className="px-3 h-10 rounded-full flex items-center gap-1.5"
+              style={{
+                backgroundColor: isShortlisted ? C.text : 'rgba(8,15,32,0.7)',
+                backdropFilter: 'blur(10px)',
+                border: `1px solid ${isShortlisted ? C.text : C.border}`,
+                color: isShortlisted ? C.bg : C.text,
+              }}>
+              <Star size={16} fill={isShortlisted ? C.bg : 'transparent'} strokeWidth={2.2} />
+              <span className="text-xs font-bold">
+                {isShortlisted ? STATUS_LABELS[shortlistStatus] : 'Shortlist'}
+              </span>
+            </button>
+          )}
+          <button onClick={() => setMenuOuvert(true)} aria-label="Plus d'options"
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(10px)',
+                     border: `1px solid ${C.border}`, color: C.text }}>
+            <MoreVertical size={16} strokeWidth={2.4} />
+          </button>
+        </div>
+      )}
+
+      {/* Portail : ce profil est animé à l'ouverture, ce qui ferait de lui le
+          repère des positions « fixed » de ses enfants. */}
+      {menuOuvert && createPortal(
+        <div className="fixed inset-0 z-[96] flex items-end fade-in"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={() => setMenuOuvert(false)}>
+          <div className="w-full rounded-t-2xl p-4 pb-8" onClick={(e) => e.stopPropagation()}
+            style={{ backgroundColor: C.surface, borderTop: `1px solid ${C.border}` }}>
+            <button onClick={() => { setMenuOuvert(false); setPartageOuvert(true); }}
+              className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
+              style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
+              <Share2 size={16} strokeWidth={2.2} /> Partager ce profil
+            </button>
+            <button onClick={() => { setMenuOuvert(false); onReport?.('user', profile.id, profile.full_name); }}
+              className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
+              style={{ color: C.red }}>
+              <Flag size={16} strokeWidth={2.2} /> Signaler ce profil
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {partageOuvert && createPortal(
+        <ShareProfileModal userProfile={profile} autrui onClose={() => setPartageOuvert(false)} />,
+        document.body,
       )}
 
       {/* Ligne avatar + actions */}
@@ -10138,28 +10178,22 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       {canPropose && (
         <div className="px-4 mb-4">
           {proposalStatus ? (
-            <div className="w-full py-2.5 rounded-xl text-xs font-bold text-center"
+            <div className="w-full py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
               style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`,
-                color: proposalStatus === 'accepted' ? C.green : proposalStatus === 'refused' ? C.red : C.gold }}>
-              {proposalStatus === 'accepted' ? '✅ Proposition acceptée'
-                : proposalStatus === 'refused' ? '❌ Proposition refusée'
-                : '⏳ Proposition envoyée — en attente de réponse'}
+                color: proposalStatus === 'accepted' ? C.green : proposalStatus === 'refused' ? C.red : C.textDim }}>
+              {proposalStatus === 'accepted' ? <><CircleCheck size={14} strokeWidth={2.4} /> Proposition acceptée</>
+                : proposalStatus === 'refused' ? <><CircleX size={14} strokeWidth={2.4} /> Proposition refusée</>
+                : <><Hourglass size={14} strokeWidth={2.4} /> Proposition envoyée — en attente de réponse</>}
             </div>
           ) : (
+            // Le seul doré de l'écran : c'est l'action pour laquelle un
+            // recruteur ouvre ce profil.
             <button onClick={() => onPropose?.(profile)}
-              className="w-full py-3 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2"
-              style={{ background: `linear-gradient(135deg, ${C.gold} 0%, ${C.goldDeep} 100%)`, color: C.bg }}>
-              📩 Faire une proposition
+              className="w-full py-3.5 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2"
+              style={{ backgroundColor: C.gold, color: C.bg }}>
+              <Send size={16} strokeWidth={2.4} /> Faire une proposition
             </button>
           )}
-        </div>
-      )}
-
-      {/* Bouton signaler (petit, façon feed vidéo — sauf si c'est mon propre profil) */}
-      {!isOwn && (
-        <div className="px-4 mb-4 flex justify-center">
-          <IconButton icon={Flag} label="Signaler"
-            onClick={() => onReport?.('user', profile.id, profile.full_name)} />
         </div>
       )}
 
@@ -10360,7 +10394,7 @@ function SocialLinksDisplay({ links }) {
 
 // ─── PARTAGE PROFIL (QR + lien) ──────────────────────────────────
 // Modal simple : QR code + lien copiable (sans partage via réseaux sociaux).
-function ShareProfileModal({ userProfile, onClose }) {
+function ShareProfileModal({ userProfile, onClose, autrui = false }) {
   const profileUrl = `https://yatsai.app/u/${userProfile?.id || ''}`;
   const [copied, setCopied] = useState(false);
   const [QRComp, setQRComp] = useState(null);
@@ -10394,8 +10428,10 @@ function ShareProfileModal({ userProfile, onClose }) {
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: C.border }}>
           <div className="flex items-center gap-2">
-            <Share2 size={16} style={{ color: C.gold }} />
-            <div className="text-base font-extrabold" style={{ color: C.text }}>Partager mon compte</div>
+            <Share2 size={16} style={{ color: C.textDim }} />
+            <div className="text-base font-extrabold" style={{ color: C.text }}>
+              {autrui ? 'Partager ce profil' : 'Partager mon compte'}
+            </div>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
             style={{ backgroundColor: C.surface }}>
@@ -10415,7 +10451,7 @@ function ShareProfileModal({ userProfile, onClose }) {
               </div>
             )}
             <p className="text-xs mt-3 text-center font-semibold" style={{ color: '#080F20' }}>
-              Scanne pour ouvrir mon profil
+              {autrui ? 'Scanne pour ouvrir ce profil' : 'Scanne pour ouvrir mon profil'}
             </p>
           </div>
 
@@ -10435,9 +10471,11 @@ function ShareProfileModal({ userProfile, onClose }) {
                 {copied ? '✓ Copié' : 'Copier'}
               </button>
             </div>
-            <p className="text-[10px] mt-2" style={{ color: C.textMute }}>
-              💡 Tu peux coller ce lien dans ta bio Instagram, TikTok, ton message WhatsApp, etc.
-            </p>
+            {!autrui && (
+              <p className="text-[10px] mt-2" style={{ color: C.textMute }}>
+                Tu peux coller ce lien dans ta bio Instagram, TikTok, ton message WhatsApp, etc.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -11681,7 +11719,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
           <button onClick={onShareProfile} aria-label="Partager mon compte"
             className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
             style={{ backgroundColor: 'rgba(8,15,32,0.55)', backdropFilter: 'blur(8px)',
-                     border: `1px solid ${C.borderGold}`, color: C.gold }}>
+                     border: `1px solid ${C.border}`, color: C.text }}>
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}
@@ -11981,7 +12019,7 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
           <button onClick={onShareProfile} aria-label="Partager mon compte"
             className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
             style={{ backgroundColor: 'rgba(8,15,32,0.55)', backdropFilter: 'blur(8px)',
-                     border: `1px solid ${C.borderGold}`, color: C.gold }}>
+                     border: `1px solid ${C.border}`, color: C.text }}>
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}
@@ -12108,7 +12146,7 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
           <button onClick={onShareProfile} aria-label="Partager mon compte"
             className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center active:opacity-70"
             style={{ backgroundColor: 'rgba(8,15,32,0.55)', backdropFilter: 'blur(8px)',
-                     border: `1px solid ${C.borderGold}`, color: C.gold }}>
+                     border: `1px solid ${C.border}`, color: C.text }}>
             <Share2 size={16} strokeWidth={2.4} />
           </button>
         )}

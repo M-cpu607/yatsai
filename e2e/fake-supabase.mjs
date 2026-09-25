@@ -159,6 +159,20 @@ const profil = {
   has_club: true, season_start_month: 9,
 };
 
+// FAUX_ROLE=recruteur : le compte connecté devient un recruteur, pour tester
+// les écrans qui lui sont propres (proposition, critères de recrutement).
+if (process.env.FAUX_ROLE === 'recruteur') {
+  Object.assign(profil, {
+    is_recruiter: true, role: 'recruiter', full_name: 'Marc Duval',
+    organization: 'FC Barcelona Academy', position: null, position_id: null, club: null,
+    level: null, city: 'Madrid', city_private: 'Madrid', region: 'Madrid', region_private: 'Madrid',
+    country: 'Espagne', country_private: 'Espagne', nationality: 'Espagnole',
+    recruiting_gender: 'all', recruiting_age_min: 15, recruiting_age_max: 18,
+    recruiting_levels: ['amateur', 'young_pro'], bio: 'Croire en ses rêves.',
+  });
+  session.user.user_metadata.is_recruiter = true;
+}
+
 // Quelques profils pour l'écran de recherche, au format `search_athletes`.
 const athletes = Array.from({ length: 12 }, (_, i) => ({
   id: `00000000-0000-7000-8000-${String(900 + i).padStart(12, '0')}`,
