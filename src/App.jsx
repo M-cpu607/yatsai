@@ -8333,8 +8333,9 @@ function SignedPostsGallery({ recruiterId, currentUserId, onLoad, onDelete, onAd
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold" style={{ color: C.gold }}>
-          🏆 Signatures ({posts.length})
+        <h3 className="text-sm font-bold" style={{ color: C.text }}>
+          Signatures
+          {posts.length > 0 && <span className="font-normal ml-1.5" style={{ color: C.textDim }}>{posts.length}</span>}
         </h3>
         {isOwn && onAdd && (
           <button onClick={() => onAdd(() => setReloadKey(k => k + 1))}
@@ -9896,7 +9897,6 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [signedCount, setSignedCount] = useState(0);
-  const [criteriaOpen, setCriteriaOpen] = useState(false); // critères de recrutement masqués par défaut
   const [playingVideo, setPlayingVideo] = useState(null); // vidéo en lecture depuis le profil visité
   const [menuOuvert, setMenuOuvert] = useState(false);     // menu « ⋯ » : partager, signaler
   const [partageOuvert, setPartageOuvert] = useState(false);
@@ -10114,51 +10114,11 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
 
       <div className="h-4" />
 
-      {/* Critères de recrutement (recruteurs visités uniquement) — dépliable */}
+      {/* Critères de recrutement (recruteurs visités uniquement) */}
       {profile.is_recruiter && (
-        (profile.recruiting_gender || (profile.recruiting_levels && profile.recruiting_levels.length > 0)
-          || profile.recruiting_age_min != null || profile.recruiting_age_max != null) && (
-          <div className="px-4 mb-4">
-            <button
-              onClick={() => setCriteriaOpen(o => !o)}
-              aria-expanded={criteriaOpen}
-              className="w-full rounded-xl px-3 py-2.5 flex items-center justify-between active:opacity-80"
-              style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
-              <span className="text-xs font-semibold" style={{ color: C.gold }}>
-                🎯 Critères de recrutement
-              </span>
-              <ChevronDown size={16}
-                style={{ color: C.gold, transform: criteriaOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
-            </button>
-            {criteriaOpen && (
-              <div className="rounded-xl p-3 mt-1.5 fade-in"
-                style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                <div className="flex flex-col gap-2 text-xs">
-                  {profile.recruiting_gender && (
-                    <div style={{ color: C.text }}>
-                      <span style={{ color: C.textDim }}>Genre : </span>
-                      {profile.recruiting_gender === 'all' ? 'Tous'
-                        : profile.recruiting_gender === 'M' ? '♂ Hommes'
-                        : profile.recruiting_gender === 'F' ? '♀ Femmes'
-                        : '⚧ Autre'}
-                    </div>
-                  )}
-                  {profile.recruiting_age_min != null && profile.recruiting_age_max != null && (
-                    <div style={{ color: C.text }}>
-                      <span style={{ color: C.textDim }}>Âge : </span>
-                      {profile.recruiting_age_min} – {profile.recruiting_age_max} ans
-                    </div>
-                  )}
-                  {profile.recruiting_levels && profile.recruiting_levels.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {profile.recruiting_levels.map(lv => <LevelChip key={lv} level={lv} />)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )
+        <div className="px-4">
+          <CarteCriteres profile={profile} />
+        </div>
       )}
 
       {/* Galerie signatures (uniquement si recruteur) */}
@@ -10653,6 +10613,23 @@ function AccountSecuritySection() {
   );
 }
 
+// ─── Choix sélectionnables ────────────────────────────────────────
+// Un choix coché se voit au premier coup d'œil : plein et blanc. Non coché :
+// un simple contour gris. Avant, coché et non coché ne différaient que d'une
+// teinte dorée — six niveaux cochés ou aucun, on ne voyait pas la différence.
+const styleChoix = (actif) => ({
+  backgroundColor: actif ? C.text : 'transparent',
+  color: actif ? C.bg : C.textDim,
+  border: `1px solid ${actif ? C.text : C.border}`,
+});
+// Variante pour les choix qui portent une description : un fond blanc la
+// rendrait illisible, on éclaircit le fond et on souligne le contour.
+const styleCarteChoix = (actif) => ({
+  backgroundColor: actif ? C.surface2 : 'transparent',
+  color: C.text,
+  border: `1.5px solid ${actif ? C.text : C.border}`,
+});
+
 function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
   // Rôle réel (3 valeurs) pour adapter les champs affichés
   const editorRole = getUserRole(userProfile);
@@ -10991,35 +10968,32 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
               </div>
 
               {/* Critères de recrutement */}
-              <div className="rounded-xl px-3 py-2.5 flex items-start gap-2"
-                style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
-                <span className="text-base">🎯</span>
-                <p className="text-[11px]" style={{ color: C.textDim }}>
-                  <strong style={{ color: C.text }}>Tes critères de recrutement</strong> — affichés sur ton profil
-                  et utilisés pour matcher avec les athlètes.
+              <div className="pt-2">
+                <div className="text-base font-extrabold flex items-center gap-2" style={{ color: C.text }}>
+                  <Target size={16} strokeWidth={2.4} /> Ce que je recherche
+                </div>
+                <p className="text-xs mt-0.5" style={{ color: C.textDim }}>
+                  Affiché sur ton profil, et utilisé pour te proposer des athlètes.
                 </p>
               </div>
 
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                  Genre des athlètes recrutés
+                  Genre
                 </label>
                 <div className="grid grid-cols-4 gap-2">
                   {[
                     { id: 'all', label: 'Tous' },
-                    { id: 'M',   label: 'H' },
-                    { id: 'F',   label: 'F' },
+                    { id: 'M',   label: 'Hommes' },
+                    { id: 'F',   label: 'Femmes' },
                     { id: 'O',   label: 'Autre' },
                   ].map(opt => {
                     const active = recruitingGender === opt.id;
                     return (
                       <button key={opt.id} type="button" onClick={() => setRecruitingGender(opt.id)}
+                        aria-pressed={active}
                         className="py-2.5 rounded-xl text-xs font-semibold"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.surface,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>
+                        style={styleChoix(active)}>
                         {opt.label}
                       </button>
                     );
@@ -11029,7 +11003,8 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                  Niveaux recrutés (plusieurs possibles)
+                  Niveaux
+                  <span className="font-normal ml-1.5" style={{ color: C.textMute }}>plusieurs possibles</span>
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   {[
@@ -11046,12 +11021,10 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                         onClick={() => setRecruitingLevels(prev =>
                           active ? prev.filter(x => x !== lv.id) : [...prev, lv.id]
                         )}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.surface,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>
+                        aria-pressed={active}
+                        className="px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1"
+                        style={styleChoix(active)}>
+                        {active && <CircleCheck size={12} strokeWidth={2.6} />}
                         {lv.label}
                       </button>
                     );
@@ -11061,19 +11034,24 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
 
               <div>
                 <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>
-                  Tranche d'âge recrutée
+                  Âge
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="number" value={recruitingAgeMin}
+                {/* « De 15 à 18 ans » : deux cases nues « 15 » et « 18 » ne
+                    disaient pas laquelle était le minimum. */}
+                <div className="flex items-center gap-2 text-sm" style={{ color: C.textDim }}>
+                  <span>De</span>
+                  <input type="number" inputMode="numeric" value={recruitingAgeMin}
                     onChange={(e) => setRecruitingAgeMin(e.target.value)}
-                    placeholder="Âge min" min={10} max={100}
-                    className="px-3 py-3 rounded-xl text-sm outline-none"
+                    placeholder="15" min={10} max={100} aria-label="Âge minimum"
+                    className="w-20 px-3 py-3 rounded-xl text-sm text-center outline-none"
                     style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-                  <input type="number" value={recruitingAgeMax}
+                  <span>à</span>
+                  <input type="number" inputMode="numeric" value={recruitingAgeMax}
                     onChange={(e) => setRecruitingAgeMax(e.target.value)}
-                    placeholder="Âge max" min={10} max={100}
-                    className="px-3 py-3 rounded-xl text-sm outline-none"
+                    placeholder="18" min={10} max={100} aria-label="Âge maximum"
+                    className="w-20 px-3 py-3 rounded-xl text-sm text-center outline-none"
                     style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                  <span>ans</span>
                 </div>
               </div>
             </>
@@ -11091,21 +11069,15 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                 <div className="grid grid-cols-2 gap-2">
                   <button type="button" onClick={() => setHasClubLocal(true)}
                     className="py-2.5 rounded-xl text-xs font-semibold"
-                    style={{
-                      backgroundColor: hasClubLocal === true ? C.goldSoft : C.surface,
-                      color: hasClubLocal === true ? C.gold : C.text,
-                      border: `1px solid ${hasClubLocal === true ? C.gold : C.border}`,
-                    }}>
-                    ✅ Oui
+                    aria-pressed={hasClubLocal === true}
+                    style={styleChoix(hasClubLocal === true)}>
+                    Oui
                   </button>
                   <button type="button" onClick={() => { setHasClubLocal(false); setClub(''); setLevel(''); }}
                     className="py-2.5 rounded-xl text-xs font-semibold"
-                    style={{
-                      backgroundColor: hasClubLocal === false ? C.goldSoft : C.surface,
-                      color: hasClubLocal === false ? C.gold : C.text,
-                      border: `1px solid ${hasClubLocal === false ? C.gold : C.border}`,
-                    }}>
-                    ❌ Non
+                    aria-pressed={hasClubLocal === false}
+                    style={styleChoix(hasClubLocal === false)}>
+                    Non
                   </button>
                 </div>
               </div>
@@ -11126,8 +11098,8 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
               {/* Si pas en club : badge "Sans club" */}
               {hasClubLocal === false && (
                 <div className="rounded-xl px-3 py-2.5 flex items-start gap-2"
-                  style={{ backgroundColor: C.goldSoft, border: `1px solid ${C.borderGold}` }}>
-                  <span className="text-base">🆓</span>
+                  style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+                  <CircleSlash size={15} strokeWidth={2.2} className="flex-shrink-0 mt-0.5" style={{ color: C.textDim }} />
                   <p className="text-[11px]" style={{ color: C.textDim }}>
                     Tu seras affiché comme <strong style={{ color: C.text }}>« sans club »</strong>.
                     Indique quand même ton niveau ci-dessous — les recruteurs peuvent te repérer pour te proposer une structure adaptée.
@@ -11141,30 +11113,29 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
                   <label className="text-xs font-semibold mb-2 block" style={{ color: C.textDim }}>Niveau</label>
                   <div className="flex flex-col gap-1.5">
                     {[
-                      { id: 'amateur',         label: 'Amateur',         icon: '🌱', desc: 'Joueur de loisir' },
-                      { id: 'young_pro',       label: 'Young Pro',       icon: '🚀', desc: 'Espoir / centre de formation' },
-                      { id: 'senior_amateur',  label: 'Senior Amateur',  icon: '⭐', desc: 'Adulte non rémunéré' },
-                      { id: 'senior_semi_pro', label: 'Senior Semi-Pro', icon: '⭐⭐', desc: 'Compensé sans contrat' },
-                      { id: 'senior_pro',      label: 'Senior Pro',      icon: '⭐⭐⭐', desc: 'Contrat professionnel' },
+                      { id: 'amateur',         label: 'Amateur',         desc: 'Joueur de loisir' },
+                      { id: 'young_pro',       label: 'Young Pro',       desc: 'Espoir / centre de formation' },
+                      { id: 'senior_amateur',  label: 'Senior Amateur',  desc: 'Adulte non rémunéré' },
+                      { id: 'senior_semi_pro', label: 'Senior Semi-Pro', desc: 'Compensé sans contrat' },
+                      { id: 'senior_pro',      label: 'Senior Pro',      desc: 'Contrat professionnel' },
                     ].map(lv => {
                       const active = level === lv.id;
+                      const IconeNiveau = LEVEL_LABELS[lv.id]?.Icon;
                       return (
                         <button key={lv.id} type="button"
                           onClick={() => { setLevel(lv.id); if (!levelRequiresProof(lv.id)) setLevelProofFile(null); }}
+                          aria-pressed={active}
                           className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-sm"
-                          style={{
-                            backgroundColor: active ? C.goldSoft : C.surface,
-                            color: active ? C.gold : C.text,
-                            border: `1px solid ${active ? C.gold : C.border}`,
-                          }}>
-                          <span>{lv.icon}</span>
+                          style={styleCarteChoix(active)}>
+                          {IconeNiveau && <IconeNiveau size={15} strokeWidth={2.2} style={{ color: C.textDim }} />}
                           <div className="flex-1 min-w-0">
                             <div className="font-bold">{lv.label}</div>
                             <div className="text-[10px]" style={{ color: C.textMute }}>{lv.desc}</div>
                           </div>
+                          {active && <CircleCheck size={16} strokeWidth={2.4} style={{ color: C.text }} />}
                           {levelRequiresProof(lv.id) && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded font-bold"
-                              style={{ backgroundColor: 'rgba(255,184,0,0.15)', color: C.gold, border: `1px solid ${C.borderGold}` }}>
+                              style={{ backgroundColor: C.surface2, color: C.textDim, border: `1px solid ${C.border}` }}>
                               Preuve
                             </span>
                           )}
@@ -11258,27 +11229,31 @@ function ProfileEditor({ userProfile, isRecruiter, onClose, onSave }) {
               Localisation
               <span className="text-[10px] font-normal ml-1.5" style={{ color: C.textMute }}>pour le matching recruteurs</span>
             </LibelleChamp>
+            {/* Un libellé au-dessus de chaque case : une fois remplies,
+                « espagne / madrid / madrid » ne disaient plus laquelle était
+                la région et laquelle la ville. */}
             <div className="grid grid-cols-3 gap-2">
-              <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
-                placeholder="Pays" maxLength={60}
-                className="px-3 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-              <input type="text" value={region} onChange={(e) => setRegion(e.target.value)}
-                placeholder="Région" maxLength={60}
-                className="px-3 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
-              <input type="text" value={city} onChange={(e) => setCity(e.target.value)}
-                placeholder="Ville" maxLength={60}
-                className="px-3 py-3 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+              {[
+                { libelle: 'Pays', valeur: country, maj: setCountry, exemple: 'France' },
+                { libelle: 'Région', valeur: region, maj: setRegion, exemple: 'Île-de-France' },
+                { libelle: 'Ville', valeur: city, maj: setCity, exemple: 'Paris' },
+              ].map(ch => (
+                <label key={ch.libelle} className="block min-w-0">
+                  <span className="text-[10px] font-semibold mb-1 block" style={{ color: C.textMute }}>{ch.libelle}</span>
+                  <input type="text" value={ch.valeur} onChange={(e) => ch.maj(e.target.value)}
+                    placeholder={ch.exemple} maxLength={60}
+                    className="w-full px-3 py-3 rounded-xl text-sm outline-none"
+                    style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                </label>
+              ))}
             </div>
           </div>
 
           {/* ─── Section Compte (changement email / mot de passe) ─── */}
           <div className="rounded-xl p-3 mt-4"
-            style={{ backgroundColor: 'rgba(255,184,0,0.04)', border: `1px solid ${C.border}` }}>
-            <div className="text-[10px] font-mono tracking-widest mb-3" style={{ color: C.gold }}>
-              🔐 COMPTE
+            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+            <div className="text-sm font-bold flex items-center gap-1.5 mb-3" style={{ color: C.text }}>
+              <Lock size={14} strokeWidth={2.4} style={{ color: C.textDim }} /> Compte
             </div>
             <AccountSecuritySection />
           </div>
@@ -11608,6 +11583,45 @@ function IdentiteProfil({ profile, vuParSoi = false, extraPastilles = null }) {
   );
 }
 
+// ─── « Ce que je recherche » ───────────────────────────────────────
+// Les critères d'un recruteur, dits en une phrase et toujours visibles.
+// Ils étaient cachés dans un panneau doré à déplier, « 🎯 Critères de
+// recrutement », que personne n'ouvrait.
+const GENRES_RECHERCHES = { all: 'Hommes et femmes', M: 'Hommes', F: 'Femmes', O: 'Autres' };
+
+function trancheAge(min, max) {
+  const a = min === '' || min == null ? null : Number(min);
+  const b = max === '' || max == null ? null : Number(max);
+  if (a != null && b != null) return a === b ? `${a} ans` : `${a} à ${b} ans`;
+  if (a != null) return `dès ${a} ans`;
+  if (b != null) return `jusqu'à ${b} ans`;
+  return null;
+}
+
+function CarteCriteres({ profile }) {
+  const genre = GENRES_RECHERCHES[profile?.recruiting_gender] || null;
+  const age = trancheAge(profile?.recruiting_age_min, profile?.recruiting_age_max);
+  const niveaux = profile?.recruiting_levels || [];
+  if (!genre && !age && niveaux.length === 0) return null;
+  return (
+    <div className="rounded-2xl p-4 mb-4" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+      <div className="text-xs font-semibold flex items-center gap-1.5 mb-1.5" style={{ color: C.textDim }}>
+        <Target size={13} strokeWidth={2.4} /> Ce que je recherche
+      </div>
+      {(genre || age) && (
+        <div className="text-sm font-bold" style={{ color: C.text }}>
+          {[genre, age].filter(Boolean).join(' · ')}
+        </div>
+      )}
+      {niveaux.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
+          {niveaux.map(lv => <LevelChip key={lv} level={lv} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Compteurs d'un profil. Un compteur à zéro n'apprend rien : il disparaît.
 // Et « 1 Vidéos » redevient « 1 vidéo ».
 function CompteursProfil({ items }) {
@@ -11825,8 +11839,9 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
 
   return (
     <div className="mb-6">
-      <h3 className="text-xs font-semibold mb-3" style={{ color: C.gold }}>
-        🔖 Vidéos enregistrées ({loading ? '…' : count})
+      <h3 className="text-sm font-bold mb-2" style={{ color: C.text }}>
+        Vidéos enregistrées
+        {!loading && count > 0 && <span className="font-normal ml-1.5" style={{ color: C.textDim }}>{count}</span>}
       </h3>
 
       {/* Carte "dossier" cliquable */}
@@ -11842,7 +11857,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
       >
         {/* Icône dossier + aperçu miniatures */}
         <div className="relative w-14 h-14 rounded-lg flex items-center justify-center shrink-0"
-          style={{ backgroundColor: 'rgba(255,184,0,0.12)', border: `1px solid ${C.border}` }}>
+          style={{ backgroundColor: C.surface2, border: `1px solid ${C.border}` }}>
           {previews.length > 0 ? (
             <div className="grid grid-cols-2 gap-0.5 w-full h-full p-1 overflow-hidden rounded">
               {previews.slice(0, 4).map((p, i) => (
@@ -11854,7 +11869,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
               ))}
             </div>
           ) : (
-            <Folder size={26} style={{ color: C.gold }} />
+            <Folder size={24} style={{ color: C.textDim }} />
           )}
         </div>
 
@@ -11866,7 +11881,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
             {loading
               ? 'Chargement…'
               : count === 0
-                ? "Aucune vidéo · clique sur 🔖 sur une vidéo du feed"
+                ? "Aucune vidéo · touche le signet d'une vidéo du fil"
                 : `${count} vidéo${count > 1 ? 's' : ''} · Cliquer pour ouvrir`}
           </div>
         </div>
@@ -11896,7 +11911,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
               <ArrowLeft size={18} style={{ color: C.text }} />
             </button>
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <FolderOpen size={20} style={{ color: C.gold }} className="shrink-0" />
+              <FolderOpen size={20} style={{ color: C.textDim }} className="shrink-0" />
               <div className="min-w-0">
                 <div className="text-base font-extrabold truncate" style={{ color: C.text }}>
                   Mes vidéos enregistrées
@@ -11918,7 +11933,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
                   Aucune vidéo enregistrée
                 </p>
                 <p className="text-xs" style={{ color: C.textDim }}>
-                  Clique sur 🔖 sur une vidéo du feed pour l'ajouter ici.
+                  Touche le signet d'une vidéo du fil pour l'ajouter ici.
                 </p>
               </div>
             ) : (
@@ -11957,7 +11972,7 @@ function SavedVideosSection({ currentUserId, onLoad, onPlay, onUnsave }) {
                         className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center"
                         style={{ backgroundColor: 'rgba(8,15,32,0.7)', backdropFilter: 'blur(6px)' }}
                       >
-                        <Bookmark size={13} fill={C.gold} stroke={C.gold} />
+                        <Bookmark size={13} fill={C.text} stroke={C.text} />
                       </button>
                       <div className="p-2">
                         <div className="text-xs font-bold truncate" style={{ color: C.text }}>{v.title}</div>
@@ -12087,7 +12102,6 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
                                 onShareProfile, onLoadSavedVideos, onToggleSaveVideo, onPlayVideo }) {
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [signedCount, setSignedCount] = useState(0);
-  const [criteriaOpen, setCriteriaOpen] = useState(false);
 
   // Realtime : recharger les compteurs followers/following en temps réel
   useEffect(() => {
@@ -12187,50 +12201,7 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
 
       <div className="px-4 mt-4">
 
-      {/* Critères de recrutement — dépliable */}
-      {(userProfile?.recruiting_gender || (userProfile?.recruiting_levels && userProfile.recruiting_levels.length > 0)
-        || userProfile?.recruiting_age_min != null || userProfile?.recruiting_age_max != null) && (
-        <div className="mb-4">
-          <button
-            onClick={() => setCriteriaOpen(o => !o)}
-            aria-expanded={criteriaOpen}
-            className="w-full rounded-xl px-3 py-2.5 flex items-center justify-between active:opacity-80"
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
-            <span className="text-xs font-semibold" style={{ color: C.gold }}>
-              🎯 Critères de recrutement
-            </span>
-            <ChevronDown size={16}
-              style={{ color: C.gold, transform: criteriaOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
-          </button>
-          {criteriaOpen && (
-            <div className="rounded-xl p-3 mt-1.5 fade-in"
-              style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-              <div className="flex flex-col gap-2 text-xs">
-                {userProfile?.recruiting_gender && (
-                  <div style={{ color: C.text }}>
-                    <span style={{ color: C.textDim }}>Genre : </span>
-                    {userProfile.recruiting_gender === 'all' ? 'Tous'
-                      : userProfile.recruiting_gender === 'M' ? '♂ Hommes'
-                      : userProfile.recruiting_gender === 'F' ? '♀ Femmes'
-                      : '⚧ Autre'}
-                  </div>
-                )}
-                {userProfile?.recruiting_age_min != null && userProfile?.recruiting_age_max != null && (
-                  <div style={{ color: C.text }}>
-                    <span style={{ color: C.textDim }}>Âge : </span>
-                    {userProfile.recruiting_age_min} – {userProfile.recruiting_age_max} ans
-                  </div>
-                )}
-                {userProfile?.recruiting_levels && userProfile.recruiting_levels.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {userProfile.recruiting_levels.map(lv => <LevelChip key={lv} level={lv} />)}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <CarteCriteres profile={userProfile} />
 
       {/* Liens externes (recruteurs uniquement) */}
       <SocialLinksDisplay links={userProfile?.social_links} />
