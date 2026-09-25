@@ -16,7 +16,7 @@ Utile pour deux choses :
 npm i -D playwright && npx playwright install chromium   # une seule fois
 
 node e2e/fake-supabase.mjs &                             # faux backend, port 8901
-printf 'VITE_SUPABASE_URL=http://127.0.0.1:8901\nVITE_SUPABASE_ANON_KEY=faux\nVITE_LECTEUR_YOUTUBE_URL=http://127.0.0.1:8901/lecteur/\n' > .env.local
+printf 'VITE_SUPABASE_URL=http://127.0.0.1:8901\nVITE_SUPABASE_ANON_KEY=faux\n' > .env.local
 npm run build && npx vite preview --port 4173 &
 node e2e/smoke.mjs
 rm .env.local                                            # revenir au vrai backend
@@ -37,15 +37,18 @@ rm .env.local                                            # revenir au vrai backe
 6. La première page est bien limitée à 20 cartes, et le défilement infini
    charge la suivante (20 → 60), ce qui valide la pagination par curseur
    de bout en bout.
-7. Le formulaire de publication ouvre avec le bloc « Le contexte » replié,
+7. YouTube a été retiré : l'ancien lien YouTube que contient le faux fil
+   n'apparaît pas, aucun lecteur YouTube n'est chargé, et le formulaire de
+   publication ne propose plus que la vidéo filmée ou importée.
+8. Le formulaire de publication ouvre avec le bloc « Le contexte » replié,
    et son ouverture révèle les cinq listes alimentées par les référentiels :
    postes restreints au sport choisi, saisons avec la courante en tête.
-8. La recherche rend des résultats et annonce un nombre « affichés », pas
+9. La recherche rend des résultats et annonce un nombre « affichés », pas
    « trouvés » — la liste est paginée.
-9. Aucune requête applicative en échec.
-10. Aucune erreur JavaScript.
+10. Aucune requête applicative en échec.
+11. Aucune erreur JavaScript.
 
-Les échecs réseau vers `img.youtube.com` et Google Fonts sont comptés à
+Les échecs réseau vers Google Fonts sont comptés à
 part : ce sont des hôtes externes, et ils échouent normalement derrière
 un proxy restrictif sans que l'application soit en cause.
 

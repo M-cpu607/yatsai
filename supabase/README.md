@@ -272,32 +272,11 @@ précisément ce que ce dossier vous permet.
 |---|---|---|
 | `scout-chatbot` | exigé | assistant de recrutement |
 | `delete-account` | exigé | suppression de compte |
-| `lecteur-youtube` | **non exigé** | collecteur des balises du lecteur YouTube |
 
-### `lecteur-youtube`
-
-**Collecteur de balises**, rien d'autre. La page relais du lecteur YouTube
-fait partie du site, servie par Netlify (`public/lecteur-youtube/`, voir
-`hebergement/README.md`) et signale ici chacune
-de ses étapes — `page-chargee`, `api-chargee`, `pret`, `etat-<n>`,
-`erreur-<code>`… — par `?v=<id>&journal=<étape>`. La fonction répond 204 ;
-l'intérêt est que chaque appel apparaît dans les journaux du projet, ce qui
-permet de voir à distance ce qui se passe dans la WebView d'un téléphone.
-
-Elle a d'abord servi la page elle-même, et c'était une impasse : **Supabase
-réécrit en `text/plain` tout HTML servi par une fonction Edge** (et son
-Storage fait de même). La page arrivait bien — 200 dans les journaux — mais
-son script ne s'exécutait jamais. C'est l'absence totale de balises qui l'a
-montré.
-
-Sans JWT, parce que `navigator.sendBeacon` ne peut pas porter d'en-tête
-`Authorization`. En contrepartie elle ne lit ni n'écrit aucune donnée et ne
-renvoie jamais de contenu.
+Une troisième fonction, `lecteur-youtube`, a servi au lecteur YouTube avant
+le retrait de YouTube de l'application. Sa source a été supprimée du dépôt ;
+si elle figure encore dans le projet hébergé, elle peut être supprimée :
 
 ```bash
-npx supabase functions deploy lecteur-youtube --no-verify-jwt
+npx supabase functions delete lecteur-youtube --project-ref uvsxteuhqqfgbmdgabfo
 ```
-
-Le faux backend d'`e2e/` sert la vraie page sous `/lecteur-reel/` et un
-relais d'essai sous `/lecteur/`, où `ESSAI_LECTEUR=pret|noir|refus|muet|absent`
-force chacun des scénarios sans dépendre du réseau.

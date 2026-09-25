@@ -5,15 +5,18 @@
 // sinon le test de fumée valide une application qui ne correspond plus
 // à sa base.
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const SPORTS = ['foot', 'basket', 'tennis', 'rugby', 'nat'];
 const NOMS = ['Kylian Benga', 'Aminata Diallo', 'Karim Benzaoui', 'Sophie Martin', 'Lucas Mendes'];
 const CLUBS = ['AS Bordeaux U19', 'Stade Rennais', 'ASVEL U21', 'CN Marseille', 'FC Nantes'];
 const NIVEAUX_AUTEUR = ['amateur', 'senior_amateur', 'young_pro', 'senior_semi_pro', 'senior_pro'];
-// Vraies vidéos YouTube pour que les miniatures existent réellement.
-const YT = ['dQw4w9WgXcQ', '9bZkp7q19f0', 'kJQP7kiw5Fk', 'JGwWNGJdvx8', 'OPf0YbXqDm0'];
+// Les fichiers du fil sont servis par ce faux serveur lui-même (/media/).
+const ORIGINE = 'http://127.0.0.1:8901';
+// Une ligne du fil est un ancien lien YouTube, sans fichier : l'application
+// doit l'écarter. C'est la forme qu'ont encore les vidéos publiées avant le
+// retrait de YouTube.
+const INDEX_ANCIEN_YOUTUBE = 2;
 
 // ── Référentiels ───────────────────────────────────────────────────
 // Les mêmes identifiants que la base réelle, en plus court.
@@ -77,22 +80,16 @@ const feed = Array.from({ length: 60 }, (_, i) => {
   return {
     id: `00000000-0000-7000-8000-${String(i).padStart(12, '0')}`,
     user_id: `00000000-0000-7000-8000-${String(900 + (i % 5)).padStart(12, '0')}`,
-    title: `Highlights saison 2026 — action ${i + 1}`,
+    title: i === INDEX_ANCIEN_YOUTUBE ? 'Ancien lien YouTube' : `Highlights saison 2026 — action ${i + 1}`,
     description: 'Compilation de mes meilleures actions de la saison.',
     sport,
     position: poste.label,
     position_id: poste.id,
     level: ['amateur', 'semi_pro', 'pro', 'entrainement'][i % 4],
     video_type: i % 3 === 0 ? 'training' : 'match',
-    // Les trois formes de lien qu'on reçoit en vrai, en alternance : un Short
-    // publié depuis le téléphone restait illisible faute d'être reconnu.
-    youtube_url: [
-      `https://www.youtube.com/watch?v=${YT[i % YT.length]}`,
-      `https://youtube.com/shorts/${YT[i % YT.length]}?si=partage`,
-      `https://youtu.be/${YT[i % YT.length]}`,
-    ][i % 3],
-    video_url: null,
-    thumbnail_url: null,
+    youtube_url: i === INDEX_ANCIEN_YOUTUBE ? 'https://youtube.com/shorts/9O2sPKYRbKo' : null,
+    video_url: i === INDEX_ANCIEN_YOUTUBE ? null : `${ORIGINE}/media/video-${i}.mp4`,
+    thumbnail_url: i === INDEX_ANCIEN_YOUTUBE ? null : `${ORIGINE}/media/miniature-${i}.svg`,
     duration_seconds: 45 + (i % 120),
     views: 1000 + i * 137,
     likes_count: 42 + i * 3,
@@ -208,50 +205,16 @@ createServer((req, res) => {
     };
     if (req.method === 'OPTIONS') return envoyer(200, {});
 
-    // ── La vraie page relais, servie telle quelle ──
-    // Ici l'API YouTube est hors d'atteinte : elle doit répondre
-    // « api-injoignable », et l'application retomber sur l'iframe directe.
-    if (u.pathname === '/lecteur-reel/') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      return res.end(readFileSync(new URL('../public/lecteur-youtube/index.html', import.meta.url)));
+    // ── Fichiers du fil ──
+    // Miniature : un simple rectangle. Vidéo : une réponse vide — le test
+    // vérifie l'affichage des cartes, pas la lecture.
+    if (u.pathname.startsWith('/media/miniature-')) {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Access-Control-Allow-Origin': '*' });
+      return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="9" height="16"><rect width="9" height="16" fill="#16213A"/></svg>');
     }
-
-    // ── Relais d'essai du lecteur YouTube ──
-    // Reproduit le contrat de la page relais (public/lecteur-youtube/) :
-    // une page qui renvoie à son parent, par postMessage, l'issue de la
-    // lecture. On rejoue le scénario demandé par ESSAI_LECTEUR ou `?essai=`
-    // — ce qui permet de vérifier chaque branche de l'application sans
-    // dépendre du réseau. Pointer VITE_LECTEUR_YOUTUBE_URL sur /lecteur/.
-    if (u.pathname === '/lecteur/') {
-      const scenario = process.env.ESSAI_LECTEUR || u.searchParams.get('essai') || 'pret';
-      // « absent » : la fonction n'est pas déployée. Aucun message ne part
-      // jamais, et c'est le minuteur de secours de l'application qui doit
-      // reprendre la main.
-      if (scenario === 'absent') { res.writeHead(404); return res.end('non'); }
-      // Chaque scénario est une suite de messages, envoyés dans l'ordre.
-      const suites = {
-        // Le lecteur démarre : prêt, puis lecture en cours.
-        pret: [{ type: 'pret' }, { type: 'etat', valeur: 1 }],
-        // Prêt mais jamais démarré : le cas « rectangle noir sans erreur »,
-        // celui que produit un iOS qui refuse le démarrage automatique.
-        noir: [{ type: 'pret' }, { type: 'etat', valeur: -1 }],
-        refus: [{ type: 'erreur', code: 150 }],
-        muet: [{ type: 'api-injoignable' }],
-      };
-      const suite = suites[scenario] || suites.pret;
-      res.writeHead(200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
-      });
-      return res.end(`<!doctype html><meta charset="utf-8">
-<body style="margin:0;background:#000;color:#666;font:12px sans-serif">relais d'essai</body>
-<script>
-  var suite = ${JSON.stringify(suite)};
-  suite.forEach(function (m, i) {
-    m.source = 'lecteur-youtube';
-    setTimeout(function () { parent.postMessage(m, '*'); }, 120 + i * 150);
-  });
-</script>`);
+    if (u.pathname.startsWith('/media/video-')) {
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Access-Control-Allow-Origin': '*' });
+      return res.end();
     }
 
     // ── Auth ──

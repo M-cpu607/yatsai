@@ -831,230 +831,18 @@ function isSeasonReminderWindow() {
   return (m === 8) || (m === 9 && d <= 15);
 }
 
-// ─── Helpers source vidéo (YouTube OU fichier uploadé) ───────────
-// Toutes les formes de lien YouTube qu'on rencontre en pratique :
-// watch?v=, youtu.be/, shorts/, embed/, live/, v/ — sur www., m. (le
-// partage depuis le téléphone) ou music. Seule source de vérité : la
-// validation à la publication s'appuie dessus, pour qu'un lien accepté soit
-// toujours un lien qu'on sait lire. Avant, un Short passait la validation
-// puis ne se lisait jamais, faute d'identifiant extrait.
-function getYouTubeIdFromUrl(url) {
-  const brut = url?.trim();
-  if (!brut) return null;
-  let u;
-  try { u = new URL(/^https?:\/\//i.test(brut) ? brut : `https://${brut}`); } catch { return null; }
-  const hote = u.hostname.toLowerCase().replace(/^(www|m|music)\./, '');
-  let id = null;
-  if (hote === 'youtu.be') {
-    id = u.pathname.split('/')[1];
-  } else if (hote === 'youtube.com' || hote === 'youtube-nocookie.com') {
-    id = u.searchParams.get('v');
-    if (!id) {
-      const [, section, suite] = u.pathname.split('/');
-      if (['shorts', 'embed', 'live', 'v', 'e'].includes(section)) id = suite;
-    }
-  }
-  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-}
+// ─── Source vidéo ─────────────────────────────────────────────────
+// Yatsai ne lit plus que les vidéos filmées ou importées dans l'app. Les
+// liens YouTube ont été retirés : dans l'application iOS, YouTube refuse
+// de jouer ses vidéos intégrées (« erreur 153 ») faute d'adresse https, et
+// le contournement exigeait une page relais hébergée à part. Une vidéo
+// sans fichier (un ancien lien YouTube) n'est simplement plus affichée.
 function isUploadedVideo(data) {
-  return !!data?.video_url && !data?.youtube_url;
-}
-
-// ═══ LECTURE YOUTUBE ═══════════════════════════════════════════════
-// Une iframe YouTube qui refuse de jouer reste noire sans rien dire : ni
-// l'application ni l'utilisateur n'apprennent pourquoi. Deux causes très
-// différentes produisent ce même écran et appellent deux réponses
-// opposées — la vidéo interdit l'intégration (rien à corriger chez nous),
-// ou c'est la page qui l'héberge que YouTube rejette.
-//
-// D'où le relais : une page servie en https (public/lecteur-youtube/),
-// qui monte le lecteur via l'API officielle — la seule voie qui remonte un
-// code d'erreur — et nous le renvoie par postMessage. Servie en https, elle
-// donne aussi au lecteur le référent que capacitor://localhost ne fournit
-// pas, faute de quoi YouTube répond « erreur 153 » dans l'app iOS.
-//
-// Elle vit avec le site sur Netlify, pas chez Supabase : fonctions Edge et
-// Storage y réécrivent tout HTML en text/plain, et le script ne tourne pas.
-// Si elle ne répond pas, le minuteur de secours rend l'iframe directe.
-//
-// Il sert sur toutes les plateformes, et pas seulement dans l'application
-// empaquetée : une seule voie à raisonner, et le message clair profite
-// aussi au web. S'il ne répond pas du tout, on retombe sur l'iframe
-// directe — le diagnostic ne doit jamais rendre la lecture pire.
-
-const DELAI_SECOURS_MS = 9000;
-
-// Fixé au démarrage de l'application, pas à chaque rendu : l'adresse du
-// relais doit rester stable tant que l'app tourne, sinon l'iframe se
-// rechargerait en pleine lecture. Il change d'un lancement à l'autre, ce
-// qui suffit à écarter une page gardée en cache par la WebView.
-const SESSION = Date.now().toString(36);
-
-// La page relais fait partie du site (public/lecteur-youtube/) : Netlify la
-// sert avec le reste, à chaque déploiement de main. Surchargeable par
-// VITE_LECTEUR_YOUTUBE_URL, par exemple pour la pointer ailleurs en test.
-const RELAIS_YOUTUBE_PAR_DEFAUT = 'https://preeminent-dasik-ba7091.netlify.app/lecteur-youtube/';
-
-function urlRelaisYouTube(id) {
-  const base = import.meta.env.VITE_LECTEUR_YOUTUBE_URL || RELAIS_YOUTUBE_PAR_DEFAUT;
-  const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}v=${encodeURIComponent(id)}&s=${SESSION}`;
-}
-
-function urlEmbedYouTube(id) {
-  return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
-}
-
-function ouvrirSurYouTube(id) {
-  const url = `https://www.youtube.com/watch?v=${id}`;
-  // Deux voies, parce qu'aucune n'est garantie partout : `window.open` dans
-  // la WebView de Capacitor, qui passe la main au navigateur du système, et
-  // à défaut une navigation directe, que Capacitor intercepte pour ouvrir
-  // le lien à l'extérieur sans déplacer l'application.
-  try {
-    if (window.open(url, '_blank', 'noopener')) return;
-  } catch { /* on tente l'autre voie */ }
-  try { window.location.href = url; } catch { /* rien de plus à faire */ }
-}
-
-// Les codes de l'API YouTube, traduits en ce que l'utilisateur peut en faire.
-const RAISONS_YOUTUBE = {
-  2: "Le lien de cette vidéo n'est pas valide.",
-  5: "Le lecteur YouTube n'a pas pu démarrer sur cet appareil.",
-  100: 'Cette vidéo a été supprimée, ou elle est privée.',
-  101: "Le propriétaire de cette vidéo n'autorise pas sa lecture en dehors de YouTube.",
-  150: "Le propriétaire de cette vidéo n'autorise pas sa lecture en dehors de YouTube.",
-  153: "YouTube a refusé la page qui héberge le lecteur.",
-};
-
-function LecteurYouTube({ youtubeId, titre }) {
-  const relais = urlRelaisYouTube(youtubeId);
-  const cadreRef = useRef(null);
-  // L'identifiant voyage avec l'issue : changer de vidéo la périme
-  // d'elle-même, sans remise à zéro dans un effet.
-  const [issue, setIssue] = useState(null);
-
-  useEffect(() => {
-    if (!relais) return undefined;
-
-    const ecouter = (e) => {
-      // Plusieurs cartes peuvent être montées en même temps : on ne retient
-      // que les messages venus de NOTRE iframe.
-      if (e.source !== cadreRef.current?.contentWindow) return;
-      const m = e.data;
-      if (!m || m.source !== 'lecteur-youtube') return;
-
-      // Rapport d'état du lecteur : informatif, il ne décide de rien. On le
-      // traite avant tout le reste, car il arrive en flux et ne doit ni
-      // désarmer le minuteur ni être pris pour un échec.
-      if (m.type === 'etat') {
-        setIssue(prec => (prec?.pour === youtubeId && prec.etat === 'pret'
-          ? { ...prec, lecture: m.valeur, aJoue: prec.aJoue || m.valeur === 1 || m.valeur === 3 }
-          : prec));
-        return;
-      }
-
-      clearTimeout(secours);
-      if (m.type === 'pret') setIssue({ pour: youtubeId, etat: 'pret' });
-      else if (m.type === 'erreur') setIssue({ pour: youtubeId, etat: 'refus', code: m.code ?? null });
-      else if (m.type === 'silence' || m.type === 'api-injoignable') {
-        // Ce n'est pas la vidéo qui est en cause : on tente la voie directe.
-        setIssue({ pour: youtubeId, etat: 'repli', motif: m.type });
-      }
-    };
-
-    // La page relais ne peut pas signaler sa propre absence : si elle ne se
-    // charge pas du tout, aucun message n'arrive jamais.
-    const secours = setTimeout(
-      () => setIssue({ pour: youtubeId, etat: 'repli', motif: 'sans-reponse' }),
-      DELAI_SECOURS_MS,
-    );
-
-    window.addEventListener('message', ecouter);
-    return () => {
-      clearTimeout(secours);
-      window.removeEventListener('message', ecouter);
-    };
-  }, [relais, youtubeId]);
-
-  const courant = issue?.pour === youtubeId ? issue : null;
-  const etat = courant?.etat ?? (relais ? 'attente' : 'direct');
-
-  if (etat === 'refus') {
-    const raison = RAISONS_YOUTUBE[courant.code]
-      || "Cette vidéo n'a pas pu être lue ici.";
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
-        style={{ backgroundColor: '#000' }}>
-        <AlertTriangle size={28} strokeWidth={2} style={{ color: C.textMute }} />
-        <p className="text-sm" style={{ color: C.textDim }}>{raison}</p>
-        <button type="button"
-          onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
-          className="px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-          style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
-          <Play size={13} strokeWidth={2.6} /> Regarder sur YouTube
-        </button>
-        {courant.code != null && (
-          <span className="text-[10px] font-mono" style={{ color: C.textMute }}>
-            code {courant.code}
-          </span>
-        )}
-      </div>
-    );
-  }
-
-  // « Prêt » ne veut pas dire « joue » : iOS peut refuser le démarrage.
-  // Tant que le lecteur n'a pas annoncé une lecture ou une mise en tampon,
-  // on considère que l'utilisateur regarde encore un rectangle noir.
-  const joue = !!courant?.aJoue;
-  const source = etat === 'attente' || etat === 'pret' ? relais : urlEmbedYouTube(youtubeId);
-  return (
-    <>
-      <iframe
-        ref={cadreRef}
-        key={source}
-        src={source}
-        title={titre}
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowFullScreen
-        className="absolute inset-0 w-full h-full"
-        style={{ border: 0 }} />
-
-      {/* Un lecteur qui ne démarre pas laisse un rectangle noir muet. Tant
-          qu'il n'a pas confirmé qu'il joue — « prêt » ne suffit pas, iOS
-          peut refuser le démarrage — on dit où on en est et on laisse une
-          sortie. Le noir silencieux ne doit jamais être une réponse. */}
-      {relais && !joue && (
-        // Au-dessus de la vidéo, sous la loupe et les chips de filtre : le
-        // bas de la carte est déjà pris par les infos et la barre du bas.
-        <div className="absolute left-4 right-4 top-28 z-10 flex items-center justify-between gap-3 pointer-events-none">
-          <span className="text-[10px] font-mono" style={{ color: 'rgba(255,255,255,0.45)' }}>
-            {etat === 'attente' ? 'lecteur : démarrage…'
-              : etat === 'pret' ? `lecteur : prêt (état ${courant?.lecture ?? '—'})`
-                : etat === 'repli' ? `lecteur : voie directe (${courant?.motif ?? '?'})`
-                  : 'lecteur : voie directe'}
-          </span>
-          <button type="button"
-            onClick={(e) => { e.stopPropagation(); ouvrirSurYouTube(youtubeId); }}
-            className="pointer-events-auto px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 flex-shrink-0"
-            style={{
-              backgroundColor: 'rgba(8,15,32,0.8)', color: C.text,
-              border: '1px solid rgba(255,255,255,0.18)',
-            }}>
-            <Play size={10} strokeWidth={2.6} /> YouTube
-          </button>
-        </div>
-      )}
-    </>
-  );
+  return !!data?.video_url;
 }
 
 function getVideoThumb(data) {
-  // Priorité : thumbnail_url explicite > YouTube hqdefault > null (le composant gérera le fallback)
-  if (data?.thumbnail_url) return data.thumbnail_url;
-  const yId = getYouTubeIdFromUrl(data?.youtube_url);
-  if (yId) return `https://img.youtube.com/vi/${yId}/hqdefault.jpg`;
-  return null;
+  return data?.thumbnail_url || null;
 }
 
 // Extrait une frame d'un fichier vidéo local et retourne une image + un blob JPEG
@@ -1401,10 +1189,8 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
 
   const videoRef = useRef(null);
   const wrapRef = useRef(null);
-  const youtubeId = getYouTubeIdFromUrl(data.youtube_url);
-  const isUpload = !youtubeId && !!data.video_url;
+  const isUpload = !!data.video_url;
   const [isPaused, setIsPaused] = useState(false);
-  const [ytOpen, setYtOpen] = useState(false);
   const [fsOpen, setFsOpen] = useState(false);   // lecteur plein écran paysage ouvert ?
   const [fsStart, setFsStart] = useState(0);      // instant de reprise en plein écran
 
@@ -1497,28 +1283,13 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
               </button>
             )}
           </>
-        ) : ytOpen && youtubeId ? (
-          // Vidéo YouTube : lecteur intégré DANS la carte (pas d'overlay plein écran)
-          <LecteurYouTube youtubeId={youtubeId} titre={data.title} />
         ) : (
-          // Miniature YouTube : tap = lecture intégrée dans la carte
-          <button onClick={() => { setYtOpen(true); markViewed(); }} className="absolute inset-0 w-full h-full">
-            {thumbnailUrl ? (
-              <img loading="lazy" decoding="async" src={thumbnailUrl} alt={data.title}
-                className="absolute inset-0 w-full h-full object-cover" />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center"
-                style={{ backgroundColor: C.surface }}>
-                <span style={{ color: C.textDim }}>Vidéo</span>
-              </div>
-            )}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-20 h-20 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
-                <Play size={32} fill={C.bg} stroke={C.bg} className="ml-1" />
-              </div>
-            </div>
-          </button>
+          // Pas de fichier vidéo — un ancien lien YouTube. Le fil les écarte
+          // déjà ; cette branche n'est qu'un filet de sécurité.
+          <div className="absolute inset-0 flex items-center justify-center"
+            style={{ backgroundColor: C.surface }}>
+            <span className="text-sm" style={{ color: C.textDim }}>Vidéo indisponible</span>
+          </div>
         )}
 
         {/* Overlay gradient (laisse passer les clics vers la vidéo) */}
@@ -1708,10 +1479,9 @@ function SupabaseVideoCard({ data, muted, onToggleMute, engagement, onLike, onOp
   );
 }
 
-// ─── LECTEUR VIDÉO en overlay (YouTube iframe OU fichier natif) ───
-function YouTubePlayer({ video, onClose }) {
-  const youtubeId = getYouTubeIdFromUrl(video.youtube_url);
-  const isUpload = !youtubeId && !!video.video_url;
+// ─── LECTEUR VIDÉO en overlay ─────────────────────────────────────
+function LecteurVideo({ video, onClose }) {
+  const isUpload = !!video.video_url;
   const vidRef = useRef(null);
 
   return (
@@ -1734,9 +1504,7 @@ function YouTubePlayer({ video, onClose }) {
 
       {/* Lecteur */}
       <div className="flex-1 flex items-center justify-center relative">
-        {youtubeId ? (
-          <LecteurYouTube youtubeId={youtubeId} titre={video.title} />
-        ) : isUpload ? (
+        {isUpload ? (
           <video
             ref={vidRef}
             src={video.video_url}
@@ -1956,8 +1724,8 @@ function ShareModal({ video, currentUserId, onClose, onShare, isOwnVideo, onRepo
   };
 
   const handleNativeShare = async () => {
-    // Lien partageable : YouTube si dispo, sinon URL publique de la vidéo uploadée
-    const url = video.youtube_url || video.video_url;
+    // Lien partageable : l'URL publique de la vidéo
+    const url = video.video_url;
     const title = video.title;
     const text = `Regarde cette vidéo sur Yatsai : ${title}`;
 
@@ -2046,7 +1814,7 @@ function ShareModal({ video, currentUserId, onClose, onShare, isOwnVideo, onRepo
               <p className="text-[11px] mb-1.5" style={{ color: C.textDim }}>
                 Sélectionne et copie le lien manuellement :
               </p>
-              <input type="text" readOnly value={video.youtube_url || video.video_url || ''}
+              <input type="text" readOnly value={video.video_url || ''}
                 onFocus={(e) => e.target.select()}
                 className="w-full px-3 py-2 rounded-lg text-xs outline-none font-mono"
                 style={{ backgroundColor: C.surface, color: C.gold, border: `1px solid ${C.borderGold}` }} />
@@ -2344,7 +2112,7 @@ function seekVideoTo(v, t) {
 
 
 // ═══ PUBLISH (avec tracker conservé) ══════════════════════════════
-// ─── PUBLISH (Upload direct OU lien YouTube) ──────────────────────
+// ─── PUBLISH (vidéo filmée ou importée) ──────────────────────────
 // Éditeur de flèche de suivi (avant publication) : l'athlète met la vidéo en
 // pause et tape sur sa tête à plusieurs moments. La flèche suit en interpolant.
 // Extrait un patch (modèle) centré sur (cx,cy) dans une frame en niveaux de gris.
@@ -2814,8 +2582,6 @@ function BlocPublication({ titre, resume, repliable, defautOuvert = true, childr
 }
 
 function PublishView({ userProfile, setTab }) {
-  const [mode, setMode] = useState('upload'); // 'upload' | 'youtube'
-  const [youtubeUrl, setYoutubeUrl] = useState('');
   // Upload direct
   const [videoFile, setVideoFile] = useState(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
@@ -2867,7 +2633,6 @@ function PublishView({ userProfile, setTab }) {
   }, [videoPreviewUrl]);
 
   // Valide = on sait en extraire un identifiant, rien de moins.
-  const isValidYouTubeUrl = (url) => !!getYouTubeIdFromUrl(url);
 
   // Limite 200 Mo (cohérent avec le bucket)
   const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
@@ -2969,7 +2734,6 @@ function PublishView({ userProfile, setTab }) {
       position_id: posteChoisi,
       description: description.trim() || null,
       video_type: videoType,
-      youtube_url: extra.youtube_url ?? null,
       video_url: extra.video_url ?? null,
       thumbnail_url: extra.thumbnail_url ?? null,
       duration_seconds: extra.duration_seconds ?? null,
@@ -3001,26 +2765,21 @@ function PublishView({ userProfile, setTab }) {
   // needsReview = true quand l'utilisateur force la publication malgré le refus IA.
   const doPublish = async (needsReview = false) => {
     setLoading(true);
-    let extra = {};
-    if (mode === 'upload') {
-      const uploaded = await uploadToStorage();
-      if (!uploaded || !uploaded.video_url) { setLoading(false); return; }
-      extra = {
-        video_url: uploaded.video_url,
-        thumbnail_url: uploaded.thumbnail_url,
-        duration_seconds: videoDuration ? Math.round(videoDuration) : null,
-      };
-    } else {
-      extra = { youtube_url: youtubeUrl };
-    }
-    extra.needs_review = needsReview;
+    const uploaded = await uploadToStorage();
+    if (!uploaded || !uploaded.video_url) { setLoading(false); return; }
+    const extra = {
+      video_url: uploaded.video_url,
+      thumbnail_url: uploaded.thumbnail_url,
+      duration_seconds: videoDuration ? Math.round(videoDuration) : null,
+      needs_review: needsReview,
+    };
     const ok = await insertVideoRow(extra);
     setLoading(false);
     if (!ok) return;
     setSuccess(true);
     setTimeout(() => {
       setSuccess(false);
-      setYoutubeUrl(''); setTitle(''); setPositionId(null); setDescription('');
+      setTitle(''); setPositionId(null); setDescription('');
       setAgeCategoryId(null); setSeasonId(null); setMatchDate('');
       setOpponentLevelId(null); setJerseyNumber('');
       setVideoType(null);
@@ -3043,11 +2802,7 @@ function PublishView({ userProfile, setTab }) {
       setError('Choisis le type de la vidéo (Match ou Entraînement / divertissement).');
       return;
     }
-    if (mode === 'youtube' && !isValidYouTubeUrl(youtubeUrl)) {
-      setError('Lien YouTube non reconnu. Formats acceptés : youtube.com/watch?v=…, youtu.be/…, youtube.com/shorts/…');
-      return;
-    }
-    if (mode === 'upload' && !videoFile) {
+    if (!videoFile) {
       setError('Sélectionne ou filme une vidéo avant de publier.');
       return;
     }
@@ -3086,30 +2841,9 @@ function PublishView({ userProfile, setTab }) {
       </div>
 
       <form onSubmit={handlePublish} className="px-5 space-y-4">
-        <BlocPublication titre="La vidéo" resume="Le fichier à envoyer, ou le lien YouTube.">
-        {/* Sélecteur de mode : Uploader / YouTube */}
-        <div className="grid grid-cols-2 gap-2 p-1 rounded-xl"
-          style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-          {[
-            { id: 'upload', label: 'Filmer / Uploader', icon: <Video size={14} /> },
-            { id: 'youtube', label: 'Lien YouTube', icon: <Play size={14} /> },
-          ].map(opt => (
-            <button key={opt.id} type="button"
-              onClick={() => { setMode(opt.id); setError(''); }}
-              className="py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
-              style={{
-                backgroundColor: mode === opt.id ? C.text : 'transparent',
-                color: mode === opt.id ? C.bg : C.textDim,
-              }}>
-              {opt.icon}
-              {opt.label}
-            </button>
-          ))}
-        </div>
-
-        {/* MODE UPLOAD */}
-        {mode === 'upload' && (
-          <div>
+        <BlocPublication titre="La vidéo" resume="Filme-la, ou choisis-la sur ton téléphone.">
+        {/* Vidéo filmée ou importée — le seul mode de publication */}
+        <div>
             <LibelleChamp icon={Video} obligatoire>Vidéo (max 200 Mo)</LibelleChamp>
 
             {/* Inputs cachés */}
@@ -3176,10 +2910,9 @@ function PublishView({ userProfile, setTab }) {
               </div>
             )}
           </div>
-        )}
 
-        {/* FLÈCHE DE SUIVI (upload uniquement, quand une vidéo est choisie) */}
-        {mode === 'upload' && videoFile && videoPreviewUrl && (
+        {/* FLÈCHE DE SUIVI (quand une vidéo est choisie) */}
+        {videoFile && videoPreviewUrl && (
           <div className="rounded-xl p-3" style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -3214,17 +2947,6 @@ function PublishView({ userProfile, setTab }) {
                   sizeScale={trackingSize} onSizeChange={setTrackingSize} />
               </div>
             )}
-          </div>
-        )}
-
-        {/* MODE YOUTUBE */}
-        {mode === 'youtube' && (
-          <div>
-            <LibelleChamp icon={Play} obligatoire>Lien YouTube</LibelleChamp>
-            <input type="url" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)}
-              placeholder="https://youtube.com/watch?v=..."
-              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
           </div>
         )}
 
@@ -3453,7 +3175,7 @@ function PublishView({ userProfile, setTab }) {
           style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
           {loading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
           {loading
-            ? (mode === 'upload' && uploadProgress > 0 && uploadProgress < 100
+            ? (uploadProgress > 0 && uploadProgress < 100
                 ? `Upload ${uploadProgress}%…`
                 : 'Publication…')
             : 'Publier ma vidéo'}
@@ -3614,6 +3336,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
           .order('created_at', { ascending: false }).limit(80),
         supabase.from('videos')
           .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, is_recruiter)`)
+          .not('video_url', 'is', null)
           .order('created_at', { ascending: false }).limit(150),
       ]);
       if (cancel) return;
@@ -3694,7 +3417,6 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
     levels: f.levels.includes(lv) ? f.levels.filter(x => x !== lv) : [...f.levels, lv],
   }));
 
-  const getYouTubeId = getYouTubeIdFromUrl;
 
   return (
     <>
@@ -3934,10 +3656,7 @@ function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
               ) : (
                 <div className="grid grid-cols-2 gap-2 mb-5">
                   {filteredVideos.map(v => {
-                    const thumb = v.thumbnail_url || (() => {
-                      const yId = getYouTubeId(v.youtube_url);
-                      return yId ? `https://img.youtube.com/vi/${yId}/hqdefault.jpg` : null;
-                    })();
+                    const thumb = v.thumbnail_url;
                     return (
                       <button key={v.id} onClick={() => onPlayVideo?.(v)}
                         className="rounded-xl overflow-hidden text-left fade-in"
@@ -4413,13 +4132,13 @@ const KB_ENTRIES = [
     answer: ({ isAthlete } = {}) => isAthlete
       ? ("Pour publier une vidéo :\n\n" +
          "1. Tape sur le bouton ➕ doré au centre de la barre du bas\n" +
-         "2. Colle l'URL YouTube de ta vidéo ou filme/upload une vidéo directement\n" +
+         "2. Filme ta vidéo, ou choisis-la sur ton téléphone\n" +
          "3. Donne un titre, choisis ton sport, ton poste, le type (match ou entraînement) et une description\n" +
          "4. Tape « Publier ma vidéo »\n\n" +
          "Ta vidéo apparaîtra immédiatement dans le feed des autres utilisateurs et sur ton profil. Tu peux la supprimer à tout moment depuis ton profil (bouton ⋮ sur la miniature).")
       : ("La publication de vidéos est réservée aux athlètes. Voici comment ils alimentent le feed que tu peux explorer :\n\n" +
          "1. Ils tapent sur le bouton ➕ doré au centre de la barre du bas\n" +
-         "2. Ils collent une URL YouTube ou uploadent une vidéo directement\n" +
+         "2. Ils filment leur vidéo, ou la choisissent sur leur téléphone\n" +
          "3. Ils renseignent titre, sport, poste, type (match ou entraînement) et description — autant d'infos qui te permettent de les retrouver depuis Recherche."),
   },
   {
@@ -4619,7 +4338,8 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
           .select('id, full_name, role, is_recruiter, gender, age, nationality, sport, position, club, level, country, region, city, verified, avatar_url, level_proof_status, is_private, hide_location')
           .limit(10000),
         supabase.from('videos')
-          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, youtube_url, video_url, created_at')
+          .select('id, user_id, title, description, sport, position, video_type, thumbnail_url, video_url, created_at')
+          .not('video_url', 'is', null)
           .limit(10000),
         supabase.from('signed_posts').select('id, athlete_id, caption').limit(10000),
       ]);
@@ -5117,6 +4837,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       const { data, error } = await supabase
         .from('videos')
         .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, age, gender, is_recruiter, city, region, country)`)
+        .not('video_url', 'is', null)
         .order('created_at', { ascending: false })
         .limit(200);
       if (cancel) return;
@@ -5610,10 +5331,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         ) : (
           <div className="px-4 grid grid-cols-2 gap-2">
             {filteredVideos.map(v => {
-              const thumb = v.thumbnail_url || (() => {
-                const yId = getYouTubeIdFromUrl(v.youtube_url);
-                return yId ? `https://img.youtube.com/vi/${yId}/hqdefault.jpg` : null;
-              })();
+              const thumb = v.thumbnail_url;
               return (
                 <button key={v.id} onClick={() => onPlayVideo?.(v)}
                   className="rounded-xl overflow-hidden text-left fade-in"
@@ -5811,8 +5529,9 @@ function CandidatureModal({ currentUser, onClose, onLoadAlreadyApplied, onSend }
     (async () => {
       const { data, error } = await supabase
         .from('videos')
-        .select('id, title, youtube_url, video_url, thumbnail_url, sport, video_type, created_at')
+        .select('id, title, video_url, thumbnail_url, sport, video_type, created_at')
         .eq('user_id', currentUser.id)
+        .not('video_url', 'is', null)
         .order('created_at', { ascending: false });
       if (cancel) return;
       if (error) console.error('Erreur chargement mes vidéos:', error);
@@ -10213,7 +9932,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         // Pas de vidéos pour les recruteurs (ils ne peuvent pas publier)
         isRecruiter
           ? Promise.resolve({ data: [] })
-          : supabase.from('videos').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }),
+          : supabase.from('videos').select('*').eq('user_id', profile.id).not('video_url', 'is', null).order('created_at', { ascending: false }),
         onLoadFollowCounts ? onLoadFollowCounts(profile.id) : Promise.resolve({ followers: 0, following: 0 }),
         isRecruiter && onLoadSignedCount ? onLoadSignedCount(profile.id) : Promise.resolve(0),
       ]);
@@ -10578,7 +10297,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       </div>
 
       {playingVideo && (
-        <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
+        <LecteurVideo video={playingVideo} onClose={() => setPlayingVideo(null)} />
       )}
     </div>
   );
@@ -11922,6 +11641,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
       const [c, vRes] = await Promise.all([
         onLoadFollowCounts ? onLoadFollowCounts(userProfile.id) : Promise.resolve({ followers: 0, following: 0 }),
         supabase.from('videos').select('*').eq('user_id', userProfile.id)
+          .not('video_url', 'is', null)
           .order('created_at', { ascending: false }),
       ]);
       if (cancel) return;
@@ -12086,7 +11806,7 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
       </div>{/* fin px-4 */}
 
       {playingVideo && (
-        <YouTubePlayer video={playingVideo} onClose={() => setPlayingVideo(null)} />
+        <LecteurVideo video={playingVideo} onClose={() => setPlayingVideo(null)} />
       )}
 
       {/* Édition de la flèche de suivi sur une vidéo déjà publiée */}
@@ -12828,7 +12548,10 @@ export default function App() {
     if (error) { console.error('Erreur chargement du fil:', error); return; }
 
     const lignes = data || [];
-    const page = lignes.map(adapterLigneFeed);
+    // Un ancien lien YouTube n'a pas de fichier : on l'écarte. Le curseur et
+    // la détection de fin restent calculés sur la page brute, sans quoi une
+    // page composée uniquement de liens YouTube arrêterait le défilement.
+    const page = lignes.filter(r => r.video_url).map(adapterLigneFeed);
     setEngagement(prev => ({ ...prev, ...engagementDepuisFeed(lignes) }));
 
     if (reprise) {
@@ -13504,13 +13227,14 @@ export default function App() {
       .from('saved_videos')
       .select(`
         video_id, created_at,
-        video:videos!saved_videos_video_id_fkey(id, title, description, youtube_url, video_url, thumbnail_url, sport, position, video_type, user_id,
+        video:videos!saved_videos_video_id_fkey(id, title, description, video_url, thumbnail_url, sport, position, video_type, user_id,
           profiles!videos_user_id_fkey(id, full_name, avatar_url))
       `)
       .eq('user_id', uid)
       .order('created_at', { ascending: false });
     if (error) { console.error('Erreur loadSavedVideos:', error); return []; }
-    return (data || []).map(r => r.video).filter(Boolean);
+    // Un ancien lien YouTube enregistré n'a pas de fichier : il ne s'affiche plus.
+    return (data || []).map(r => r.video).filter(v => v?.video_url);
   };
 
   // Mise à jour des liens externes (réseaux sociaux + apps fitness)
@@ -13703,11 +13427,11 @@ export default function App() {
     let attachedVideos = [];
     if (videoIds.length > 0) {
       const { data } = await supabase.from('videos')
-        .select('id, title, youtube_url, video_url').in('id', videoIds);
+        .select('id, title, video_url').in('id', videoIds);
       attachedVideos = data || [];
     }
     const videosBlock = attachedVideos.length === 0 ? '' :
-      `\n\n🎬 Vidéos jointes :\n` + attachedVideos.map(v => `• ${v.title || 'Vidéo'} — ${v.youtube_url || v.video_url}`).join('\n');
+      `\n\n🎬 Vidéos jointes :\n` + attachedVideos.map(v => `• ${v.title || 'Vidéo'} — ${v.video_url}`).join('\n');
 
     let sent = 0; let skipped = 0; const errors = [];
     for (const rid of recruiterIds) {
@@ -14473,7 +14197,7 @@ export default function App() {
 
       {/* Lecteur vidéo overlay — déclenché depuis la recherche du feed */}
       {searchPlayingVideo && (
-        <YouTubePlayer video={searchPlayingVideo} onClose={() => setSearchPlayingVideo(null)} />
+        <LecteurVideo video={searchPlayingVideo} onClose={() => setSearchPlayingVideo(null)} />
       )}
 
       {notifPanelOpen && (

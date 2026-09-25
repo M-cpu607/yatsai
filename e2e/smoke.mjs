@@ -93,33 +93,14 @@ const apres = await compter();
 ok('Défilement infini charge une page suivante', apres > avant, `${avant} → ${apres} cartes`);
 await page.screenshot({ path: `${SHOT}/3-scroll.png` });
 
-// Toutes les vidéos du faux fil sont YouTube, sous trois formes de lien
-// (watch?v=, shorts/, youtu.be/) : chacune doit avoir sa miniature. Une
-// carte sans miniature est un lien que l'application n'a pas su lire.
+// YouTube a été retiré : seules les vidéos filmées ou importées s'affichent.
+// Le faux fil contient un ancien lien YouTube, sans fichier : il ne doit
+// apparaître nulle part. Toutes les autres cartes ont leur miniature.
 {
-  const miniatures = await page.locator('img[src*="img.youtube.com"]').count();
-  ok('Liens YouTube reconnus sous toutes leurs formes, Shorts compris',
-     miniatures === apres, `${miniatures} miniatures pour ${apres} cartes`);
-}
-
-// ── 5 bis. Une vidéo YouTube passe par le relais https ──
-// L'iframe directe ne peut pas dire pourquoi elle reste noire ; le relais,
-// lui, renvoie l'issue de la lecture. On vérifie que c'est bien lui qui est
-// chargé — le faux backend joue le rôle de la page relais (/lecteur/).
-{
-  const vignette = page.locator('img[src*="img.youtube.com"]').first();
-  if (await vignette.count()) {
-    await vignette.evaluate(e => e.closest('div.snap-start')?.scrollIntoView());
-    await page.waitForTimeout(400);
-    await vignette.evaluate(e => e.closest('button')?.click());
-    await page.waitForTimeout(1200);
-    const sources = await page.locator('iframe').evaluateAll(l => l.map(f => f.getAttribute('src') || ''));
-    ok('Lecture YouTube passée par le relais https',
-       sources.some(s => s.includes('/lecteur/?v=')),
-       'le relais remonte le code d\'erreur, l\'iframe directe ne le peut pas');
-    await page.reload();
-    await page.waitForTimeout(3000);
-  }
+  const corpsFil = await page.textContent('body');
+  ok('Ancien lien YouTube écarté du fil', !corpsFil.includes('Ancien lien YouTube'));
+  const iframesYouTube = await page.locator('iframe[src*="youtube"]').count();
+  ok('Aucun lecteur YouTube dans le fil', iframesYouTube === 0, `${iframesYouTube} iframe(s)`);
 }
 
 // ── 6. Les référentiels alimentent le formulaire de publication ──
@@ -129,6 +110,9 @@ await page.waitForTimeout(1500);
 const avantOuverture = await page.locator('select').count();
 ok('Bloc « Le contexte » replié à l\'ouverture', avantOuverture < 3,
    `${avantOuverture} liste${avantOuverture > 1 ? 's' : ''} visible${avantOuverture > 1 ? 's' : ''} sur 5`);
+ok('Publication : plus d\'option YouTube',
+   !(await page.textContent('body')).includes('Lien YouTube'),
+   'seules les vidéos filmées ou importées se publient');
 await page.getByText('Le contexte').first().evaluate(e => e.click());
 await page.waitForTimeout(500);
 const listes = page.locator('select');
