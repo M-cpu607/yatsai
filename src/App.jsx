@@ -10052,31 +10052,16 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       <IdentiteProfil profile={profile} />
 
       <div className="px-4">
-        {/* Stats inline style X : 115 abonnements · 17 M abonnés */}
-        <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
-          <button onClick={() => onShowFollowList?.(profile.id, 'following')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.following}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnements</span>
-          </button>
-          <button onClick={() => onShowFollowList?.(profile.id, 'followers')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.followers}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnés</span>
-          </button>
-          {profile.is_recruiter ? (
-            <button onClick={() => onShowSignedAthletes?.(profile.id)}
-              className="active:opacity-60">
-              <strong style={{ color: C.gold }}>{signedCount}</strong>
-              <span className="ml-1" style={{ color: C.textDim }}>🏆 Signés</span>
-            </button>
-          ) : (
-            <span>
-              <strong style={{ color: C.text }}>{videos.length}</strong>
-              <span className="ml-1" style={{ color: C.textDim }}>Vidéos</span>
-            </span>
-          )}
-        </div>
+        {/* Sur le profil d'un athlète, ses abonnements n'aident pas à le
+            recruter : on n'affiche que ses abonnés et ses vidéos. */}
+        <CompteursProfil items={profile.is_recruiter ? [
+          { n: counts.following, un: 'abonnement', plusieurs: 'abonnements', onClick: () => onShowFollowList?.(profile.id, 'following') },
+          { n: counts.followers, un: 'abonné', plusieurs: 'abonnés', onClick: () => onShowFollowList?.(profile.id, 'followers') },
+          { n: signedCount, un: 'signé', plusieurs: 'signés', onClick: () => onShowSignedAthletes?.(profile.id) },
+        ] : [
+          { n: counts.followers, un: 'abonné', plusieurs: 'abonnés', onClick: () => onShowFollowList?.(profile.id, 'followers') },
+          { n: videos.length, un: 'vidéo', plusieurs: 'vidéos' },
+        ]} />
       </div>
 
       {/* Liens externes — recruteurs uniquement (les athlètes n'en affichent pas) */}
@@ -11590,6 +11575,28 @@ function IdentiteProfil({ profile, vuParSoi = false, extraPastilles = null }) {
   );
 }
 
+// Compteurs d'un profil. Un compteur à zéro n'apprend rien : il disparaît.
+// Et « 1 Vidéos » redevient « 1 vidéo ».
+function CompteursProfil({ items }) {
+  const visibles = items.filter(i => i && i.n > 0);
+  if (!visibles.length) return null;
+  return (
+    <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
+      {visibles.map(i => {
+        const contenu = (
+          <>
+            <strong style={{ color: C.text }}>{formatCount(i.n)}</strong>
+            <span className="ml-1" style={{ color: C.textDim }}>{i.n > 1 ? i.plusieurs : i.un}</span>
+          </>
+        );
+        return i.onClick
+          ? <button key={i.un} onClick={i.onClick} className="active:opacity-60">{contenu}</button>
+          : <span key={i.un}>{contenu}</span>;
+      })}
+    </div>
+  );
+}
+
 function EditableAvatar({ userProfile, onUpdateProfile, size = 88 }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -11722,23 +11729,11 @@ function ProfileView({ userProfile, userEmail, onLogout, onEdit, onShowFollowLis
       </>} />
 
       <div className="px-4">
-        {/* Stats inline style X */}
-        <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.following}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnements</span>
-          </button>
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'followers')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.followers}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnés</span>
-          </button>
-          <span>
-            <strong style={{ color: C.text }}>{videosCount}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Vidéos</span>
-          </span>
-        </div>
+        <CompteursProfil items={[
+          { n: counts.following, un: 'abonnement', plusieurs: 'abonnements', onClick: () => onShowFollowList?.(userProfile.id, 'following') },
+          { n: counts.followers, un: 'abonné', plusieurs: 'abonnés', onClick: () => onShowFollowList?.(userProfile.id, 'followers') },
+          { n: videosCount, un: 'vidéo', plusieurs: 'vidéos' },
+        ]} />
       </div>
 
       <div className="px-4 mt-4">
@@ -12046,19 +12041,10 @@ function ObserverProfileView({ userProfile, onEdit, onShowFollowList, onLoadFoll
       <IdentiteProfil profile={userProfile} vuParSoi />
 
       <div className="px-4">
-        {/* Stats inline */}
-        <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.following}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnements</span>
-          </button>
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'followers')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.followers}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnés</span>
-          </button>
-        </div>
+        <CompteursProfil items={[
+          { n: counts.following, un: 'abonnement', plusieurs: 'abonnements', onClick: () => onShowFollowList?.(userProfile.id, 'following') },
+          { n: counts.followers, un: 'abonné', plusieurs: 'abonnés', onClick: () => onShowFollowList?.(userProfile.id, 'followers') },
+        ]} />
       </div>
 
       <div className="px-4 mt-6">
@@ -12180,24 +12166,11 @@ function RecruiterProfileView({ userProfile, userEmail, onLogout, onEdit, onShow
       <IdentiteProfil profile={userProfile} vuParSoi />
 
       <div className="px-4">
-        {/* Stats inline style X */}
-        <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'following')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.following}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnements</span>
-          </button>
-          <button onClick={() => onShowFollowList?.(userProfile.id, 'followers')}
-            className="active:opacity-60">
-            <strong style={{ color: C.text }}>{counts.followers}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>Abonnés</span>
-          </button>
-          <button onClick={() => onShowSignedAthletes?.(userProfile.id)}
-            className="active:opacity-60">
-            <strong style={{ color: C.gold }}>{signedCount}</strong>
-            <span className="ml-1" style={{ color: C.textDim }}>🏆 Signés</span>
-          </button>
-        </div>
+        <CompteursProfil items={[
+          { n: counts.following, un: 'abonnement', plusieurs: 'abonnements', onClick: () => onShowFollowList?.(userProfile.id, 'following') },
+          { n: counts.followers, un: 'abonné', plusieurs: 'abonnés', onClick: () => onShowFollowList?.(userProfile.id, 'followers') },
+          { n: signedCount, un: 'signé', plusieurs: 'signés', onClick: () => onShowSignedAthletes?.(userProfile.id) },
+        ]} />
       </div>
 
       <div className="px-4 mt-4">
