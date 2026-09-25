@@ -652,7 +652,7 @@ function MicButton({ onTranscript, lang = 'fr-FR', size = 38, title = 'Dictée v
         width: size, height: size,
         backgroundColor: listening ? C.red : C.surface,
         border: `1px solid ${listening ? C.red : C.border}`,
-        color: listening ? C.text : C.gold,
+        color: C.text,
         animation: listening ? 'recPulse 1s ease-out infinite' : 'none',
       }}>
       {listening ? <MicOff size={size * 0.45} strokeWidth={2.4} /> : <Mic size={size * 0.45} strokeWidth={2.4} />}
@@ -1486,7 +1486,10 @@ function LecteurVideo({ video, onClose }) {
   const vidRef = useRef(null);
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col"
+    // Au-dessus de la recherche (z-70) et des profils (z-90), d'où on le
+    // lance : en z-60, une vidéo ouverte depuis la recherche s'affichait
+    // derrière elle.
+    <div className="fixed inset-0 z-[92] flex flex-col"
       style={{ backgroundColor: '#000' }}>
 
       {/* Header avec bouton fermer */}
@@ -3282,472 +3285,6 @@ function NotificationsPanel({ notifications: allNotifs, onClose, onMarkAllRead, 
   );
 }
 
-// ═══ FEED SEARCH INLINE (barre + résultats par-dessus le feed) ═════
-function FeedSearchInline({ currentUserId, isRecruiter, dbShortlist,
-                            onAddToShortlist, onRemoveFromShortlist,
-                            onSelectProfile, onPlayVideo, onClose }) {
-  const [query, setQuery] = useState('');
-  const [searchTab, setSearchTab] = useState('all'); // 'all' | 'users' | 'videos'
-  const [profiles, setProfiles] = useState([]);
-  const [videos, setVideos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const inputRef = useRef(null);
-
-  // ─── Filtres VIDÉOS ─────────────────────────────────────────────
-  const DEFAULT_FILTERS = {
-    sport: null,
-    levels: [],            // niveaux d'auteur
-    positionId: null,      // référentiel positions, dépend du sport
-    periodDays: null,      // 1, 7, 30, 90, 180
-    ageCategoryId: null,   // référentiel age_categories
-    opponentLevelId: null, // niveau d'adversaire minimum (ce niveau ou mieux)
-    lieu: '',              // ville, région ou pays — un seul champ
-  };
-  // Trois filtres ont été retirés de ce panneau :
-  //  · le TYPE de vidéo, déjà proposé en pastilles au-dessus du fil ;
-  //  · le NIVEAU DE LA VIDÉO, qui se lisait à côté du niveau de l'auteur
-  //    sans qu'on puisse deviner lequel désignait quoi — et que le niveau
-  //    de l'adversaire renseigne mieux ;
-  //  · le CHAMPIONNAT, du texte libre : un filtre sur du texte libre ne
-  //    peut par construction jamais être exhaustif.
-  // Et les trois champs pays / région / ville n'en font plus qu'un.
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
-  const refs = useReferentiels();
-  // Un poste n'existe que dans son sport : après un changement de sport
-  // l'ancien choix ne correspondrait plus à rien. On ne le retient donc
-  // que tant qu'il figure dans la liste du sport sélectionné.
-  const postesDuSport = useMemo(
-    () => (filters.sport ? (refs.postesParSport[filters.sport] ?? []) : []),
-    [filters.sport, refs.postesParSport]);
-  const posteFiltre = postesDuSport.some(o => o.id === filters.positionId) ? filters.positionId : null;
-
-  // Auto-focus à l'ouverture
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  // Charger profils + vidéos en parallèle (avec auteur)
-  useEffect(() => {
-    let cancel = false;
-    setLoading(true);
-    (async () => {
-      const [pRes, vRes] = await Promise.all([
-        supabase.from('profiles')
-          .select('id, full_name, is_recruiter, organization, sport, position, club, age, level, verified, avatar_url')
-          .neq('id', currentUserId || '00000000-0000-0000-0000-000000000000')
-          .order('created_at', { ascending: false }).limit(80),
-        supabase.from('videos')
-          .select(`*, profiles!videos_user_id_fkey(id, full_name, avatar_url, sport, level, is_recruiter)`)
-          .not('video_url', 'is', null)
-          .order('created_at', { ascending: false }).limit(150),
-      ]);
-      if (cancel) return;
-      if (pRes.error) console.error('Erreur profils:', pRes.error);
-      if (vRes.error) console.error('Erreur vidéos:', vRes.error);
-      // Côté recruteur : on garde seulement les profils athlètes dans la section "Profils"
-      const filteredProfiles = (pRes.data || []).filter(p => isRecruiter ? !p.is_recruiter : true);
-      setProfiles(filteredProfiles);
-      setVideos(vRes.data || []);
-      setLoading(false);
-    })();
-    return () => { cancel = true; };
-  }, [currentUserId, isRecruiter]);
-
-  const norm = (s) => (s || '').toLowerCase().trim();
-  const needle = norm(query);
-
-  // Rang d'un niveau de compétition (1 = loisir … 10 = international).
-  const rangNiveau = useCallback((id) => {
-    if (!id) return null;
-    return refs.niveauxCompetition.find(n => n.id === id)?.rank ?? null;
-  }, [refs.niveauxCompetition]);
-
-  // ─── Vidéos filtrées ─────────────────────────────────────────
-  const filteredVideos = useMemo(() => videos.filter(v => {
-    // Filtre texte : titre, description, sport, position, championship, age_category, ville, pays OU nom de l'auteur
-    if (needle) {
-      const hay = `${v.title || ''} ${v.description || ''} ${v.sport || ''} ${v.position || ''} ${v.championship || ''} ${v.age_category || ''} ${v.season || ''} ${v.opponent_level || ''} ${v.city || ''} ${v.region || ''} ${v.country || ''} ${v.profiles?.full_name || ''}`.toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    if (filters.sport && v.sport !== filters.sport) return false;
-    if (filters.levels.length > 0) {
-      const lvl = v.profiles?.level;
-      if (!lvl || !filters.levels.includes(lvl)) return false;
-    }
-    if (posteFiltre && v.position_id !== posteFiltre) return false;
-    if (filters.periodDays && v.created_at) {
-      const ageDays = (Date.now() - new Date(v.created_at).getTime()) / 86400000;
-      if (ageDays > filters.periodDays) return false;
-    }
-    if (filters.ageCategoryId && v.age_category_id !== filters.ageCategoryId) return false;
-    // « Ce niveau ou mieux » : on compare les rangs, pas les libellés.
-    if (filters.opponentLevelId) {
-      const attendu = rangNiveau(filters.opponentLevelId);
-      const obtenu = rangNiveau(v.opponent_level_id);
-      if (obtenu === null || attendu === null || obtenu < attendu) return false;
-    }
-    // Un seul champ de lieu, comparé aux trois colonnes : celui qui cherche
-    // « Bordeaux » n'a pas à savoir si c'est une ville, une région ou un pays.
-    if (filters.lieu && !norm(`${v.city || ''} ${v.region || ''} ${v.country || ''}`).includes(norm(filters.lieu))) return false;
-    return true;
-  }), [videos, needle, filters, rangNiveau, posteFiltre]);
-
-  // ─── Profils filtrés (uniquement par texte, pour ne pas dupliquer la logique vidéo) ───
-  const filteredProfiles = useMemo(() => {
-    if (!needle && !filters.sport && filters.levels.length === 0) return profiles;
-    return profiles.filter(p => {
-      if (needle) {
-        const hay = `${p.full_name || ''} ${p.club || ''} ${p.organization || ''} ${p.position || ''}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
-      if (filters.sport && p.sport !== filters.sport) return false;
-      if (filters.levels.length > 0 && !filters.levels.includes(p.level)) return false;
-      return true;
-    });
-  }, [profiles, needle, filters]);
-
-  const activeFilterCount = (filters.sport ? 1 : 0)
-    + (filters.levels.length > 0 ? 1 : 0)
-    + (posteFiltre ? 1 : 0)
-    + (filters.periodDays ? 1 : 0)
-    + (filters.ageCategoryId ? 1 : 0)
-    + (filters.opponentLevelId ? 1 : 0)
-    + (filters.lieu.trim() ? 1 : 0);
-
-  const toggleLevel = (lv) => setFilters(f => ({
-    ...f,
-    levels: f.levels.includes(lv) ? f.levels.filter(x => x !== lv) : [...f.levels, lv],
-  }));
-
-
-  return (
-    <>
-      {/* Barre de recherche flottante en haut */}
-      <div className="fixed top-0 left-0 right-0 z-[88] px-4 pt-12 pb-3 fade-in"
-        style={{
-          background: `linear-gradient(180deg, ${C.bg} 70%, transparent 100%)`,
-        }}>
-        <div className="flex gap-2 items-center">
-          <div className="relative flex-1">
-            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: C.textMute }} />
-            <input ref={inputRef} type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="Vidéos, athlètes, recruteurs…"
-              className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none"
-              style={{
-                backgroundColor: C.surface, color: C.text,
-                border: `1px solid ${C.gold}`,
-                boxShadow: `0 4px 20px rgba(0,0,0,0.4)`,
-              }} />
-            {query && (
-              <button onClick={() => setQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: C.surface2 }} aria-label="Effacer">
-                <X size={11} style={{ color: C.textDim }} />
-              </button>
-            )}
-          </div>
-          <MicButton size={46} title="Recherche vocale" onTranscript={(text) => setQuery(text)} />
-          <button onClick={() => setFiltersOpen(o => !o)} aria-label="Filtres"
-            className="w-12 h-12 rounded-xl flex items-center justify-center relative"
-            style={{
-              backgroundColor: filtersOpen ? C.gold : C.surface,
-              border: `1px solid ${C.borderGold}`,
-              color: filtersOpen ? C.bg : C.gold,
-            }}
-            title="Filtres (sport, type, niveau, poste, période)">
-            <SlidersHorizontal size={18} strokeWidth={2.2} />
-            {activeFilterCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center px-1"
-                style={{ backgroundColor: C.red, color: C.text, border: `2px solid ${C.bg}` }}>
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-          <button onClick={onClose} aria-label="Fermer la recherche"
-            className="w-12 h-12 rounded-xl flex items-center justify-center"
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-            <X size={18} style={{ color: C.text }} />
-          </button>
-        </div>
-      </div>
-
-      {/* Panneau résultats par-dessus le feed (commence sous la barre) */}
-      <div className="fixed left-0 right-0 z-[87] overflow-y-auto fade-in"
-        style={{
-          top: 92,
-          bottom: 0,
-          background: `linear-gradient(180deg, rgba(8,15,32,0.95) 0%, ${C.bg} 60%)`,
-          backdropFilter: 'blur(20px)',
-        }}>
-        <div className="px-4 pb-32 pt-3">
-          {/* Panneau Filtres (dépliable) */}
-          {filtersOpen && (
-            <div className="rounded-2xl p-4 mb-4 fade-in space-y-4"
-              style={{ backgroundColor: C.surface, border: `1px solid ${C.borderGold}` }}>
-              {/* Sport */}
-              <div>
-                <LibelleChamp icon={Trophy} compact>Sport</LibelleChamp>
-                <div className="flex flex-wrap gap-1.5">
-                  <button onClick={() => setFilters(f => ({ ...f, sport: null }))}
-                    className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                    style={{
-                      backgroundColor: !filters.sport ? C.goldSoft : C.bg,
-                      color: !filters.sport ? C.gold : C.text,
-                      border: `1px solid ${!filters.sport ? C.gold : C.border}`,
-                    }}>Tout</button>
-                  {SPORTS.slice(0, 10).map(s => {
-                    const active = filters.sport === s.id;
-                    return (
-                      <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.id }))}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.bg,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>
-                        {s.icon} {s.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Niveaux de l'auteur */}
-              <div>
-                <LibelleChamp icon={Medal} compact>Niveau de l'auteur</LibelleChamp>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { id: 'amateur',         label: 'Amateur' },
-                    { id: 'young_pro',       label: 'Young Pro' },
-                    { id: 'senior_amateur',  label: 'Senior Am.' },
-                    { id: 'senior_semi_pro', label: 'Semi-Pro' },
-                    { id: 'senior_pro',      label: 'Pro' },
-                  ].map(lv => {
-                    const active = filters.levels.includes(lv.id);
-                    return (
-                      <button key={lv.id} onClick={() => toggleLevel(lv.id)}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.bg,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>{lv.label}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Poste — dépend du sport choisi juste au-dessus */}
-              <ChampSelect compact
-                label="Poste" icon={Target}
-                value={posteFiltre}
-                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
-                options={postesDuSport}
-                disabled={!filters.sport}
-                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
-
-              {/* Période */}
-              <div>
-                <LibelleChamp icon={Video} compact>Vidéo publiée dans</LibelleChamp>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { id: null,  label: 'Tout' },
-                    { id: 1,     label: '< 24 h' },
-                    { id: 7,     label: '< 1 semaine' },
-                    { id: 30,    label: '< 1 mois' },
-                    { id: 90,    label: '< 3 mois' },
-                    { id: 180,   label: '< 6 mois' },
-                  ].map(p => {
-                    const active = (filters.periodDays ?? null) === p.id;
-                    return (
-                      <button key={String(p.id)} onClick={() => setFilters(f => ({ ...f, periodDays: p.id }))}
-                        className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                        style={{
-                          backgroundColor: active ? C.goldSoft : C.bg,
-                          color: active ? C.gold : C.text,
-                          border: `1px solid ${active ? C.gold : C.border}`,
-                        }}>{p.label}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Catégorie d'âge */}
-              <ChampSelect compact
-                label="Catégorie d'âge" icon={Cake}
-                value={filters.ageCategoryId}
-                onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
-                options={refs.categoriesAge} />
-
-              {/* Niveau de l'adversaire, à partir de… */}
-              <div>
-                <ChampSelect compact
-                  label="Adversaire d'au moins" icon={Swords}
-                  value={filters.opponentLevelId}
-                  onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
-                  options={refs.niveauxCompetition} />
-                {filters.opponentLevelId && (
-                  <div className="text-[10px] mt-1" style={{ color: C.textMute }}>
-                    Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire renseigné sont écartées.
-                  </div>
-                )}
-              </div>
-
-              {/* Localisation — un seul champ au lieu de trois. Celui qui
-                  cherche « Bordeaux » n'a pas à décider si c'est une ville,
-                  une région ou un pays : la saisie est comparée aux trois. */}
-              <div>
-                <LibelleChamp icon={PinIcon} compact>Lieu</LibelleChamp>
-                <input type="text" value={filters.lieu}
-                  onChange={(e) => setFilters(f => ({ ...f, lieu: e.target.value }))}
-                  placeholder="Ville, région ou pays"
-                  className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
-
-              {/* Reset */}
-              {activeFilterCount > 0 && (
-                <button onClick={() => setFilters(DEFAULT_FILTERS)}
-                  className="w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
-                  style={{ backgroundColor: 'transparent', color: C.gold, border: `1px solid ${C.borderGold}` }}>
-                  <RotateCcw size={12} /> Réinitialiser
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Onglets Tout / Vidéos / Utilisateurs */}
-          <div className="flex gap-1.5 mb-4 sticky top-0 z-10 fade-in">
-            {[
-              { id: 'all',    label: 'Tout',         Icon: Sparkles },
-              { id: 'videos', label: `Vidéos (${filteredVideos.length})`,    Icon: Video },
-              { id: 'users',  label: `Utilisateurs (${filteredProfiles.length})`, Icon: User },
-            ].map(tab => {
-              const active = searchTab === tab.id;
-              return (
-                <button key={tab.id} onClick={() => setSearchTab(tab.id)}
-                  className="flex-1 py-2 rounded-full text-[11px] font-bold flex items-center justify-center gap-1"
-                  style={{
-                    backgroundColor: active ? C.text : C.surface,
-                    color: active ? C.bg : C.text,
-                    border: `1px solid ${active ? C.text : C.border}`,
-                  }}>
-                  <tab.Icon size={12} strokeWidth={2.4} /> {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
-            </div>
-          ) : (
-            <>
-              {/* Section Vidéos (cachée en mode users) */}
-              {searchTab !== 'users' && (
-              <>
-              <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
-                <Video size={10} strokeWidth={2.6} className="inline align-[-1px] mr-1" />VIDÉOS · {filteredVideos.length}
-              </div>
-              {filteredVideos.length === 0 ? (
-                <div className="rounded-2xl py-6 px-4 text-center mb-5"
-                  style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                  <p className="text-xs" style={{ color: C.textDim }}>Aucune vidéo correspondante.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 mb-5">
-                  {filteredVideos.map(v => {
-                    const thumb = v.thumbnail_url;
-                    return (
-                      <button key={v.id} onClick={() => onPlayVideo?.(v)}
-                        className="rounded-xl overflow-hidden text-left fade-in"
-                        style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                        <div className="relative" style={{ aspectRatio: '1', backgroundColor: '#000' }}>
-                          {thumb
-                            ? <img loading="lazy" decoding="async" src={thumb} alt={v.title} className="w-full h-full object-cover" />
-                            : v.video_url
-                              ? <video src={`${v.video_url}#t=0.1`} preload="metadata" muted playsInline
-                                  className="w-full h-full object-cover" />
-                              : null}
-                          <div className="absolute inset-0 flex items-center justify-center"
-                            style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.7) 100%)' }}>
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center"
-                              style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
-                              <Play size={16} fill={C.bg} stroke={C.bg} />
-                            </div>
-                          </div>
-                        </div>
-                        <div className="p-2 space-y-0.5">
-                          <div className="text-xs font-bold truncate" style={{ color: C.text }}>{v.title || 'Vidéo'}</div>
-                          <div className="text-[10px] truncate" style={{ color: C.textDim }}>
-                            par {v.profiles?.full_name || 'Athlète'}
-                            {v.profiles?.age ? ` · ${v.profiles.age} ans` : ''}
-                          </div>
-                          {(v.video_type || v.profiles?.level || v.age_category) && (
-                            <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                              {v.video_type === 'match' ? <><Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Match</>
-                               : v.video_type === 'training' ? <><Dumbbell size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />Entraînement</> : ''}
-                              {v.profiles?.level && ` · ${v.profiles.level.replace('_', ' ')}`}
-                              {v.age_category && ` · ${v.age_category}`}
-                            </div>
-                          )}
-                          {v.championship && (
-                            <div className="text-[10px] truncate" style={{ color: C.gold }}>
-                              <Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{v.championship}
-                            </div>
-                          )}
-                          {(v.city || v.country) && (
-                            <div className="text-[10px] truncate" style={{ color: C.textMute }}>
-                              <PinIcon size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{[v.city, v.region, v.country].filter(Boolean).join(", ")}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              </>
-              )}
-
-              {/* Section Profils (cachée en mode videos) */}
-              {searchTab !== 'videos' && (
-              <>
-              <div className="text-[10px] font-semibold mb-3" style={{ color: C.gold }}>
-                <User size={10} strokeWidth={2.6} className="inline align-[-1px] mr-1" />UTILISATEURS · {filteredProfiles.length}
-              </div>
-              {filteredProfiles.length === 0 ? (
-                <div className="rounded-2xl py-6 px-4 text-center"
-                  style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-                  <p className="text-xs" style={{ color: C.textDim }}>Aucun profil correspondant.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {filteredProfiles.map(p => {
-                    const status = dbShortlist?.get(p.id)?.status;
-                    const showShortlistButton = isRecruiter && onAddToShortlist && !p.is_recruiter;
-                    return (
-                      <ProfileCard key={p.id} profile={p}
-                        onSelect={() => onSelectProfile?.(p)}
-                        shortlistStatus={status}
-                        onToggleShortlist={showShortlistButton
-                          ? () => (status ? onRemoveFromShortlist?.(p.id) : onAddToShortlist?.(p.id))
-                          : undefined} />
-                    );
-                  })}
-                </div>
-              )}
-              </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
 // ═══ PROFILE CARD (carte d'un utilisateur Supabase) ═══════════════
 function ProfileCard({ profile, onSelect, onToggleShortlist, shortlistStatus }) {
   const sport = SPORTS.find(s => s.id === profile.sport);
@@ -4732,6 +4269,11 @@ function ScoutAIChatbot({ currentUserId, onClose, onSelectProfile, onApplyFilter
 
 // ═══ SEARCH (Supabase — tous profils ou athlètes uniquement) ═══════
 // Délais de publication (filtre vidéos) en millisecondes.
+const PERIODES_RECHERCHE = [
+  { id: '24h', label: '24 h' }, { id: '1w', label: '1 semaine' }, { id: '1m', label: '1 mois' },
+  { id: '3m', label: '3 mois' }, { id: '6m', label: '6 mois' }, { id: '1y', label: '1 an' },
+];
+
 const RECENCY_MS = {
   '24h': 24 * 3600e3,
   '1w': 7 * 24 * 3600e3,
@@ -4913,25 +4455,53 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
     });
   }, [videos, query, filters, rangNiveau, posteFiltre]);
 
-  const activeFilters = (filters.sport ? 1 : 0)
-    + (filters.gender ? 1 : 0)
-    + (filters.recency ? 1 : 0)
-    + ((filters.ageMin !== 14 || filters.ageMax !== 35) ? 1 : 0)
-    + (filters.country.trim() ? 1 : 0)
-    + (filters.region.trim() ? 1 : 0)
-    + (filters.city.trim() ? 1 : 0)
-    + (filters.nationality.trim() ? 1 : 0)
-    + (posteFiltre ? 1 : 0)
-    + (filters.levels.length > 0 ? 1 : 0)
-    + (filters.championship.trim() ? 1 : 0)
-    + (filters.ageCategoryId ? 1 : 0)
-    + (filters.opponentLevelId ? 1 : 0);
-
   const resetFilters = () => setFilters(DEFAULT_FILTERS);
   const toggleLevel = (id) => setFilters(f => ({
     ...f,
     levels: f.levels.includes(id) ? f.levels.filter(l => l !== id) : [...f.levels, id],
   }));
+
+  // ─── Filtres actifs, en pastilles retirables ──────────────────────
+  // Chaque filtre en cours s'affiche au-dessus des résultats, avec sa croix :
+  // on voit ce qui restreint la liste, et on le retire d'un geste, sans
+  // rouvrir le panneau. Les filtres propres aux vidéos (championnat,
+  // période, catégorie, adversaire) n'apparaissent que sur l'onglet Vidéos,
+  // le seul où ils s'appliquent.
+  const surVideos = activeTab === 'videos';
+  const maj = (champs) => setFilters(f => ({ ...f, ...champs }));
+  const pastillesActives = [];
+  {
+    const sp = SPORTS.find(x => x.id === filters.sport);
+    if (sp) pastillesActives.push({ cle: 'sport', texte: `${sp.icon} ${sp.label}`, retirer: () => maj({ sport: null, positionId: null }) });
+    const poste = postesDuSport.find(o => o.id === posteFiltre);
+    if (poste) pastillesActives.push({ cle: 'poste', texte: poste.label, retirer: () => maj({ positionId: null }) });
+    for (const lv of filters.levels) {
+      pastillesActives.push({ cle: `niveau-${lv}`, texte: LEVEL_LABELS[lv]?.label || lv, retirer: () => toggleLevel(lv) });
+    }
+    if (filters.ageMin !== DEFAULT_FILTERS.ageMin || filters.ageMax !== DEFAULT_FILTERS.ageMax) {
+      pastillesActives.push({ cle: 'age', texte: `${filters.ageMin} à ${filters.ageMax} ans`,
+        retirer: () => maj({ ageMin: DEFAULT_FILTERS.ageMin, ageMax: DEFAULT_FILTERS.ageMax }) });
+    }
+    for (const [champ, cle] of [['city', 'ville'], ['region', 'region'], ['country', 'pays']]) {
+      if (filters[champ].trim()) pastillesActives.push({ cle, texte: filters[champ].trim(), retirer: () => maj({ [champ]: '' }) });
+    }
+    if (filters.gender) pastillesActives.push({ cle: 'genre', texte: GENRES_RECHERCHES[filters.gender] || filters.gender, retirer: () => maj({ gender: null }) });
+    if (filters.nationality.trim()) pastillesActives.push({ cle: 'nationalite', texte: filters.nationality.trim(), retirer: () => maj({ nationality: '' }) });
+    if (surVideos) {
+      if (filters.championship.trim()) pastillesActives.push({ cle: 'championnat', texte: filters.championship.trim(), retirer: () => maj({ championship: '' }) });
+      if (filters.recency) pastillesActives.push({ cle: 'periode', texte: `Depuis ${PERIODES_RECHERCHE.find(r => r.id === filters.recency)?.label}`, retirer: () => maj({ recency: null }) });
+      const cat = refs.categoriesAge.find(o => o.id === filters.ageCategoryId);
+      if (cat) pastillesActives.push({ cle: 'categorie', texte: cat.label, retirer: () => maj({ ageCategoryId: null }) });
+      const adv = refs.niveauxCompetition.find(o => o.id === filters.opponentLevelId);
+      if (adv) pastillesActives.push({ cle: 'adversaire', texte: `Adversaire ≥ ${adv.label}`, retirer: () => maj({ opponentLevelId: null }) });
+    }
+  }
+  const activeFilters = pastillesActives.length;
+  // « Plus de filtres » s'ouvre de lui-même quand l'un de ses réglages est actif.
+  const [plusOuvert, setPlusOuvert] = useState(false);
+  const plusActifs = (filters.gender ? 1 : 0) + (filters.nationality.trim() ? 1 : 0)
+    + (surVideos ? ((filters.championship.trim() ? 1 : 0) + (filters.recency ? 1 : 0)
+      + (filters.ageCategoryId ? 1 : 0) + (filters.opponentLevelId ? 1 : 0)) : 0);
 
   // Chatbot IA (recruteurs uniquement)
   const [chatbotOpen, setChatbotOpen] = useState(false);
@@ -5031,40 +4601,51 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
       </div>
 
       <div className="px-4 mb-3 flex gap-2">
-        <button onClick={() => setFiltersOpen(o => !o)}
+        <button onClick={() => setFiltersOpen(true)}
           className="flex-1 flex items-center justify-between px-4 py-3 rounded-xl"
-          style={{
-            backgroundColor: filtersOpen ? C.gold : C.surface,
-            color: filtersOpen ? C.bg : C.text,
-            border: `1px solid ${filtersOpen ? C.gold : C.border}`,
-          }}>
+          style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}>
           <span className="flex items-center gap-2 text-sm font-semibold">
             <SlidersHorizontal size={15} strokeWidth={2.4} />
             Filtres
             {activeFilters > 0 && (
               <span className="ml-1 min-w-[18px] h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center px-1"
-                style={{
-                  backgroundColor: filtersOpen ? C.bg : C.gold,
-                  color: filtersOpen ? C.gold : C.bg,
-                }}>
+                style={{ backgroundColor: C.text, color: C.bg }}>
                 {activeFilters}
               </span>
             )}
           </span>
-          {filtersOpen ? <ChevronUp size={16} strokeWidth={2.4} /> : <ChevronDown size={16} strokeWidth={2.4} />}
+          <ChevronDown size={16} strokeWidth={2.4} style={{ color: C.textDim }} />
         </button>
 
         {/* Assistant IA — recruteurs uniquement (athletesOnly = vue recruteur) */}
         {athletesOnly && (
           <button onClick={() => setChatbotOpen(true)}
             className="flex items-center gap-1.5 px-3 py-3 rounded-xl"
-            style={{ backgroundColor: C.surface, color: C.gold, border: `1px solid ${C.borderGold}` }}
+            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }}
             aria-label="Assistant IA">
             <Bot size={16} strokeWidth={2.4} />
             <span className="text-sm font-semibold">IA</span>
           </button>
         )}
       </div>
+
+      {/* Filtres actifs : ce qui restreint la liste, retirable d'un geste */}
+      {pastillesActives.length > 0 && (
+        <div className="px-4 mb-3 flex flex-wrap gap-1.5">
+          {pastillesActives.map(pa => (
+            <button key={pa.cle} onClick={pa.retirer} aria-label={`Retirer le filtre ${pa.texte}`}
+              className="pl-3 pr-2 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1.5"
+              style={{ backgroundColor: C.surface2, color: C.text, border: `1px solid ${C.border}` }}>
+              {pa.texte}
+              <X size={12} strokeWidth={2.6} style={{ color: C.textDim }} />
+            </button>
+          ))}
+          <button onClick={resetFilters} className="px-2 py-1.5 text-xs font-semibold underline"
+            style={{ color: C.textDim }}>
+            Tout effacer
+          </button>
+        </div>
+      )}
 
       {chatbotOpen && athletesOnly && (
         <ScoutAIChatbot
@@ -5078,195 +4659,226 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
         />
       )}
 
-      {filtersOpen && (
-        <div className="px-4 mb-4 fade-in">
-          <div className="rounded-xl p-4 flex flex-col gap-4"
-            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>Sport</label>
-              <div className="flex flex-wrap gap-2">
-                {SPORTS.map(s => {
-                  const active = filters.sport === s.id;
-                  return (
-                    <button key={s.id} onClick={() => setFilters(f => ({ ...f, sport: active ? null : s.id }))}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium"
-                      style={{
-                        backgroundColor: active ? C.goldSoft : C.bg,
-                        color: active ? C.gold : C.text,
-                        border: `1px solid ${active ? C.gold : C.border}`,
-                      }}>
-                      <span>{s.icon}</span> {s.label}
-                    </button>
-                  );
-                })}
+      {/* ─── Panneau des filtres, monté du bas ────────────────────────
+          Cinq filtres en vue — sport, poste, niveau, âge, lieu — et le reste
+          replié dans « Plus de filtres ». Avant : treize réglages empilés
+          dans un bloc ouvert au milieu de l'écran, et un filtre de niveau
+          prévu dans le code mais jamais affiché. Les résultats se mettent à
+          jour derrière le panneau ; son bouton en annonce le nombre. */}
+      {filtersOpen && createPortal(
+        <div className="fixed inset-0 z-[90] flex items-end fade-in"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={() => setFiltersOpen(false)}>
+          <div className="w-full rounded-t-2xl flex flex-col" onClick={(e) => e.stopPropagation()}
+            style={{ backgroundColor: C.bg, maxHeight: '88dvh', borderTop: `1px solid ${C.border}` }}>
+            <div className="flex items-center justify-between px-4 pt-4 pb-3">
+              <div className="text-lg font-extrabold" style={{ color: C.text }}>Filtres</div>
+              <div className="flex items-center gap-1">
+                {activeFilters > 0 && (
+                  <button onClick={resetFilters} className="px-2 py-1 text-sm font-semibold"
+                    style={{ color: C.textDim }}>
+                    Réinitialiser
+                  </button>
+                )}
+                <button onClick={() => setFiltersOpen(false)} aria-label="Fermer les filtres"
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: C.surface }}>
+                  <X size={16} style={{ color: C.text }} />
+                </button>
               </div>
             </div>
 
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-semibold" style={{ color: C.text }}>Âge</label>
-                <span className="font-mono text-[11px]" style={{ color: C.gold }}>
-                  {filters.ageMin} – {filters.ageMax} ans
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px]" style={{ color: C.textDim }}>Min</label>
-                  <input type="number" min={10} max={100} value={filters.ageMin}
-                    onChange={(e) => setFilters(f => ({ ...f, ageMin: Number(e.target.value) || 10 }))}
-                    className="w-full px-2 py-1.5 rounded-lg text-xs outline-none"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
+            <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-5">
+              <div>
+                <LibelleChamp compact>Sport</LibelleChamp>
+                {/* Une ligne qui défile : les quinze sports en pastilles
+                    prenaient la moitié du panneau. */}
+                <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4">
+                  {SPORTS.map(sp => {
+                    const active = filters.sport === sp.id;
+                    return (
+                      <button key={sp.id} aria-pressed={active}
+                        onClick={() => maj({ sport: active ? null : sp.id, positionId: null })}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-semibold flex-shrink-0 whitespace-nowrap"
+                        style={styleChoix(active)}>
+                        <span>{sp.icon}</span> {sp.label}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div>
-                  <label className="text-[10px]" style={{ color: C.textDim }}>Max</label>
-                  <input type="number" min={10} max={100} value={filters.ageMax}
-                    onChange={(e) => setFilters(f => ({ ...f, ageMax: Number(e.target.value) || 100 }))}
-                    className="w-full px-2 py-1.5 rounded-lg text-xs outline-none"
-                    style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                </div>
               </div>
-            </div>
 
-            {/* Localisation */}
-            <div>
-              <LibelleChamp icon={PinIcon} compact>Localisation</LibelleChamp>
-              <div className="grid grid-cols-3 gap-2">
-                <input type="text" value={filters.country}
-                  onChange={(e) => setFilters(f => ({ ...f, country: e.target.value }))}
-                  placeholder="Pays"
-                  className="px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                <input type="text" value={filters.region}
-                  onChange={(e) => setFilters(f => ({ ...f, region: e.target.value }))}
-                  placeholder="Région"
-                  className="px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-                <input type="text" value={filters.city}
-                  onChange={(e) => setFilters(f => ({ ...f, city: e.target.value }))}
-                  placeholder="Ville"
-                  className="px-2.5 py-2 rounded-lg text-xs outline-none"
-                  style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-              </div>
-            </div>
-
-            {/* Nationalité */}
-            <div>
-              <LibelleChamp icon={Globe} compact>Nationalité</LibelleChamp>
-              <input type="text" value={filters.nationality}
-                onChange={(e) => setFilters(f => ({ ...f, nationality: e.target.value }))}
-                placeholder="Ex : Française, Sénégalaise…"
-                className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-            </div>
-
-            {/* Genre */}
-            <div>
-              <label className="text-xs font-semibold mb-2 block" style={{ color: C.text }}>Genre</label>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { id: null, label: 'Tous' },
-                  { id: 'M', label: 'H' },
-                  { id: 'F', label: 'F' },
-                  { id: 'O', label: 'Autre' },
-                ].map(g => {
-                  const active = (filters.gender ?? null) === g.id;
-                  return (
-                    <button key={String(g.id)} type="button" onClick={() => setFilters(f => ({ ...f, gender: g.id }))}
-                      className="py-2 rounded-lg text-xs font-semibold"
-                      style={{ backgroundColor: active ? C.goldSoft : C.bg, color: active ? C.gold : C.text, border: `1px solid ${active ? C.gold : C.border}` }}>
-                      {g.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Championnat (texte libre — remplace le niveau) */}
-            <div>
-              <LibelleChamp icon={Trophy} compact>Championnat</LibelleChamp>
-              <input type="text" value={filters.championship}
-                onChange={(e) => setFilters(f => ({ ...f, championship: e.target.value }))}
-                placeholder="Ex : National 2, Ligue 1, Régional 1…"
-                className="w-full px-2.5 py-2 rounded-lg text-xs outline-none"
-                style={{ backgroundColor: C.bg, color: C.text, border: `1px solid ${C.border}` }} />
-            </div>
-
-            {/* Délai de publication des vidéos */}
-            <div>
-              <LibelleChamp icon={Calendar} compact>Vidéos publiées depuis</LibelleChamp>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { id: null,  label: 'Tout' },
-                  { id: '24h', label: '24 h' },
-                  { id: '1w',  label: '1 sem.' },
-                  { id: '1m',  label: '1 mois' },
-                  { id: '3m',  label: '3 mois' },
-                  { id: '6m',  label: '6 mois' },
-                  { id: '1y',  label: '1 an' },
-                ].map(r => {
-                  const active = (filters.recency ?? null) === r.id;
-                  return (
-                    <button key={String(r.id)} type="button" onClick={() => setFilters(f => ({ ...f, recency: r.id }))}
-                      className="px-2.5 py-1.5 rounded-full text-[11px] font-medium"
-                      style={{ backgroundColor: active ? C.goldSoft : C.bg, color: active ? C.gold : C.text, border: `1px solid ${active ? C.gold : C.border}` }}>
-                      {r.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Poste — liste du sport choisi */}
-            <div>
               <ChampSelect compact
                 label="Poste" icon={Target}
                 value={posteFiltre}
-                onChange={(id) => setFilters(f => ({ ...f, positionId: id }))}
+                onChange={(id) => maj({ positionId: id })}
                 options={postesDuSport}
                 disabled={!filters.sport}
-                placeholder={filters.sport ? 'Indifférent' : 'Choisissez d\'abord un sport'} />
-              <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
-                {filters.sport
-                  ? 'Les postes proposés sont ceux du sport sélectionné.'
-                  : 'Sélectionnez un sport pour voir ses postes.'}
-              </p>
+                placeholder={filters.sport ? 'Indifférent' : "Choisis d'abord un sport"} />
+
+              <div>
+                <LibelleChamp compact>
+                  Niveau
+                  <span className="font-normal ml-1.5" style={{ color: C.textMute }}>plusieurs possibles</span>
+                </LibelleChamp>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(LEVEL_LABELS).map(([id, lv]) => {
+                    const active = filters.levels.includes(id);
+                    return (
+                      <button key={id} aria-pressed={active} onClick={() => toggleLevel(id)}
+                        className="px-3 py-1.5 rounded-full text-xs font-semibold inline-flex items-center gap-1"
+                        style={styleChoix(active)}>
+                        {active && <CircleCheck size={12} strokeWidth={2.6} />}
+                        {lv.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <LibelleChamp compact>Âge</LibelleChamp>
+                <div className="flex items-center gap-2 text-sm" style={{ color: C.textDim }}>
+                  <span>De</span>
+                  <input type="number" inputMode="numeric" min={10} max={100} value={filters.ageMin}
+                    aria-label="Âge minimum"
+                    onChange={(e) => maj({ ageMin: Number(e.target.value) || 10 })}
+                    className="w-20 px-3 py-2.5 rounded-xl text-sm text-center outline-none"
+                    style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                  <span>à</span>
+                  <input type="number" inputMode="numeric" min={10} max={100} value={filters.ageMax}
+                    aria-label="Âge maximum"
+                    onChange={(e) => maj({ ageMax: Number(e.target.value) || 100 })}
+                    className="w-20 px-3 py-2.5 rounded-xl text-sm text-center outline-none"
+                    style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                  <span>ans</span>
+                </div>
+              </div>
+
+              <div>
+                <LibelleChamp icon={PinIcon} compact>Lieu</LibelleChamp>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { libelle: 'Pays', champ: 'country', exemple: 'France' },
+                    { libelle: 'Région', champ: 'region', exemple: 'Bretagne' },
+                    { libelle: 'Ville', champ: 'city', exemple: 'Rennes' },
+                  ].map(ch => (
+                    <label key={ch.champ} className="block min-w-0">
+                      <span className="text-[10px] font-semibold mb-1 block" style={{ color: C.textMute }}>{ch.libelle}</span>
+                      <input type="text" value={filters[ch.champ]} placeholder={ch.exemple}
+                        onChange={(e) => maj({ [ch.champ]: e.target.value })}
+                        className="w-full px-2.5 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Le reste, replié */}
+              <div className="rounded-xl" style={{ border: `1px solid ${C.border}` }}>
+                <button onClick={() => setPlusOuvert(o => !o)} aria-expanded={plusOuvert || plusActifs > 0}
+                  className="w-full px-4 py-3 flex items-center justify-between text-sm font-semibold"
+                  style={{ color: C.text }}>
+                  <span>
+                    Plus de filtres
+                    {plusActifs > 0 && <span className="font-normal ml-1.5" style={{ color: C.textDim }}>{plusActifs} actif{plusActifs > 1 ? 's' : ''}</span>}
+                  </span>
+                  <ChevronDown size={16} strokeWidth={2.4}
+                    style={{ color: C.textMute, transform: (plusOuvert || plusActifs > 0) ? 'rotate(180deg)' : 'none' }} />
+                </button>
+                {(plusOuvert || plusActifs > 0) && (
+                  <div className="px-4 pb-4 flex flex-col gap-4">
+                    <div>
+                      <LibelleChamp compact>Genre</LibelleChamp>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[{ id: null, label: 'Tous' }, { id: 'M', label: 'Hommes' }, { id: 'F', label: 'Femmes' }, { id: 'O', label: 'Autre' }].map(g => {
+                          const active = (filters.gender ?? null) === g.id;
+                          return (
+                            <button key={String(g.id)} aria-pressed={active} onClick={() => maj({ gender: g.id })}
+                              className="py-2 rounded-xl text-xs font-semibold" style={styleChoix(active)}>
+                              {g.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <LibelleChamp icon={Globe} compact>Nationalité</LibelleChamp>
+                      <input type="text" value={filters.nationality} placeholder="Ex : française, sénégalaise…"
+                        onChange={(e) => maj({ nationality: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                    </div>
+
+                    {surVideos && (
+                      <>
+                        <div>
+                          <LibelleChamp icon={Trophy} compact>Championnat</LibelleChamp>
+                          <input type="text" value={filters.championship} placeholder="Ex : National 2, Régional 1…"
+                            onChange={(e) => maj({ championship: e.target.value })}
+                            className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                            style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+                        </div>
+
+                        <div>
+                          <LibelleChamp icon={Calendar} compact>Publiées depuis</LibelleChamp>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[{ id: null, label: 'Toujours' }, ...PERIODES_RECHERCHE].map(r => {
+                              const active = (filters.recency ?? null) === r.id;
+                              return (
+                                <button key={String(r.id)} aria-pressed={active} onClick={() => maj({ recency: r.id })}
+                                  className="px-3 py-1.5 rounded-full text-xs font-semibold" style={styleChoix(active)}>
+                                  {r.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <ChampSelect compact
+                          label="Catégorie d'âge" icon={Cake}
+                          value={filters.ageCategoryId}
+                          onChange={(id) => maj({ ageCategoryId: id })}
+                          options={refs.categoriesAge} />
+
+                        <div>
+                          <ChampSelect compact
+                            label="Adversaire d'au moins" icon={Swords}
+                            value={filters.opponentLevelId}
+                            onChange={(id) => maj({ opponentLevelId: id })}
+                            options={refs.niveauxCompetition} />
+                          {filters.opponentLevelId && (
+                            <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
+                              Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire sont écartées.
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Catégorie d'âge et niveau d'adversaire (onglet vidéos) */}
-            {activeTab === 'videos' && (
-              <>
-                <ChampSelect compact
-                  label="Catégorie d'âge" icon={Cake}
-                  value={filters.ageCategoryId}
-                  onChange={(id) => setFilters(f => ({ ...f, ageCategoryId: id }))}
-                  options={refs.categoriesAge} />
-
-                <div>
-                  <ChampSelect compact
-                    label="Adversaire d'au moins" icon={Swords}
-                    value={filters.opponentLevelId}
-                    onChange={(id) => setFilters(f => ({ ...f, opponentLevelId: id }))}
-                    options={refs.niveauxCompetition} />
-                  {filters.opponentLevelId && (
-                    <p className="text-[10px] mt-1" style={{ color: C.textMute }}>
-                      Ce niveau ou au-dessus. Les vidéos sans niveau d'adversaire sont écartées.
-                    </p>
-                  )}
-                </div>
-              </>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              <GoldButton variant="outline" icon={RotateCcw} onClick={resetFilters}>Réinitialiser</GoldButton>
-              <GoldButton variant="solid" onClick={() => setFiltersOpen(false)}>Voir résultats</GoldButton>
+            <div className="px-4 pt-3 pb-8" style={{ borderTop: `1px solid ${C.border}` }}>
+              <button onClick={() => setFiltersOpen(false)}
+                className="w-full py-3.5 rounded-xl text-sm font-extrabold"
+                style={{ backgroundColor: C.gold, color: C.bg }}>
+                {surVideos
+                  ? (videosLoading ? 'Voir les vidéos'
+                    : `Voir ${filteredVideos.length} vidéo${filteredVideos.length > 1 ? 's' : ''}`)
+                  : (loading ? 'Voir les résultats'
+                    : `Voir ${filtered.length}${finProfils ? '' : '+'} ${labelKind}${filtered.length > 1 ? 's' : ''}`)}
+              </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {(activeTab === 'profiles' ? loading : videosLoading) ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 size={20} className="animate-spin" style={{ color: C.gold }} />
+          <Loader2 size={20} className="animate-spin" style={{ color: C.textMute }} />
         </div>
       ) : activeTab === 'profiles' ? (
         !texteUtilisable ? (
@@ -5284,8 +4896,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
             <p className="text-sm" style={{ color: C.textDim }}>Aucun {labelKind} trouvé.</p>
             {(query || activeFilters > 0) && (
-              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-xs mt-2" style={{ color: C.gold }}>
-                Réinitialiser
+              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-sm mt-2 underline" style={{ color: C.text }}>
+                Effacer la recherche et les filtres
               </button>
             )}
           </div>
@@ -5309,8 +4921,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
               <div className="px-4 mt-4">
                 <button onClick={() => setPageProfils(n => n + 1)} disabled={loading}
                   className="w-full py-3 rounded-xl text-sm font-semibold"
-                  style={{ backgroundColor: 'transparent', color: C.gold,
-                           border: `1px solid ${C.borderGold}`, opacity: loading ? 0.5 : 1 }}>
+                  style={{ backgroundColor: 'transparent', color: C.text,
+                           border: `1px solid ${C.border}`, opacity: loading ? 0.5 : 1 }}>
                   {loading ? 'Chargement…' : 'Voir plus'}
                 </button>
               </div>
@@ -5324,8 +4936,8 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
             <Search size={32} style={{ color: C.textMute }} className="mx-auto mb-3" />
             <p className="text-sm" style={{ color: C.textDim }}>Aucune vidéo trouvée.</p>
             {(query || activeFilters > 0) && (
-              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-xs mt-2" style={{ color: C.gold }}>
-                Réinitialiser
+              <button onClick={() => { setQuery(''); resetFilters(); }} className="text-sm mt-2 underline" style={{ color: C.text }}>
+                Effacer la recherche et les filtres
               </button>
             )}
           </div>
@@ -5347,7 +4959,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                     <div className="absolute inset-0 flex items-center justify-center"
                       style={{ background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.7) 100%)' }}>
                       <div className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: 'rgba(255,184,0,0.9)' }}>
+                        style={{ backgroundColor: 'rgba(255,255,255,0.92)' }}>
                         <Play size={16} fill={C.bg} stroke={C.bg} />
                       </div>
                     </div>
@@ -5367,7 +4979,7 @@ function SearchView({ currentUserId, onSelectProfile, athletesOnly,
                       </div>
                     )}
                     {v.championship && (
-                      <div className="text-[10px] truncate" style={{ color: C.gold }}>
+                      <div className="text-[10px] truncate" style={{ color: C.textDim }}>
                         <Trophy size={10} strokeWidth={2.4} className="inline align-[-1px] mr-1" />{v.championship}
                       </div>
                     )}
@@ -14036,16 +13648,23 @@ export default function App() {
         />
       )}
 
+      {/* La loupe du fil ouvre le même écran de recherche que l'onglet
+          Recherche (Découvrir pour un recruteur). Elle ouvrait auparavant
+          un second écran, FeedSearchInline, qui refaisait tout à sa façon :
+          150 vidéos et des profils téléchargés, puis filtrés sur le
+          téléphone, avec ses propres filtres. */}
       {feedSearchOpen && (
-        <FeedSearchInline
-          currentUserId={userProfile?.id}
-          isRecruiter={!!userProfile?.is_recruiter}
-          dbShortlist={dbShortlist}
-          onAddToShortlist={addToDbShortlist}
-          onRemoveFromShortlist={removeFromDbShortlist}
-          onSelectProfile={openProfile}
-          onPlayVideo={(v) => setSearchPlayingVideo(v)}
-          onClose={() => setFeedSearchOpen(false)} />
+        <div className="fixed inset-0 z-[70]" style={{ backgroundColor: C.bg }}>
+          <SearchView
+            currentUserId={userProfile?.id}
+            athletesOnly={!!userProfile?.is_recruiter}
+            dbShortlist={userProfile?.is_recruiter ? dbShortlist : undefined}
+            onAddToShortlist={userProfile?.is_recruiter ? addToDbShortlist : undefined}
+            onRemoveFromShortlist={userProfile?.is_recruiter ? removeFromDbShortlist : undefined}
+            onSelectProfile={openProfile}
+            onPlayVideo={(v) => setSearchPlayingVideo(v)}
+            onClose={() => setFeedSearchOpen(false)} />
+        </div>
       )}
 
       {/* Lecteur vidéo overlay — déclenché depuis la recherche du feed */}

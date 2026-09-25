@@ -44,9 +44,14 @@ rm .env.local                                            # revenir au vrai backe
    et son ouverture révèle les cinq listes alimentées par les référentiels :
    postes restreints au sport choisi, saisons avec la courante en tête.
 9. La recherche rend des résultats et annonce un nombre « affichés », pas
-   « trouvés » — la liste est paginée.
-10. Aucune requête applicative en échec.
-11. Aucune erreur JavaScript.
+   « trouvés » — la liste est paginée. Ses filtres s'ouvrent en panneau, dont
+   le bouton annonce le résultat ; un filtre actif devient une pastille, qui
+   le retire d'un geste. La loupe du fil ouvre ce même écran.
+10. Le profil montre une galerie de vignettes et une ligne d'identité sans
+    séparateur orphelin.
+11. Aucune requête applicative en échec (les requêtes HEAD, que Chromium
+    signale toujours comme interrompues, sont écartées).
+12. Aucune erreur JavaScript.
 
 Les échecs réseau vers Google Fonts sont comptés à
 part : ce sont des hôtes externes, et ils échouent normalement derrière
@@ -62,6 +67,17 @@ un proxy restrictif sans que l'application soit en cause.
 | `GET /auth/v1/user` | l'utilisateur de cette session |
 | `POST /rest/v1/rpc/get_feed` | 60 vidéos, **pagination par curseur incluse** |
 | `GET /rest/v1/profiles` | un profil d'athlète complet |
+| `GET /rest/v1/videos` | les vidéos d'un profil (`user_id=eq.…`) ; sept pour le profil connecté |
+| `HEAD` sur toute table | un comptage : total dans `Content-Range`, sans corps, comme PostgREST |
+| `GET /media/*` | miniatures et fichiers vidéo du fil |
 
 Le curseur est réellement honoré (`p_cursor_id` positionne le départ) —
 sans quoi le test de défilement infini ne prouverait rien.
+
+Le fil contient un ancien lien YouTube, sans fichier, que l'application doit
+écarter.
+
+`FAUX_ROLE=recruteur node e2e/fake-supabase.mjs` fait du compte connecté un
+recruteur (organisation, critères de recrutement) : c'est le mode qui sert à
+vérifier à l'œil le bouton « Faire une proposition » et la carte « Ce que je
+recherche ». Le test de fumée, lui, tourne en mode athlète.

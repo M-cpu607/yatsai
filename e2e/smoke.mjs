@@ -145,6 +145,34 @@ ok('Compte annoncé comme « affichés », pas « trouvés »', /affich/i.test(c
    'la liste est paginée : annoncer un total qu\'on n\'a pas serait faux');
 await page.screenshot({ path: `${SHOT}/4-recherche.png` });
 
+// Filtres : panneau monté du bas, pastilles retirables, bouton qui annonce
+// le résultat.
+{
+  await clic(/^Filtres/, 800);
+  const annonce = await page.locator('button', { hasText: /^Voir / }).last().textContent().catch(() => '');
+  ok('Filtres : le bouton annonce le résultat', /^Voir \d+/.test(annonce || ''), annonce || '(absent)');
+  await page.getByRole('button', { name: /Football/ }).first().evaluate(e => e.click());
+  await page.waitForTimeout(700);
+  await page.locator('button', { hasText: /^Voir / }).last().evaluate(e => e.click());
+  await page.waitForTimeout(500);
+  const pastilles = page.locator('[aria-label^="Retirer le filtre"]');
+  ok('Filtres : le filtre actif s\'affiche en pastille', await pastilles.count() === 1);
+  await pastilles.first().evaluate(e => e.click());
+  await page.waitForTimeout(500);
+  ok('Filtres : la pastille retire le filtre', await pastilles.count() === 0);
+}
+
+// La loupe du fil ouvre le même écran de recherche que l'onglet.
+await page.locator('nav button').nth(0).evaluate(e => e.click());
+await page.waitForTimeout(1500);
+await page.locator('[aria-label="Recherche"]').first().evaluate(e => e.click());
+await page.waitForTimeout(1500);
+ok('Loupe du fil : écran de recherche unifié',
+   await page.locator('button', { hasText: /^Filtres/ }).count() > 0
+   && await page.getByText(/affiché/).count() > 0);
+await page.locator('[aria-label="Fermer"]').first().evaluate(e => e.click()).catch(() => {});
+await page.waitForTimeout(500);
+
 // ── 7 bis. Le profil ──
 // Galerie en vignettes (le faux backend donne sept vidéos au profil
 // connecté) et ligne d'identité sans séparateur orphelin.
