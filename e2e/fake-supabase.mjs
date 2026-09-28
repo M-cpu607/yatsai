@@ -157,6 +157,9 @@ const profil = {
   role: 'athlete', is_private: false, hide_age: false, hide_location: false,
   messaging_pref: 'all', social_links: null, level_proof_status: 'none',
   has_club: true, season_start_month: 9,
+  // Conditions d'utilisation acceptées dans la version en vigueur.
+  // FAUX_CONDITIONS=0 simule un compte qui ne les a pas acceptées.
+  terms_version: process.env.FAUX_CONDITIONS === '0' ? null : '2026-09-28',
 };
 
 // FAUX_ROLE=recruteur : le compte connecté devient un recruteur, pour tester
@@ -283,6 +286,10 @@ createServer((req, res) => {
 
     if (u.pathname.startsWith('/rest/v1/rpc/increment_video_views')) return envoyer(200, null);
     // Publications restantes aujourd'hui. FAUX_QUOTA=0 simule un quota épuisé.
+    if (u.pathname === '/rest/v1/rpc/accepter_conditions') {
+      profil.terms_version = '2026-09-28';
+      return envoyer(200, null);
+    }
     if (u.pathname === '/rest/v1/rpc/publications_restantes_aujourdhui') {
       return envoyer(200, Number(process.env.FAUX_QUOTA ?? 3));
     }

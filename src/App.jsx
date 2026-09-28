@@ -20,6 +20,9 @@ import {
   Globe, Tag, Cake, FileText, Shield, Shirt, Medal,
 } from 'lucide-react';
 import { supabase } from './supabase';
+import { VERSION_CONDITIONS, conditionsAJour, aUneAcceptationEnAttente,
+         enregistrerAcceptationEnAttente } from './conditions';
+import { EcranConditions } from './EcranConditions';
 import { useReferentiels, normaliserPoste } from './referentiels';
 import Auth from './Auth';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -12346,6 +12349,11 @@ export default function App() {
         data.age = data.hide_age ? null : liveAge;
       }
     }
+    // Conditions cochées à l'inscription : on les enregistre AVANT d'afficher
+    // le profil, sans quoi l'écran d'acceptation surgirait un instant.
+    if (data && !conditionsAJour(data) && aUneAcceptationEnAttente()) {
+      if (await enregistrerAcceptationEnAttente()) data.terms_version = VERSION_CONDITIONS;
+    }
     setUserProfile(data);
   };
 
@@ -13703,6 +13711,16 @@ export default function App() {
       return <LandingPage onStart={(mode) => { setLandingDone(true); setAuthInitialMode(mode); }} />;
     }
     return <Auth initialMode={authInitialMode} />;
+  }
+
+  // Conditions d'utilisation non acceptées dans leur version en vigueur :
+  // rien d'autre n'est accessible tant que ce n'est pas fait.
+  if (userProfile && !conditionsAJour(userProfile)) {
+    return (
+      <EcranConditions
+        onAcceptees={() => setUserProfile(p => (p ? { ...p, terms_version: VERSION_CONDITIONS } : p))}
+        onDeconnexion={handleLogout} />
+    );
   }
 
   return (

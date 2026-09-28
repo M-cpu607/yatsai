@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react'
 import { supabase } from './supabase'
 import { useReferentiels } from './referentiels'
+import { noterAcceptationInscription } from './conditions'
+import { CaseConditions } from './EcranConditions'
 import { Loader2, Mail, Lock, User as UserIcon, Building2, Calendar, MapPin, Flag, Trophy, Upload, FileCheck2 } from 'lucide-react'
 
 // Les postes viennent de la table `positions` (voir src/referentiels.js).
@@ -268,6 +270,7 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
   const [country, setCountry] = useState('')
   const [region, setRegion] = useState('')
   const [city, setCity] = useState('')
+  const [conditionsAcceptees, setConditionsAcceptees] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -344,7 +347,7 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
 
   const canSubmit = mode === 'login'
     ? baseReady
-    : baseReady && (athleteReady || recruiterReady || observerReady)
+    : baseReady && conditionsAcceptees && (athleteReady || recruiterReady || observerReady)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -390,6 +393,9 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
         if (region.trim())  metadata.region  = region.trim()
         if (city.trim())    metadata.city    = city.trim()
 
+        // Enregistrée par l'application dès que le profil existe (voir
+        // src/conditions.js) : ici, le compte n'est pas encore créé.
+        noterAcceptationInscription()
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -1046,6 +1052,10 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
               </div>
             </div>
           </Section>
+        )}
+
+        {mode === 'signup' && signupStep === STEP_LABELS.length - 1 && (
+          <CaseConditions coche={conditionsAcceptees} onChange={setConditionsAcceptees} />
         )}
 
         {error && (

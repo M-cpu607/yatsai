@@ -83,3 +83,8 @@ Le fil contient un ancien lien YouTube, sans fichier, que l'application doit
 recruteur (organisation, critères de recrutement) : c'est le mode qui sert à
 vérifier à l'œil le bouton « Faire une proposition » et la carte « Ce que je
 recherche ». Le test de fumée, lui, tourne en mode athlète.
+
+`FAUX_CONDITIONS=0` donne un compte qui n'a pas accepté les conditions
+d'utilisation : l'application doit alors afficher l'écran d'acceptation
+avant tout le reste. `accepter_conditions` les marque acceptées (en
+mémoire : relancer le faux backend pour recommencer).
