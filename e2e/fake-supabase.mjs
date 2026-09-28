@@ -162,6 +162,15 @@ const profil = {
   terms_version: process.env.FAUX_CONDITIONS === '0' ? null : '2026-09-28',
 };
 
+// FAUX_AGE=12 : le compte connecté a 12 ans et pas d'accord parental.
+// L'accord se donne par les routes rpc ci-dessous, en mémoire.
+if (process.env.FAUX_AGE) {
+  const d = new Date(); d.setFullYear(d.getFullYear() - Number(process.env.FAUX_AGE)); d.setDate(d.getDate() - 1);
+  Object.assign(profil, { birthdate: d.toISOString().slice(0, 10), age: Number(process.env.FAUX_AGE), parental_consent_at: null });
+}
+const JETON_ACCORD = '5f0c7c1e-8d1a-4d7e-9a57-3b2f4a6c9e10';
+let demandeAccord = null;
+
 // FAUX_ROLE=recruteur : le compte connecté devient un recruteur, pour tester
 // les écrans qui lui sont propres (proposition, critères de recrutement).
 if (process.env.FAUX_ROLE === 'recruteur') {
@@ -286,6 +295,22 @@ createServer((req, res) => {
 
     if (u.pathname.startsWith('/rest/v1/rpc/increment_video_views')) return envoyer(200, null);
     // Publications restantes aujourd'hui. FAUX_QUOTA=0 simule un quota épuisé.
+    if (u.pathname === '/rest/v1/rpc/demander_accord_parental') {
+      const b = JSON.parse(corps || '{}');
+      demandeAccord = { token: JETON_ACCORD, parent_name: b.p_parent_nom, parent_email: b.p_parent_email, requested_at: new Date().toISOString() };
+      return envoyer(200, JETON_ACCORD);
+    }
+    if (u.pathname === '/rest/v1/rpc/mon_accord_parental') return envoyer(200, demandeAccord ? [demandeAccord] : []);
+    if (u.pathname === '/rest/v1/rpc/infos_accord_parental') {
+      const b = JSON.parse(corps || '{}');
+      if (b.p_token !== JETON_ACCORD) return envoyer(200, []);
+      return envoyer(200, [{ prenom: profil.full_name.split(' ')[0], age: profil.age, sport: profil.sport,
+        parent_name: demandeAccord?.parent_name ?? 'Claire Faure', deja_donne: !!profil.parental_consent_at }]);
+    }
+    if (u.pathname === '/rest/v1/rpc/confirmer_accord_parental') {
+      profil.parental_consent_at = new Date().toISOString();
+      return envoyer(200, null);
+    }
     if (u.pathname === '/rest/v1/rpc/accepter_conditions') {
       profil.terms_version = '2026-09-28';
       return envoyer(200, null);

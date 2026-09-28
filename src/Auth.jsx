@@ -3,6 +3,7 @@ import { supabase } from './supabase'
 import { useReferentiels } from './referentiels'
 import { noterAcceptationInscription } from './conditions'
 import { CaseConditions } from './EcranConditions'
+import { AGE_SANS_ACCORD, emailValide, noterParentInscription } from './accordParental'
 import { Loader2, Mail, Lock, User as UserIcon, Building2, Calendar, MapPin, Flag, Trophy, Upload, FileCheck2 } from 'lucide-react'
 
 // Les postes viennent de la table `positions` (voir src/referentiels.js).
@@ -271,6 +272,11 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
   const [region, setRegion] = useState('')
   const [city, setCity] = useState('')
   const [conditionsAcceptees, setConditionsAcceptees] = useState(false)
+  // Moins de 15 ans : le parent qui devra donner son accord.
+  const [parentNom, setParentNom] = useState('')
+  const [parentEmail, setParentEmail] = useState('')
+  // Les observateurs ne donnent pas leur date de naissance : ils attestent.
+  const [au15ans, setAu15ans] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -297,6 +303,8 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
     return a >= 0 ? a : null
   }
   const computedAge = computeAgeFromBirthdate(birthdate)
+  const estMineur = !isObserver && computedAge !== null && computedAge >= 10 && computedAge < AGE_SANS_ACCORD
+  const parentOk = !estMineur || (parentNom.trim().length >= 2 && emailValide(parentEmail))
   const ageOk = computedAge !== null && computedAge >= 10 && computedAge <= 100
   // Pour la date max autorisée à l'input (= aujourd'hui - 10 ans, prudence)
   const maxBirthdate = (() => {
@@ -310,24 +318,24 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
   // - Si en club : nom du club requis aussi.
   // - Si young_pro/senior_pro : preuve obligatoire avant de soumettre.
   const needsProof = LEVELS_REQUIRING_PROOF.includes(level)
-  const athleteReady = isAthlete && fullName.trim() && gender && ageOk && hasClub !== null
+  const athleteReady = isAthlete && fullName.trim() && gender && ageOk && parentOk && hasClub !== null
     && level
     && (hasClub === false || club.trim())
     && (!needsProof || !!levelProofFile)
   const recruiterReady = isRecruiter && fullName.trim() && organization.trim()
-    && gender && ageOk && sport && recruitingGender
+    && gender && ageOk && parentOk && sport && recruitingGender
     && recruitingLevels.length > 0
     && recruitingAgeMin !== '' && recruitingAgeMax !== ''
     && Number(recruitingAgeMin) <= Number(recruitingAgeMax)
   // Observateur : juste un nom (date de naissance et genre non demandés)
-  const observerReady = isObserver && fullName.trim()
+  const observerReady = isObserver && fullName.trim() && au15ans
   const baseReady = email.trim() && password.length >= 6
 
   // Validation par étape (inscription)
   // Pour les observateurs : pas besoin de genre/date naissance — uniquement nom.
   const step0Ready = isObserver
-    ? (role && fullName.trim())
-    : (role && fullName.trim() && gender && ageOk)
+    ? (role && fullName.trim() && au15ans)
+    : (role && fullName.trim() && gender && ageOk && parentOk)
   const step1Ready = isAthlete
     ? (sport && hasClub !== null && level && (hasClub === false || club.trim())
         && (!needsProof || !!levelProofFile))
@@ -396,6 +404,7 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
         // Enregistrée par l'application dès que le profil existe (voir
         // src/conditions.js) : ici, le compte n'est pas encore créé.
         noterAcceptationInscription()
+        if (estMineur) noterParentInscription(parentNom, parentEmail)
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -499,6 +508,24 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
     return <MotDePasseOublie emailInitial={email} onRetour={() => { setMode('login'); setError(null) }} />
   }
 
+  // Moins de 15 ans : qui devra donner l'accord. Le compte sera créé, mais
+  // restera inactif jusqu'à la confirmation du parent.
+  const blocParent = estMineur && (
+    <Section title="L'accord d'un parent"
+      hint="Tu as moins de 15 ans : ton compte sera activé quand ce parent aura donné son accord. Tu pourras lui envoyer le lien juste après l'inscription.">
+      <div className="space-y-2">
+        <input type="text" value={parentNom} onChange={(e) => setParentNom(e.target.value)}
+          placeholder="Nom de ton parent" maxLength={120}
+          className="w-full px-3.5 py-3 rounded-xl text-sm outline-none"
+          style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+        <input type="email" value={parentEmail} onChange={(e) => setParentEmail(e.target.value)}
+          placeholder="Son adresse e-mail"
+          className="w-full px-3.5 py-3 rounded-xl text-sm outline-none"
+          style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
+      </div>
+    </Section>
+  )
+
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-8"
       style={{ backgroundColor: C.bg }}>
@@ -586,6 +613,16 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
                       style={{ backgroundColor: C.surface, color: C.text, border: `1px solid ${C.border}` }} />
                   </div>
                 </Section>
+                {isObserver && (
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <input type="checkbox" checked={au15ans} onChange={(e) => setAu15ans(e.target.checked)}
+                      className="mt-0.5 w-5 h-5 flex-shrink-0" style={{ accentColor: C.gold }} />
+                    <span className="text-xs leading-relaxed" style={{ color: C.textDim }}>
+                      J'ai 15 ans ou plus. En dessous, inscris-toi comme athlète : un parent
+                      devra donner son accord.
+                    </span>
+                  </label>
+                )}
               </>
             )}
 
@@ -639,6 +676,7 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
                     </p>
                   )}
                 </Section>
+                {blocParent}
 
                 {/* Nationalité */}
                 <Section title="Ta nationalité">
@@ -873,6 +911,7 @@ export default function Auth({ initialMode = 'login', onPasswordReset }) {
                     </p>
                   )}
                 </Section>
+                {blocParent}
 
                 <Section title="Ta nationalité">
                   <div className="relative">

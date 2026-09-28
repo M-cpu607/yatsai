@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import { PageAccordParental } from './EcranAccordParental.jsx'
 
 // ─── Nettoyage des service workers (TOUTES plateformes) ───────────
 // Le service worker (PWA) a été retiré du build : il provoquait des écrans
@@ -62,8 +63,12 @@ async function initNative() {
 }
 initNative()
 
+// Le lien d'accord parental (/?accord=<jeton>) ouvre une page publique, sans
+// compte : le parent n'a pas à installer l'application.
+const jetonAccord = new URLSearchParams(window.location.search).get('accord')
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    {jetonAccord ? <PageAccordParental jeton={jetonAccord} /> : <App />}
   </StrictMode>,
 )

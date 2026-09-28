@@ -88,3 +88,7 @@ recherche ». Le test de fumée, lui, tourne en mode athlète.
 d'utilisation : l'application doit alors afficher l'écran d'acceptation
 avant tout le reste. `accepter_conditions` les marque acceptées (en
 mémoire : relancer le faux backend pour recommencer).
+
+`FAUX_AGE=12` donne un compte de 12 ans sans accord parental : écran
+d'attente, puis page du parent (`/?accord=5f0c7c1e-8d1a-4d7e-9a57-3b2f4a6c9e10`),
+dont la confirmation débloque le compte (en mémoire elle aussi).

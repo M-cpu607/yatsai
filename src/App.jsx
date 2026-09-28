@@ -23,6 +23,8 @@ import { supabase } from './supabase';
 import { VERSION_CONDITIONS, conditionsAJour, aUneAcceptationEnAttente,
          enregistrerAcceptationEnAttente } from './conditions';
 import { EcranConditions } from './EcranConditions';
+import { sansAccordParental } from './accordParental';
+import { EcranAttenteAccord } from './EcranAccordParental';
 import { useReferentiels, normaliserPoste } from './referentiels';
 import Auth from './Auth';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -13719,6 +13721,17 @@ export default function App() {
     return (
       <EcranConditions
         onAcceptees={() => setUserProfile(p => (p ? { ...p, terms_version: VERSION_CONDITIONS } : p))}
+        onDeconnexion={handleLogout} />
+    );
+  }
+
+  // Moins de 15 ans sans accord parental : compte inactif, écran d'attente.
+  // Le serveur l'impose de son côté (publication, messages, recherche).
+  if (userProfile && sansAccordParental(userProfile)) {
+    return (
+      <EcranAttenteAccord
+        profil={userProfile}
+        onAccorde={(profil) => setUserProfile(profil)}
         onDeconnexion={handleLogout} />
     );
   }
