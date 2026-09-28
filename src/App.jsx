@@ -3815,7 +3815,7 @@ const KB_ENTRIES = [
     answer:
       "Les paramètres (⚙️ en haut à droite de ton profil) :\n\n" +
       "• Compte — modifier ton email/mot de passe\n" +
-      "• Confidentialité — compte privé, qui peut te contacter, masquer ton âge/localisation\n" +
+      "• Confidentialité — compte privé, qui peut te contacter, masquer ton âge/localisation, comptes bloqués\n" +
       "• Notifications — gérer les alertes (likes, commentaires, messages, abonnés)\n" +
       "• Données — télécharger tes données (RGPD)\n" +
       "• Zone sensible — se déconnecter ou supprimer définitivement son compte (irréversible)\n\n" +
@@ -3826,8 +3826,9 @@ const KB_ENTRIES = [
     answer:
       "Pour signaler un contenu :\n\n" +
       "• Une vidéo : bouton ⋮ en haut à droite de la vidéo dans le feed → \"Signaler\"\n" +
-      "• Un compte : sur le profil de la personne, bouton rouge \"Signaler ce compte\" en bas\n\n" +
-      "Choisis un motif (spam, harcèlement, contenu inapproprié, fake, violence) et ajoute des détails si besoin. Notre équipe examine chaque signalement. Un signalement abusif peut entraîner des restrictions sur ton compte.",
+      "• Un compte : sur son profil, bouton ⋯ en haut à droite → \"Signaler ce profil\"\n\n" +
+      "Choisis un motif (spam, harcèlement, contenu inapproprié, fake, violence) et ajoute des détails si besoin. Notre équipe examine chaque signalement. Un signalement abusif peut entraîner des restrictions sur ton compte.\n\n" +
+      "Pour bloquer quelqu'un : sur son profil, bouton ⋯ → \"Bloquer ce compte\". Il ne pourra plus te suivre ni t'écrire, et vous ne verrez plus vos vidéos, commentaires et messages respectifs. Il n'est pas prévenu. Pour débloquer : Paramètres → Confidentialité → Comptes bloqués.",
   },
   {
     triggers: ['abonnement', 'abonner', 'follow', 'suivre', 'abonne'],
@@ -8580,7 +8581,78 @@ function ModerationView({ onClose, onSelectProfile, onPlayVideo }) {
   );
 }
 
-function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModeration }) {
+// Comptes que j'ai bloqués, avec de quoi les débloquer. Chargé à l'ouverture
+// seulement : la plupart des gens n'ouvriront jamais cette liste.
+function ComptesBloques({ currentUserId, onUnblock }) {
+  const [ouvert, setOuvert] = useState(false);
+  const [liste, setListe] = useState(null);      // null = pas encore chargée
+  const [enCours, setEnCours] = useState(null);  // id en cours de déblocage
+
+  const ouvrir = async () => {
+    const suivant = !ouvert;
+    setOuvert(suivant);
+    if (!suivant || !currentUserId) return;
+    const { data, error } = await supabase.from('blocked_users')
+      .select('blocked_id, created_at, profil:profiles!blocked_users_blocked_id_fkey(id, full_name, avatar_url, username)')
+      .eq('blocker_id', currentUserId)
+      .order('created_at', { ascending: false });
+    if (error) console.error('Erreur chargement blocages:', error);
+    setListe((data || []).filter(r => r.profil));
+  };
+
+  const debloquer = async (id) => {
+    setEnCours(id);
+    const ok = await onUnblock?.(id);
+    setEnCours(null);
+    if (ok) setListe(prev => (prev || []).filter(r => r.blocked_id !== id));
+  };
+
+  return (
+    <div>
+      <button type="button" onClick={ouvrir}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left">
+        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: C.surface2 }}>
+          <Ban size={16} style={{ color: C.text }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold" style={{ color: C.text }}>Comptes bloqués</div>
+          {liste && (
+            <div className="text-[11px]" style={{ color: C.textDim }}>
+              {liste.length === 0 ? 'Aucun' : `${liste.length} compte${liste.length > 1 ? 's' : ''}`}
+            </div>
+          )}
+        </div>
+        {ouvert ? <ChevronUp size={16} style={{ color: C.textDim }} /> : <ChevronDown size={16} style={{ color: C.textDim }} />}
+      </button>
+      {ouvert && (
+        <div className="px-4 pb-3">
+          {liste === null ? (
+            <div className="flex justify-center py-3"><Loader2 size={16} className="animate-spin" style={{ color: C.textDim }} /></div>
+          ) : liste.length === 0 ? (
+            <p className="text-xs py-2" style={{ color: C.textDim }}>
+              Tu n'as bloqué personne. Pour bloquer un compte : sur son profil, bouton ⋯ puis « Bloquer ce compte ».
+            </p>
+          ) : liste.map(r => (
+            <div key={r.blocked_id} className="flex items-center gap-3 py-2">
+              <Avatar profile={r.profil} size={36} />
+              <div className="flex-1 min-w-0 text-sm font-semibold truncate" style={{ color: C.text }}>
+                {r.profil.full_name || r.profil.username || 'Utilisateur'}
+              </div>
+              <button onClick={() => debloquer(r.blocked_id)} disabled={enCours === r.blocked_id}
+                className="px-3 py-1.5 rounded-full text-xs font-bold"
+                style={{ color: C.text, border: `1px solid ${C.border}`, opacity: enCours === r.blocked_id ? 0.6 : 1 }}>
+                Débloquer
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModeration, onUnblock }) {
   // Sections togglables
   const [section, setSection] = useState(null); // 'password' | 'delete' | null
 
@@ -8882,6 +8954,8 @@ function SettingsView({ userProfile, userEmail, onClose, onLogout, onOpenModerat
               })}
             </div>
           </div>
+          <div className="h-px mx-4" style={{ backgroundColor: C.border }} />
+          <ComptesBloques currentUserId={userProfile?.id} onUnblock={onUnblock} />
         </div>
 
         {/* Notifications */}
@@ -9595,8 +9669,14 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
                            isFollowing, onFollow, onUnfollow, onLoadFollowCounts, onShowFollowList,
                            onClose, onContact, onAddToShortlist, onRemoveFromShortlist, onPlayVideo,
                            onReport, onLoadSignedPosts, onSelectProfile, onLoadSignedCount,
-                           onShowSignedAthletes, onDeleteVideo, onPropose, proposalStatus }) {
+                           onShowSignedAthletes, onDeleteVideo, onPropose, proposalStatus,
+                           onBlock, onUnblock }) {
   const [videos, setVideos] = useState([]);
+  // Rangé avec l'id du profil concerné : au changement de profil, l'ancienne
+  // valeur ne vaut plus rien, sans qu'un effet ait à la remettre à zéro.
+  const [blocage, setBlocage] = useState(null);            // { id, bloque }
+  const [confirmBlocage, setConfirmBlocage] = useState(false);
+  const [blocageEnCours, setBlocageEnCours] = useState(false);
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
   const [signedCount, setSignedCount] = useState(0);
@@ -9650,7 +9730,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
       setLoading(false);
     })();
     return () => { cancel = true; };
-  }, [profile?.id, isFollowing]); // recharge quand follow change
+  }, [profile?.id, isFollowing, blocage]); // recharge quand follow ou blocage change
 
   // Realtime : mettre à jour le compteur signés si une signing est confirmée
   useEffect(() => {
@@ -9687,6 +9767,26 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
     return () => { supabase.removeChannel(channel); };
   }, [profile?.id]);
 
+  // Ai-je bloqué ce compte ? La RLS ne montre que ses propres blocages :
+  // qu'il m'ait bloqué, lui, reste invisible — c'est voulu.
+  useEffect(() => {
+    if (!profile?.id || !currentUserId || profile.id === currentUserId) return;
+    let cancel = false;
+    supabase.from('blocked_users').select('blocked_id')
+      .eq('blocker_id', currentUserId).eq('blocked_id', profile.id).maybeSingle()
+      .then(({ data }) => { if (!cancel) setBlocage({ id: profile.id, bloque: !!data }); });
+    return () => { cancel = true; };
+  }, [profile?.id, currentUserId]);
+  const bloque = !!profile && blocage?.id === profile.id && blocage.bloque;
+
+  const basculerBlocage = async () => {
+    setBlocageEnCours(true);
+    const ok = bloque ? await onUnblock?.(profile.id) : await onBlock?.(profile.id);
+    setBlocageEnCours(false);
+    setConfirmBlocage(false);
+    if (ok) setBlocage({ id: profile.id, bloque: !bloque });
+  };
+
   if (!profile) return null;
   const isOwn = profile.id === currentUserId;
   const isShortlisted = !!shortlistStatus;
@@ -9717,7 +9817,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
           signalement flottait seul au milieu du profil. */}
       {!isOwn && (
         <div className="fixed top-12 right-4 z-[91] flex items-center gap-2">
-          {canShortlist && (
+          {canShortlist && !bloque && (
             <button onClick={() => isShortlisted ? onRemoveFromShortlist?.(profile.id) : onAddToShortlist?.(profile.id)}
               className="px-3 h-10 rounded-full flex items-center gap-1.5"
               style={{
@@ -9753,10 +9853,44 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
               style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
               <Share2 size={16} strokeWidth={2.2} /> Partager ce profil
             </button>
+            <button onClick={() => { setMenuOuvert(false); if (bloque) basculerBlocage(); else setConfirmBlocage(true); }}
+              className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
+              style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
+              <Ban size={16} strokeWidth={2.2} /> {bloque ? 'Débloquer ce compte' : 'Bloquer ce compte'}
+            </button>
             <button onClick={() => { setMenuOuvert(false); onReport?.('user', profile.id, profile.full_name); }}
               className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
               style={{ color: C.red }}>
               <Flag size={16} strokeWidth={2.2} /> Signaler ce profil
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {confirmBlocage && createPortal(
+        <div className="fixed inset-0 z-[96] flex items-end fade-in"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+          onClick={() => !blocageEnCours && setConfirmBlocage(false)}>
+          <div className="w-full rounded-t-2xl p-5 pb-8" onClick={(e) => e.stopPropagation()}
+            style={{ backgroundColor: C.surface, borderTop: `1px solid ${C.border}` }}>
+            <p className="text-base font-extrabold mb-2" style={{ color: C.text }}>
+              Bloquer {profile.full_name || 'ce compte'} ?
+            </p>
+            <p className="text-sm leading-relaxed mb-5" style={{ color: C.textDim }}>
+              Ce compte ne pourra plus te suivre ni t'écrire, et vous ne verrez plus
+              vos vidéos, commentaires et messages respectifs. Il n'en sera pas prévenu.
+              Tu peux le débloquer à tout moment depuis Paramètres.
+            </p>
+            <button onClick={basculerBlocage} disabled={blocageEnCours}
+              className="w-full py-3.5 rounded-xl text-sm font-extrabold mb-2 flex items-center justify-center gap-2"
+              style={{ backgroundColor: C.red, color: '#fff', opacity: blocageEnCours ? 0.6 : 1 }}>
+              {blocageEnCours ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} strokeWidth={2.4} />}
+              Bloquer
+            </button>
+            <button onClick={() => setConfirmBlocage(false)} disabled={blocageEnCours}
+              className="w-full py-3 rounded-xl text-sm font-semibold"
+              style={{ color: C.text, border: `1px solid ${C.border}` }}>
+              Annuler
             </button>
           </div>
         </div>,
@@ -9772,7 +9906,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         <AvatarProfil profile={profile} />
 
         {/* Actions à droite (Message + Suivre), comme sur X */}
-        {!isOwn && (
+        {!isOwn && !bloque && (
           <div className="flex items-center gap-2 mb-1">
             <button onClick={onContact}
               aria-label="Message"
@@ -9837,8 +9971,26 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
         </div>
       )}
 
+      {bloque && (
+        <div className="px-4 pb-32">
+          <div className="rounded-2xl p-5 text-center"
+            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+            <Ban size={22} strokeWidth={2.2} className="mx-auto mb-2" style={{ color: C.textDim }} />
+            <p className="text-sm font-bold mb-1" style={{ color: C.text }}>Tu as bloqué ce compte</p>
+            <p className="text-xs mb-4" style={{ color: C.textDim }}>
+              Ses vidéos et ses messages ne te sont plus montrés.
+            </p>
+            <button onClick={basculerBlocage} disabled={blocageEnCours}
+              className="px-5 py-2.5 rounded-full text-sm font-bold"
+              style={{ color: C.text, border: `1px solid ${C.border}`, opacity: blocageEnCours ? 0.6 : 1 }}>
+              Débloquer
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Recruteur regardant un athlète : faire une proposition (Phase 2) */}
-      {canPropose && (
+      {canPropose && !bloque && (
         <div className="px-4 mb-4">
           {proposalStatus ? (
             <div className="w-full py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
@@ -9862,7 +10014,7 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
 
       {/* Liste des vidéos (athlètes uniquement — recruteurs et observateurs ne publient pas) */}
       <div className="px-4 pb-32"
-        style={{ display: (profile.is_recruiter || isObserverRole(profile)) ? 'none' : undefined }}>
+        style={{ display: (profile.is_recruiter || isObserverRole(profile) || bloque) ? 'none' : undefined }}>
         <GalerieVideos videos={videos} loading={loading} onPlay={setPlayingVideo}
           onDelete={isOwn ? onDeleteVideo : null}
           vide="Aucune vidéo publiée pour l'instant." />
@@ -13222,6 +13374,34 @@ export default function App() {
     }
   };
 
+  // ─── BLOCAGE ────────────────────────────────────────────────
+  // C'est le serveur qui fait respecter le blocage (RLS : vidéos,
+  // commentaires, messages, abonnements). Ici, on retire tout de suite ce
+  // qui est déjà à l'écran, sans attendre le prochain chargement.
+  const bloquerUtilisateur = async (userId) => {
+    if (!userProfile?.id || !userId || userId === userProfile.id) return false;
+    const { error } = await supabase.from('blocked_users')
+      .insert({ blocker_id: userProfile.id, blocked_id: userId });
+    // 23505 : déjà bloqué — le résultat voulu est atteint.
+    if (error && error.code !== '23505') { console.error('Erreur blocage:', error); return false; }
+    setMyFollowing(prev => { const n = new Set(prev); n.delete(userId); return n; });
+    setVideos(prev => prev.filter(v => v.user_id !== userId));
+    setDbShortlist(prev => {
+      if (!prev.has(userId)) return prev;
+      const n = new Map(prev); n.delete(userId); return n;
+    });
+    setConversations(prev => prev.filter(c => c.otherId !== userId));
+    return true;
+  };
+
+  const debloquerUtilisateur = async (userId) => {
+    if (!userProfile?.id || !userId) return false;
+    const { error } = await supabase.from('blocked_users')
+      .delete().eq('blocker_id', userProfile.id).eq('blocked_id', userId);
+    if (error) { console.error('Erreur déblocage:', error); return false; }
+    return true;
+  };
+
   // Compteurs (followers + following) pour un user donné
   const loadFollowCounts = async (userId) => {
     if (!userId) return { followers: 0, following: 0 };
@@ -13594,6 +13774,8 @@ export default function App() {
           onDeleteVideo={deleteVideo}
           onPropose={(p) => setProposeTarget(p)}
           proposalStatus={proposalStatusByAthlete.get(selectedProfile.id)}
+          onBlock={bloquerUtilisateur}
+          onUnblock={debloquerUtilisateur}
         />
       )}
 
@@ -13612,6 +13794,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onLogout={async () => { await handleLogout(); setSettingsOpen(false); }}
           onOpenModeration={() => setModerationOpen(true)}
+          onUnblock={debloquerUtilisateur}
         />
       )}
 
