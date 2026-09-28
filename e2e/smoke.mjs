@@ -116,6 +116,8 @@ await page.waitForTimeout(1500);
 const avantOuverture = await page.locator('select').count();
 ok('Bloc « Le contexte » replié à l\'ouverture', avantOuverture < 3,
    `${avantOuverture} liste${avantOuverture > 1 ? 's' : ''} visible${avantOuverture > 1 ? 's' : ''} sur 5`);
+ok('Publication : durée et quota annoncés',
+   /30 secondes au plus · 3 publications restantes aujourd'hui/.test(await page.textContent('body')));
 ok('Publication : plus d\'option YouTube',
    !(await page.textContent('body')).includes('Lien YouTube'),
    'seules les vidéos filmées ou importées se publient');

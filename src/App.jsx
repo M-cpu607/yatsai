@@ -846,6 +846,42 @@ function getVideoThumb(data) {
   return data?.thumbnail_url || null;
 }
 
+// Durée d'un fichier vidéo local, en secondes, lue dans ses métadonnées.
+// Indépendante de l'extraction de la miniature : si celle-ci échoue, la durée
+// reste indispensable — la base refuse une vidéo sans durée.
+function lireDureeVideo(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    let fini = false;
+    const fin = (d) => {
+      if (fini) return;
+      fini = true;
+      try { URL.revokeObjectURL(url); } catch { /* déjà libérée */ }
+      resolve(d);
+    };
+    v.onloadedmetadata = () => {
+      if (Number.isFinite(v.duration) && v.duration > 0) return fin(v.duration);
+      // Certains fichiers — ceux qu'enregistre un navigateur, notamment —
+      // n'annoncent pas leur durée : elle vaut Infinity. Demander une
+      // position très lointaine oblige le lecteur à la calculer.
+      v.ondurationchange = () => {
+        if (Number.isFinite(v.duration) && v.duration > 0) fin(v.duration);
+      };
+      v.currentTime = Number.MAX_SAFE_INTEGER;
+    };
+    v.onerror = () => fin(null);
+    setTimeout(() => fin(null), 8000);
+    v.src = url;
+  });
+}
+
+// Durée maximale d'une vidéo, en secondes. La base tolère 31 s une fois
+// arrondi (un téléphone qui filme 30 s produit souvent 30,03 s).
+const DUREE_MAX_VIDEO_S = 30;
+
 // Extrait une frame d'un fichier vidéo local et retourne une image + un blob JPEG
 async function extractFrameFromVideoFile(file, atTime = 0.5) {
   return new Promise((resolve, reject) => {
@@ -2586,6 +2622,23 @@ function BlocPublication({ titre, resume, repliable, defautOuvert = true, childr
 }
 
 function PublishView({ userProfile, setTab }) {
+  // Publications restantes aujourd'hui. C'est la base qui en fixe le nombre
+  // et qui fait respecter la limite ; l'application l'annonce, et évite
+  // d'envoyer un fichier qui serait refusé ensuite.
+  const [restantes, setRestantes] = useState(null);
+  const rafraichirQuota = useCallback(async () => {
+    const { data, error } = await supabase.rpc('publications_restantes_aujourdhui');
+    if (!error && typeof data === 'number') setRestantes(data);
+  }, []);
+  useEffect(() => {
+    let vivant = true;
+    supabase.rpc('publications_restantes_aujourdhui').then(({ data, error }) => {
+      if (vivant && !error && typeof data === 'number') setRestantes(data);
+    });
+    return () => { vivant = false; };
+  }, []);
+  const quotaEpuise = restantes === 0;
+
   // Upload direct
   const [videoFile, setVideoFile] = useState(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
@@ -2638,8 +2691,9 @@ function PublishView({ userProfile, setTab }) {
 
   // Valide = on sait en extraire un identifiant, rien de moins.
 
-  // Limite 200 Mo (cohérent avec le bucket)
-  const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+  // 80 Mo : la limite du compartiment de stockage. Trente secondes en 1080p
+  // pèsent de l'ordre de 20 à 40 Mo.
+  const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 
   const onPickFile = async (file) => {
     setError('');
@@ -2649,7 +2703,17 @@ function PublishView({ userProfile, setTab }) {
       return;
     }
     if (file.size > MAX_VIDEO_BYTES) {
-      setError(`Vidéo trop lourde (${(file.size / (1024 * 1024)).toFixed(1)} Mo). Maximum 200 Mo.`);
+      setError(`Vidéo trop lourde (${(file.size / (1024 * 1024)).toFixed(0)} Mo, 80 Mo au plus). Filme en 1080p plutôt qu'en 4K : Réglages → Appareil photo → Enregistrement vidéo.`);
+      return;
+    }
+    // La durée d'abord : inutile d'aller plus loin avec une vidéo trop longue.
+    const duree = await lireDureeVideo(file);
+    if (duree == null) {
+      setError('Impossible de lire la durée de cette vidéo. Essaie avec une autre.');
+      return;
+    }
+    if (duree > DUREE_MAX_VIDEO_S + 0.9) {
+      setError(`Une vidéo dure ${DUREE_MAX_VIDEO_S} secondes au plus. Celle-ci en dure ${Math.round(duree)} : coupe-la dans Photos (Modifier), puis choisis-la à nouveau.`);
       return;
     }
     // Reset preview précédente
@@ -2659,7 +2723,7 @@ function PublishView({ userProfile, setTab }) {
     setThumbDataUrl(null);
     setThumbImg(null);
     setThumbBlob(null);
-    setVideoDuration(null);
+    setVideoDuration(duree);
 
     // Extrait une frame pour la miniature + l'IA
     try {
@@ -2667,7 +2731,6 @@ function PublishView({ userProfile, setTab }) {
       setThumbDataUrl(frame.dataUrl);
       setThumbImg(frame.img);
       setThumbBlob(frame.blob);
-      setVideoDuration(frame.duration || null);
     } catch (e) {
       console.warn('Extraction frame impossible:', e);
       // On laisse l'upload se faire quand même, sans miniature
@@ -2727,6 +2790,7 @@ function PublishView({ userProfile, setTab }) {
     return {
       video_url: vPub?.publicUrl || null,
       thumbnail_url: thumbPublicUrl,
+      chemins: thumbPublicUrl ? [videoPath, thumbPath] : [videoPath],
     };
   };
 
@@ -2761,7 +2825,12 @@ function PublishView({ userProfile, setTab }) {
       tracking_size: (trackingOn && trackingPoints.length) ? trackingSize : null,
     };
     const { error: insertError } = await supabase.from('videos').insert(row);
-    if (insertError) { setError('Erreur : ' + insertError.message); return false; }
+    if (insertError) {
+      // P0001 : un refus des règles de publication (durée, quota du jour),
+      // dont le message est écrit pour être montré tel quel.
+      setError(insertError.code === 'P0001' ? insertError.message : 'Erreur : ' + insertError.message);
+      return false;
+    }
     return true;
   };
 
@@ -2779,7 +2848,13 @@ function PublishView({ userProfile, setTab }) {
     };
     const ok = await insertVideoRow(extra);
     setLoading(false);
-    if (!ok) return;
+    if (!ok) {
+      // La base a refusé la vidéo : on ne laisse pas le fichier envoyé
+      // occuper le stockage pour rien.
+      supabase.storage.from('videos').remove(uploaded.chemins).catch(() => {});
+      return;
+    }
+    rafraichirQuota();
     setSuccess(true);
     setTimeout(() => {
       setSuccess(false);
@@ -2808,6 +2883,10 @@ function PublishView({ userProfile, setTab }) {
     }
     if (!videoFile) {
       setError('Sélectionne ou filme une vidéo avant de publier.');
+      return;
+    }
+    if (quotaEpuise) {
+      setError('Tu as publié le maximum de vidéos pour aujourd\'hui. Tu pourras publier à nouveau demain.');
       return;
     }
 
@@ -2840,15 +2919,27 @@ function PublishView({ userProfile, setTab }) {
           Publier une vidéo
         </h1>
         <p className="text-sm mt-1" style={{ color: C.textDim }}>
-          Partage tes meilleures actions
+          30 secondes au plus
+          {restantes != null && !quotaEpuise && (
+            <> · {restantes} publication{restantes > 1 ? 's' : ''} restante{restantes > 1 ? 's' : ''} aujourd'hui</>
+          )}
         </p>
+        {quotaEpuise && (
+          <div className="mt-3 rounded-xl px-3 py-2.5 flex items-start gap-2"
+            style={{ backgroundColor: C.surface, border: `1px solid ${C.border}` }}>
+            <Clock size={15} strokeWidth={2.2} className="flex-shrink-0 mt-0.5" style={{ color: C.textDim }} />
+            <p className="text-xs leading-relaxed" style={{ color: C.textDim }}>
+              Tu as publié tes vidéos du jour. Tu pourras publier à nouveau demain, à partir de minuit.
+            </p>
+          </div>
+        )}
       </div>
 
       <form onSubmit={handlePublish} className="px-5 space-y-4">
         <BlocPublication titre="La vidéo" resume="Filme-la, ou choisis-la sur ton téléphone.">
         {/* Vidéo filmée ou importée — le seul mode de publication */}
         <div>
-            <LibelleChamp icon={Video} obligatoire>Vidéo (max 200 Mo)</LibelleChamp>
+            <LibelleChamp icon={Video} obligatoire>Vidéo · 30 s max</LibelleChamp>
 
             {/* Inputs cachés */}
             <input ref={fileInputRef} type="file" accept="video/*" className="hidden"
@@ -3174,15 +3265,15 @@ function PublishView({ userProfile, setTab }) {
         )}
 
         {/* Bouton Publier */}
-        <button type="submit" disabled={loading}
+        <button type="submit" disabled={loading || quotaEpuise}
           className="w-full py-4 rounded-xl text-sm font-extrabold mt-6 flex items-center justify-center gap-2"
-          style={{ backgroundColor: C.gold, color: C.bg, opacity: loading ? 0.6 : 1 }}>
+          style={{ backgroundColor: C.gold, color: C.bg, opacity: (loading || quotaEpuise) ? 0.5 : 1 }}>
           {loading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
           {loading
             ? (uploadProgress > 0 && uploadProgress < 100
                 ? `Upload ${uploadProgress}%…`
                 : 'Publication…')
-            : 'Publier ma vidéo'}
+            : quotaEpuise ? 'Reviens demain' : 'Publier ma vidéo'}
         </button>
       </form>
     </div>

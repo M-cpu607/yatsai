@@ -282,6 +282,10 @@ createServer((req, res) => {
     }
 
     if (u.pathname.startsWith('/rest/v1/rpc/increment_video_views')) return envoyer(200, null);
+    // Publications restantes aujourd'hui. FAUX_QUOTA=0 simule un quota épuisé.
+    if (u.pathname === '/rest/v1/rpc/publications_restantes_aujourdhui') {
+      return envoyer(200, Number(process.env.FAUX_QUOTA ?? 3));
+    }
 
     // ── Référentiels ──
     if (u.pathname === '/rest/v1/positions') return envoyer(200, POSITIONS);

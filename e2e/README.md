@@ -43,6 +43,8 @@ rm .env.local                                            # revenir au vrai backe
 8. Le formulaire de publication ouvre avec le bloc « Le contexte » replié,
    et son ouverture révèle les cinq listes alimentées par les référentiels :
    postes restreints au sport choisi, saisons avec la courante en tête.
+   L'en-tête annonce la durée maximale (30 s) et les publications restantes
+   du jour (`FAUX_QUOTA=0` simule un quota épuisé : bouton « Reviens demain »).
 9. La recherche rend des résultats et annonce un nombre « affichés », pas
    « trouvés » — la liste est paginée. Ses filtres s'ouvrent en panneau, dont
    le bouton annonce le résultat ; un filtre actif devient une pastille, qui
