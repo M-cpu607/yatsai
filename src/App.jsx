@@ -25,6 +25,7 @@ import { VERSION_CONDITIONS, conditionsAJour, aUneAcceptationEnAttente,
 import { EcranConditions } from './EcranConditions';
 import { sansAccordParental } from './accordParental';
 import { EcranAttenteAccord } from './EcranAccordParental';
+import { compresserVideo } from './compressionVideo';
 import { useReferentiels, normaliserPoste } from './referentiels';
 import Auth from './Auth';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -36,6 +37,8 @@ import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-s
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
+// Attention : ce nom masque le constructeur `Image` du navigateur dans tout
+// le fichier. Pour une image HTML, écrire `new window.Image()`.
 import Image from '@tiptap/extension-image';
 import CharacterCount from '@tiptap/extension-character-count';
 
@@ -922,7 +925,7 @@ async function extractFrameFromVideoFile(file, atTime = 0.5) {
         canvas.toBlob((blob) => {
           if (!blob) { cleanup(); reject(new Error('toBlob a échoué')); return; }
           const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-          const img = new Image();
+          const img = new window.Image();
           img.onload = () => {
             cleanup();
             resolve({ blob, dataUrl, img, width: w, height: h, duration: video.duration });
@@ -2659,6 +2662,10 @@ function PublishView({ userProfile, setTab }) {
   const [trackingSize, setTrackingSize] = useState(1);           // multiplicateur de taille
   const fileInputRef = useRef(null);
   const captureInputRef = useRef(null);
+  // Compression lancée dès le choix de la vidéo, pendant que la personne
+  // remplit le formulaire : à la publication, elle est souvent déjà finie.
+  const [compression, setCompression] = useState(null); // { fichier, etat, progression, resultat }
+  const compressionRef = useRef(null);                   // { fichier, promesse, controleur }
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState('foot');
@@ -2696,9 +2703,37 @@ function PublishView({ userProfile, setTab }) {
 
   // Valide = on sait en extraire un identifiant, rien de moins.
 
-  // 80 Mo : la limite du compartiment de stockage. Trente secondes en 1080p
-  // pèsent de l'ordre de 20 à 40 Mo.
+  // 80 Mo : la limite du compartiment de stockage, pour le fichier ENVOYÉ.
+  // Une vidéo plus lourde (4K…) est acceptée si le téléphone sait la
+  // compresser, ce qui la ramène à 7 ou 8 Mo.
   const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
+  const MAX_VIDEO_ORIGINALE = 600 * 1024 * 1024;
+  const peutCompresser = typeof VideoEncoder !== 'undefined';
+
+  const lancerCompression = (file) => {
+    compressionRef.current?.controleur.abort();
+    const controleur = new AbortController();
+    const memeFichier = (c) => c && c.fichier === file;
+    setCompression({ fichier: file, etat: 'en_cours', progression: 0, resultat: null });
+    const promesse = compresserVideo(file, {
+      signal: controleur.signal,
+      onProgression: (p) => setCompression(c => (memeFichier(c) ? { ...c, progression: p } : c)),
+    }).then((resultat) => {
+      if (!controleur.signal.aborted) {
+        setCompression(c => (memeFichier(c) ? { ...c, etat: 'fini', resultat } : c));
+      }
+      return resultat;
+    });
+    compressionRef.current = { fichier: file, promesse, controleur };
+  };
+
+  const arreterCompression = () => {
+    compressionRef.current?.controleur.abort();
+    compressionRef.current = null;
+    setCompression(null);
+  };
+  // Quitter l'écran arrête une compression en cours.
+  useEffect(() => () => { compressionRef.current?.controleur.abort(); }, []);
 
   const onPickFile = async (file) => {
     setError('');
@@ -2707,8 +2742,9 @@ function PublishView({ userProfile, setTab }) {
       setError('Le fichier sélectionné n\'est pas une vidéo.');
       return;
     }
-    if (file.size > MAX_VIDEO_BYTES) {
-      setError(`Vidéo trop lourde (${(file.size / (1024 * 1024)).toFixed(0)} Mo, 80 Mo au plus). Filme en 1080p plutôt qu'en 4K : Réglages → Appareil photo → Enregistrement vidéo.`);
+    const limite = peutCompresser ? MAX_VIDEO_ORIGINALE : MAX_VIDEO_BYTES;
+    if (file.size > limite) {
+      setError(`Vidéo trop lourde (${(file.size / (1024 * 1024)).toFixed(0)} Mo, ${Math.round(limite / (1024 * 1024))} Mo au plus). Filme en 1080p plutôt qu'en 4K : Réglages → Appareil photo → Enregistrement vidéo.`);
       return;
     }
     // La durée d'abord : inutile d'aller plus loin avec une vidéo trop longue.
@@ -2725,6 +2761,7 @@ function PublishView({ userProfile, setTab }) {
     if (videoPreviewUrl) { try { URL.revokeObjectURL(videoPreviewUrl); } catch {} }
     setVideoFile(file);
     setVideoPreviewUrl(URL.createObjectURL(file));
+    lancerCompression(file);
     setThumbDataUrl(null);
     setThumbImg(null);
     setThumbBlob(null);
@@ -2744,6 +2781,7 @@ function PublishView({ userProfile, setTab }) {
 
   const clearUpload = () => {
     if (videoPreviewUrl) { try { URL.revokeObjectURL(videoPreviewUrl); } catch {} }
+    arreterCompression();
     setVideoFile(null);
     setVideoPreviewUrl(null);
     setThumbDataUrl(null);
@@ -2760,10 +2798,10 @@ function PublishView({ userProfile, setTab }) {
     if (captureInputRef.current) captureInputRef.current.value = '';
   };
 
-  const uploadToStorage = async () => {
-    if (!videoFile || !userProfile?.id) return null;
+  const uploadToStorage = async (fichier) => {
+    if (!fichier || !userProfile?.id) return null;
     const stamp = Date.now();
-    const ext = (videoFile.name.split('.').pop() || 'mp4').toLowerCase();
+    const ext = (fichier.name.split('.').pop() || 'mp4').toLowerCase();
     const safeExt = ['mp4', 'mov', 'webm', 'm4v', 'mkv'].includes(ext) ? ext : 'mp4';
     const basePath = `${userProfile.id}/${stamp}`;
     const videoPath = `${basePath}.${safeExt}`;
@@ -2773,7 +2811,7 @@ function PublishView({ userProfile, setTab }) {
     // 1) Upload vidéo
     const { error: upErr } = await supabase.storage
       .from('videos')
-      .upload(videoPath, videoFile, { cacheControl: '3600', upsert: false, contentType: videoFile.type });
+      .upload(videoPath, fichier, { cacheControl: '3600', upsert: false, contentType: fichier.type });
     if (upErr) { setError('Upload vidéo : ' + upErr.message); return null; }
     setUploadProgress(70);
 
@@ -2843,7 +2881,18 @@ function PublishView({ userProfile, setTab }) {
   // needsReview = true quand l'utilisateur force la publication malgré le refus IA.
   const doPublish = async (needsReview = false) => {
     setLoading(true);
-    const uploaded = await uploadToStorage();
+    // La version compressée si elle existe ; sinon l'original.
+    let aEnvoyer = videoFile;
+    if (compressionRef.current?.fichier === videoFile) {
+      const compressee = await compressionRef.current.promesse;
+      if (compressee) aEnvoyer = compressee;
+    }
+    if (aEnvoyer.size > MAX_VIDEO_BYTES) {
+      setError(`Cette vidéo pèse ${(aEnvoyer.size / (1024 * 1024)).toFixed(0)} Mo et n'a pas pu être allégée sur ce téléphone (80 Mo au plus). Filme en 1080p plutôt qu'en 4K : Réglages → Appareil photo → Enregistrement vidéo.`);
+      setLoading(false);
+      return;
+    }
+    const uploaded = await uploadToStorage(aEnvoyer);
     if (!uploaded || !uploaded.video_url) { setLoading(false); return; }
     const extra = {
       video_url: uploaded.video_url,
@@ -2989,10 +3038,18 @@ function PublishView({ userProfile, setTab }) {
                       {videoFile.name}
                     </div>
                     <div className="text-[11px]" style={{ color: C.textDim }}>
-                      {(videoFile.size / (1024 * 1024)).toFixed(1)} Mo
+                      {compression?.etat === 'fini' && compression.resultat
+                        ? `${(compression.resultat.size / (1024 * 1024)).toFixed(1)} Mo · allégée (${(videoFile.size / (1024 * 1024)).toFixed(0)} Mo à l'origine)`
+                        : `${(videoFile.size / (1024 * 1024)).toFixed(1)} Mo`}
                       {videoDuration ? ` · ${Math.round(videoDuration)} s` : ''}
                       {thumbDataUrl ? ' · miniature ✓' : ''}
                     </div>
+                    {compression?.etat === 'en_cours' && videoFile.size > 10 * 1024 * 1024 && (
+                      <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: C.textDim }}>
+                        <Loader2 size={11} className="animate-spin" />
+                        Allègement de la vidéo… {Math.round((compression.progression || 0) * 100)} %
+                      </div>
+                    )}
                   </div>
                   <button type="button" onClick={clearUpload}
                     className="px-3 py-1.5 rounded-lg text-xs font-bold"
@@ -3276,8 +3333,10 @@ function PublishView({ userProfile, setTab }) {
           {loading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
           {loading
             ? (uploadProgress > 0 && uploadProgress < 100
-                ? `Upload ${uploadProgress}%…`
-                : 'Publication…')
+                ? `Envoi ${uploadProgress} %…`
+                : compression?.etat === 'en_cours' && videoFile?.size > 10 * 1024 * 1024
+                  ? `Allègement ${Math.round((compression.progression || 0) * 100)} %…`
+                  : 'Publication…')
             : quotaEpuise ? 'Reviens demain' : 'Publier ma vidéo'}
         </button>
       </form>
@@ -10147,7 +10206,7 @@ async function compressImage(file, maxW, quality = 0.82) {
       fr.readAsDataURL(file);
     });
     const img = await new Promise((resolve, reject) => {
-      const i = new Image();
+      const i = new window.Image();
       i.onload = () => resolve(i);
       i.onerror = reject;
       i.src = dataUrl;
