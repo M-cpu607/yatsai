@@ -9912,11 +9912,13 @@ function UserProfileView({ profile: profileProp, currentUserId, isViewerRecruite
           style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={() => setMenuOuvert(false)}>
           <div className="w-full rounded-t-2xl p-4 pb-8" onClick={(e) => e.stopPropagation()}
             style={{ backgroundColor: C.surface, borderTop: `1px solid ${C.border}` }}>
-            <button onClick={() => { setMenuOuvert(false); setPartageOuvert(true); }}
-              className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
-              style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
-              <Share2 size={16} strokeWidth={2.2} /> Partager ce profil
-            </button>
+            {PARTAGE_PROFIL_ACTIF && (
+              <button onClick={() => { setMenuOuvert(false); setPartageOuvert(true); }}
+                className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
+                style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
+                <Share2 size={16} strokeWidth={2.2} /> Partager ce profil
+              </button>
+            )}
             <button onClick={() => { setMenuOuvert(false); if (bloque) basculerBlocage(); else setConfirmBlocage(true); }}
               className="w-full flex items-center gap-3 py-3 text-sm font-semibold"
               style={{ color: C.text, borderBottom: `1px solid ${C.border}` }}>
@@ -10273,6 +10275,12 @@ function SocialLinksDisplay({ links }) {
 
 // ─── PARTAGE PROFIL (QR + lien) ──────────────────────────────────
 // Modal simple : QR code + lien copiable (sans partage via réseaux sociaux).
+// Le partage de profil produit un lien vers le site (yatsai.app/u/…). Tant
+// que l'application n'existe que sur téléphone, sans site, ce lien ne mène
+// nulle part : les boutons sont masqués. Passer à true le jour où le site
+// existe.
+const PARTAGE_PROFIL_ACTIF = false;
+
 function ShareProfileModal({ userProfile, onClose, autrui = false }) {
   const profileUrl = `https://yatsai.app/u/${userProfile?.id || ''}`;
   const [copied, setCopied] = useState(false);
@@ -13695,7 +13703,7 @@ export default function App() {
                                   onLoadSignedCount={loadSignedCount}
                                   onShowSignedAthletes={showSignedAthletes}
                                   onOpenSettings={() => setSettingsOpen(true)}
-                                  onShareProfile={() => setShareProfileOpen(true)}
+                                  onShareProfile={PARTAGE_PROFIL_ACTIF ? () => setShareProfileOpen(true) : null}
                                   onLoadSavedVideos={loadSavedVideos}
                                   onToggleSaveVideo={toggleSaveVideo}
                                   onPlayVideo={(v) => setSearchPlayingVideo(v)} />;
@@ -13712,7 +13720,7 @@ export default function App() {
                                   onEdit={() => setProfileEditorOpen(true)}
                                   onShowFollowList={showFollowList} onLoadFollowCounts={loadFollowCounts}
                                   onOpenSettings={() => setSettingsOpen(true)}
-                                  onShareProfile={() => setShareProfileOpen(true)}
+                                  onShareProfile={PARTAGE_PROFIL_ACTIF ? () => setShareProfileOpen(true) : null}
                                   onUpdateProfile={updateProfile}
                                   onLoadSavedVideos={loadSavedVideos}
                                   onToggleSaveVideo={toggleSaveVideo}
@@ -13730,7 +13738,7 @@ export default function App() {
                                 onShowFollowList={showFollowList} onLoadFollowCounts={loadFollowCounts}
                                 onDeleteVideo={deleteVideo}
                                 onOpenSettings={() => setSettingsOpen(true)}
-                                onShareProfile={() => setShareProfileOpen(true)}
+                                onShareProfile={PARTAGE_PROFIL_ACTIF ? () => setShareProfileOpen(true) : null}
                                 onUpdateProfile={updateProfile} />;
       default: return null;
     }
